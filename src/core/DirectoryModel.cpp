@@ -132,6 +132,7 @@ void DirectoryModel::resetListing() {
   m_all.clear();
   m_visible.clear();
   m_indexByName.clear();
+  m_visibleRowByAll.clear();
   m_currentIndex = -1;
   endResetModel();
   emit countChanged();
@@ -171,10 +172,13 @@ void DirectoryModel::rebuildVisible() {
       entryAt(m_currentIndex) ? entryAt(m_currentIndex)->name : QString();
   beginResetModel();
   m_visible.clear();
+  m_visibleRowByAll.clear();
   m_visible.reserve(m_all.size());
   for (int i = 0; i < m_all.size(); ++i) {
-    if (m_showHidden || !m_all.at(i).isHidden)
+    if (m_showHidden || !m_all.at(i).isHidden) {
+      m_visibleRowByAll.insert(i, m_visible.size());
       m_visible.append(i);
+    }
   }
   endResetModel();
   int next = -1;
@@ -247,6 +251,8 @@ void DirectoryModel::onBatchReady(quint64 generation,
   if (!added.isEmpty()) {
     const int from = m_visible.size();
     beginInsertRows(QModelIndex(), from, from + added.size() - 1);
+    for (int i = 0; i < added.size(); ++i)
+      m_visibleRowByAll.insert(added.at(i), from + i);
     m_visible += added;
     endInsertRows();
     if (m_currentIndex < 0)
@@ -274,13 +280,11 @@ void DirectoryModel::applyEntry(const DirectoryEntry &entry) {
     return;
   m_all[allIndex] = entry;
 
-  for (int i = 0; i < m_visible.size(); ++i) {
-    if (m_visible.at(i) != allIndex)
-      continue;
-    const QModelIndex idx = index(i);
-    emit dataChanged(idx, idx);
+  const auto vis = m_visibleRowByAll.constFind(allIndex);
+  if (vis == m_visibleRowByAll.cend())
     return;
-  }
+  const QModelIndex idx = index(vis.value());
+  emit dataChanged(idx, idx);
 }
 
 void DirectoryModel::onStatsReady(quint64 generation,

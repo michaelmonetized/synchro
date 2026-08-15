@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QQmlComponent>
 #include <QQmlContext>
@@ -116,6 +117,8 @@ private slots:
   void rolesArePopulated();
   void cursorMoves();
   void activateDirChangesPath();
+  void staleSetPathDoesNotClobber();
+  void activatePendingSymlinkToDir();
   void listingTwoThousandLeavesGuiResponsive();
   void warmTimeToFirstFrame();
 
@@ -390,6 +393,53 @@ void DirectoryModelTest::activateDirChangesPath() {
   QVERIFY(findRow(model, QStringLiteral("inside.txt")) >= 0);
 }
 
+void DirectoryModelTest::staleSetPathDoesNotClobber() {
+  DirectoryModel model;
+  model.setPath(m_fixture.path());
+  model.setPath(m_scratch.path());
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
+           QFileInfo(m_scratch.path()).canonicalFilePath());
+  QCOMPARE(model.rowCount(), 1);
+  QCOMPARE(roleAt(model, 0, DirectoryModel::NameRole).toString(),
+           QStringLiteral("scratch.txt"));
+  QVERIFY(findRow(model, QStringLiteral("file_0000.txt")) < 0);
+}
+
+void DirectoryModelTest::activatePendingSymlinkToDir() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("targetdir")));
+  QFile inside(tmp.filePath(QStringLiteral("targetdir/inside.txt")));
+  QVERIFY(inside.open(QIODevice::WriteOnly));
+  inside.write("x", 1);
+  inside.close();
+  QVERIFY(QFile::link(QStringLiteral("targetdir"),
+                      tmp.filePath(QStringLiteral("thelink"))));
+
+  DirectoryModel model;
+  QString kindAtFirstPaint;
+  connect(&model, &DirectoryModel::firstRowsInserted, this, [&] {
+    const int row = findRow(model, QStringLiteral("thelink"));
+    if (row < 0)
+      return;
+    kindAtFirstPaint =
+        roleAt(model, row, DirectoryModel::DirKindRole).toString();
+    model.setCurrentIndex(row);
+    model.activateCurrent();
+  });
+  model.setPath(tmp.path());
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return QFileInfo(model.path()).fileName() ==
+               QStringLiteral("targetdir");
+      },
+      3000));
+  QCOMPARE(kindAtFirstPaint, QStringLiteral("pending"));
+  QVERIFY(waitListingDone(model));
+  QVERIFY(findRow(model, QStringLiteral("inside.txt")) >= 0);
+}
+
 void DirectoryModelTest::listingTwoThousandLeavesGuiResponsive() {
   DirectoryModel model;
   int timerFires = 0;
@@ -406,11 +456,15 @@ void DirectoryModelTest::listingTwoThousandLeavesGuiResponsive() {
 }
 
 void DirectoryModelTest::warmTimeToFirstFrame() {
+  QTemporaryDir empty;
+  QVERIFY(empty.isValid());
+
   DirectoryModel model;
   model.setPath(m_fixture.path());
   QVERIFY(waitListingDone(model));
-  model.setPath(m_scratch.path());
+  model.setPath(empty.path());
   QVERIFY(waitListingDone(model));
+  QCOMPARE(model.rowCount(), 0);
 
   static const char kQml[] = R"QML(
 import QtQuick
@@ -446,26 +500,37 @@ ListView {
   QVERIFY(item);
   item->setParentItem(window.contentItem());
   item->setSize(QSizeF(800, 600));
-  window.show();
-  QVERIFY(QTest::qWaitForWindowExposed(&window));
 
+  bool sawEmptyFrame = false;
+  bool sawFirstRows = false;
   qint64 ttf = -1;
   QElapsedTimer t;
+  connect(&model, &DirectoryModel::firstRowsInserted, this,
+          [&] { sawFirstRows = true; });
   connect(&window, &QQuickWindow::frameSwapped, this, [&] {
-    if (t.isValid() && ttf < 0 && model.rowCount() > 0)
+    if (!t.isValid()) {
+      if (model.rowCount() == 0)
+        sawEmptyFrame = true;
+      return;
+    }
+    if (sawFirstRows && model.rowCount() > 0 && ttf < 0)
       ttf = t.elapsed();
   });
 
+  window.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&window));
+  if (!QTest::qWaitFor([&] { return sawEmptyFrame; }, 2000)) {
+    QSKIP("warm TTF: no empty frameSwapped before setPath "
+          "(offscreen/software produced no frame)");
+  }
   t.start();
   model.setPath(m_fixture.path());
   const bool gotFrame = QTest::qWaitFor([&] { return ttf >= 0; }, 3000);
   QVERIFY(waitListingDone(model));
 
   if (!gotFrame || ttf < 0) {
-    qWarning("warm TTF: not measured (no frameSwapped after rows); "
-             "warm first_rowsInserted=%lldms",
-             static_cast<long long>(model.lastFirstRowsMs()));
-    return;
+    QSKIP("warm TTF: no frameSwapped after first rows "
+          "(offscreen/software produced no frame)");
   }
 
   qInfo("warm time-to-first-frame: %lldms (gate 80ms); first_rows=%lldms",

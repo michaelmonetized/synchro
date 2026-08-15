@@ -152,7 +152,18 @@ bool DirectoryLister::abandoned(quint64 generation) const {
 }
 
 void DirectoryLister::requestList(quint64 generation, const QString &path) {
-  m_wanted.store(generation, std::memory_order_release);
+  quint64 wanted = m_wanted.load(std::memory_order_acquire);
+  while (true) {
+    if (wanted != 0 && wanted > generation)
+      return;
+    if (wanted == generation)
+      break;
+    // wanted == 0 (test path) or older than this gen: adopt.
+    if (m_wanted.compare_exchange_weak(wanted, generation,
+                                       std::memory_order_acq_rel,
+                                       std::memory_order_acquire))
+      break;
+  }
   listPath(generation, path);
 }
 
@@ -187,8 +198,23 @@ void DirectoryLister::listPath(quint64 generation, const QString &path) {
   rest.reserve(256);
 
   bool emittedAny = false;
-  errno = 0;
-  while (struct dirent *ent = readdir(dir)) {
+  while (true) {
+    // readdir leaves errno unchanged on EOF; Qt work in the body must not
+    // be mistaken for a read failure.
+    errno = 0;
+    struct dirent *ent = readdir(dir);
+    if (!ent) {
+      const int readErr = errno;
+      if (readErr != 0) {
+        if (!batch.isEmpty() || !emittedAny)
+          emit batchReady(generation, batch);
+        closedir(dir);
+        emit finished(generation, false,
+                      QString::fromLocal8Bit(std::strerror(readErr)));
+        return;
+      }
+      break;
+    }
     if (abandoned(generation)) {
       closedir(dir);
       return;
@@ -210,13 +236,6 @@ void DirectoryLister::listPath(quint64 generation, const QString &path) {
       batch.clear();
       emittedAny = true;
     }
-  }
-  const int readErr = errno;
-  if (readErr != 0) {
-    closedir(dir);
-    emit finished(generation, false,
-                  QString::fromLocal8Bit(std::strerror(readErr)));
-    return;
   }
 
   if (!batch.isEmpty() || !emittedAny)

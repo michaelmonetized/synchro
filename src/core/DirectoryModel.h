@@ -93,6 +93,7 @@ private:
   QVector<DirectoryEntry> m_all;
   QVector<int> m_visible;
   QHash<QString, int> m_indexByName;
+  QHash<int, int> m_visibleRowByAll;
 
   int m_currentIndex = -1;
   bool m_showHidden = false;
