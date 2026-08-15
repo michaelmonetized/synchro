@@ -32,6 +32,9 @@ DirectoryModel::DirectoryModel(QObject *parent) : QAbstractListModel(parent) {
           &DirectoryModel::onStatsReady, Qt::QueuedConnection);
   connect(m_lister, &DirectoryLister::finished, this,
           &DirectoryModel::onFinished, Qt::QueuedConnection);
+  m_thumbs = new ThumbnailService(this);
+  connect(m_thumbs, &ThumbnailService::thumbnailReady, this,
+          &DirectoryModel::onThumbnailReady);
   m_thread.start();
 }
 
@@ -132,6 +135,7 @@ void DirectoryModel::resetListing() {
   m_all.clear();
   m_visible.clear();
   m_indexByName.clear();
+  m_indexByPath.clear();
   m_visibleRowByAll.clear();
   m_currentIndex = -1;
   endResetModel();
@@ -144,6 +148,10 @@ void DirectoryModel::setPath(const QString &path) {
   ++m_gen;
   if (m_lister)
     m_lister->abandon(m_gen);
+  if (m_thumbs)
+    m_thumbs->cancelAll();
+  m_thumbFirst = -1;
+  m_thumbLast = -1;
 
   resetListing();
   m_path = resolved;
@@ -243,6 +251,8 @@ void DirectoryModel::onBatchReady(quint64 generation,
     const DirectoryEntry &e = batch.at(i);
     const int allIndex = oldAll + i;
     m_indexByName.insert(e.name, allIndex);
+    if (!e.path.isEmpty())
+      m_indexByPath.insert(e.path, allIndex);
     if (m_showHidden || !e.isHidden)
       added.append(allIndex);
   }
@@ -278,7 +288,17 @@ void DirectoryModel::applyEntry(const DirectoryEntry &entry) {
   const int allIndex = it.value();
   if (allIndex < 0 || allIndex >= m_all.size())
     return;
+  const QString oldThumb = m_all[allIndex].thumbnail;
+  const QString oldPath = m_all[allIndex].path;
   m_all[allIndex] = entry;
+  if (m_all[allIndex].thumbnail.isEmpty())
+    m_all[allIndex].thumbnail = oldThumb;
+  if (oldPath != entry.path) {
+    if (!oldPath.isEmpty())
+      m_indexByPath.remove(oldPath);
+    if (!entry.path.isEmpty())
+      m_indexByPath.insert(entry.path, allIndex);
+  }
 
   const auto vis = m_visibleRowByAll.constFind(allIndex);
   if (vis == m_visibleRowByAll.cend())
@@ -296,6 +316,8 @@ void DirectoryModel::onStatsReady(quint64 generation,
   for (const DirectoryEntry &e : batch)
     applyEntry(e);
   maybeActivatePending();
+  if (m_thumbFirst >= 0)
+    requestVisibleThumbs(m_thumbFirst, m_thumbLast, m_thumbSizePx);
 }
 
 void DirectoryModel::maybeActivatePending() {
@@ -324,4 +346,57 @@ void DirectoryModel::onFinished(quint64 generation, bool ok,
     emit errorStringChanged();
   }
   emit listingChanged();
+}
+
+void DirectoryModel::requestVisibleThumbs(int first, int last, int sizePx) {
+  if (sizePx <= 0)
+    sizePx = 128;
+  m_thumbSizePx = sizePx;
+  m_thumbFirst = first;
+  m_thumbLast = last;
+  if (!m_thumbs)
+    return;
+  QVector<ThumbnailJob> jobs;
+  if (!m_visible.isEmpty() && last >= 0) {
+    first = qBound(0, first, m_visible.size() - 1);
+    last = qBound(0, last, m_visible.size() - 1);
+    if (last < first)
+      qSwap(first, last);
+    const int center = first + (last - first) / 2;
+    jobs.reserve(last - first + 1);
+    for (int i = first; i <= last; ++i) {
+      const DirectoryEntry *e = entryAt(i);
+      if (!e || e->isDir || e->path.isEmpty() || e->mtime <= 0)
+        continue;
+      if (!e->thumbnail.isEmpty())
+        continue;
+      ThumbnailJob job;
+      job.path = e->path;
+      job.mime = e->mime;
+      job.mtime = e->mtime;
+      job.sizePx = sizePx;
+      job.priority = qAbs(i - center);
+      jobs.append(job);
+    }
+  }
+  m_thumbs->requestVisible(jobs);
+}
+
+void DirectoryModel::onThumbnailReady(const QString &path, const QString &url) {
+  if (url.isEmpty() || path.isEmpty())
+    return;
+  const auto it = m_indexByPath.constFind(path);
+  if (it == m_indexByPath.cend())
+    return;
+  const int allIndex = it.value();
+  if (allIndex < 0 || allIndex >= m_all.size())
+    return;
+  if (m_all[allIndex].thumbnail == url)
+    return;
+  m_all[allIndex].thumbnail = url;
+  const auto vis = m_visibleRowByAll.constFind(allIndex);
+  if (vis == m_visibleRowByAll.cend())
+    return;
+  const QModelIndex idx = index(vis.value());
+  emit dataChanged(idx, idx, {ThumbnailRole});
 }

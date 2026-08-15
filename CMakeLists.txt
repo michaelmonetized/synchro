@@ -15,6 +15,7 @@ qt_add_executable(synchro
     src/main.cpp
     src/core/DirectoryModel.cpp
     src/core/DirectoryLister.cpp
+    src/core/ThumbnailService.cpp
 )
 
 target_include_directories(synchro PRIVATE
@@ -33,6 +34,7 @@ qt_add_qml_module(synchro
     QML_FILES
         src/ui/qml/Main.qml
         src/ui/qml/FileList.qml
+        src/ui/qml/FileGrid.qml
 )
 
 set_source_files_properties(src/ui/qml/Synchro/Theme/Theme.qml
@@ -87,6 +89,7 @@ if(BUILD_TESTING)
         tests/directory_model_test.cpp
         src/core/DirectoryModel.cpp
         src/core/DirectoryLister.cpp
+        src/core/ThumbnailService.cpp
     )
     target_include_directories(directory_model_test PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core
@@ -103,6 +106,25 @@ if(BUILD_TESTING)
     add_test(NAME directory_model_test COMMAND directory_model_test)
     set_tests_properties(directory_model_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
+    qt_add_executable(thumbnail_service_test
+        tests/thumbnail_service_test.cpp
+        src/core/ThumbnailService.cpp
+    )
+    target_include_directories(thumbnail_service_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core
+    )
+    target_link_libraries(thumbnail_service_test PRIVATE
+        Qt6::Test
+        Qt6::Gui
+        Qt6::Core
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(thumbnail_service_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME thumbnail_service_test COMMAND thumbnail_service_test)
+    set_tests_properties(thumbnail_service_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 set_target_properties(synchro PROPERTIES
