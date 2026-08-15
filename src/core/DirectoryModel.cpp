@@ -138,6 +138,7 @@ void DirectoryModel::resetListing() {
   m_visible.clear();
   m_indexByName.clear();
   m_visibleRowByAll.clear();
+  m_suppressedNames.clear();
   m_currentIndex = -1;
   endResetModel();
   emit countChanged();
@@ -172,6 +173,7 @@ void DirectoryModel::setPath(const QString &path, const QString &selectName,
   m_lastFirstRowsMs = -1;
   m_listTimer.start();
   m_watcher.setPath(m_path);
+  m_watchSerial = m_watcher.serial();
   emit pathChanged();
   emit errorStringChanged();
   emit listingChanged();
@@ -267,7 +269,8 @@ void DirectoryModel::onBatchReady(quint64 generation,
   m_all.reserve(m_all.size() + batch.size());
   for (int i = 0; i < batch.size(); ++i) {
     const DirectoryEntry &e = batch.at(i);
-    if (e.name.isEmpty() || m_indexByName.contains(e.name))
+    if (e.name.isEmpty() || m_indexByName.contains(e.name) ||
+        m_suppressedNames.contains(e.name))
       continue;
     const int allIndex = m_all.size();
     m_all.append(e);
@@ -489,7 +492,7 @@ void DirectoryModel::navigateToExistingParent() {
       break;
     p = dir.absolutePath();
     if (QFileInfo(p).isDir()) {
-      setPath(p, vanished);
+      setPath(p, vanished, true);
       return;
     }
   }
@@ -510,6 +513,8 @@ void DirectoryModel::onWatchEvents(const QVector<DirectoryWatchEvent> &events) {
   QStringList needStat;
   needStat.reserve(events.size());
   for (const DirectoryWatchEvent &ev : events) {
+    if (ev.serial != m_watchSerial)
+      continue;
     if (ev.kind == DirectoryWatchEvent::Gone) {
       navigateToExistingParent();
       return;
@@ -522,18 +527,24 @@ void DirectoryModel::onWatchEvents(const QVector<DirectoryWatchEvent> &events) {
       continue;
     switch (ev.kind) {
     case DirectoryWatchEvent::Deleted:
+      m_suppressedNames.insert(ev.name);
       removeByName(ev.name);
       break;
     case DirectoryWatchEvent::Created:
+      m_suppressedNames.remove(ev.name);
       insertPlaceholder(ev.name, ev.isDir);
       needStat.append(ev.name);
       break;
     case DirectoryWatchEvent::Attrib:
-      if (!m_indexByName.contains(ev.name))
+      if (!m_indexByName.contains(ev.name) &&
+          !m_suppressedNames.contains(ev.name))
         insertPlaceholder(ev.name, ev.isDir);
-      needStat.append(ev.name);
+      if (m_indexByName.contains(ev.name))
+        needStat.append(ev.name);
       break;
     case DirectoryWatchEvent::Renamed:
+      m_suppressedNames.insert(ev.name);
+      m_suppressedNames.remove(ev.newName);
       renameEntry(ev.name, ev.newName);
       needStat.append(ev.newName);
       break;

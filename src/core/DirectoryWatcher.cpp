@@ -78,9 +78,13 @@ DirectoryWatcher::~DirectoryWatcher() {
 void DirectoryWatcher::setPath(const QString &path) {
   if (path == m_path && m_wd >= 0)
     return;
+  ++m_serial;
   m_flush.stop();
   m_queue.clear();
   dropWatch();
+  // Leftover CREATE/DELETE_SELF for the old wd stay readable; Linux
+  // reuses wd 1, so drain must discard them before the new add_watch.
+  discardKernelEvents();
   m_path = path;
   if (!m_path.isEmpty())
     addWatch();
@@ -101,6 +105,22 @@ void DirectoryWatcher::dropWatch() {
   if (m_fd >= 0 && m_wd >= 0)
     inotify_rm_watch(m_fd, m_wd);
   m_wd = -1;
+}
+
+void DirectoryWatcher::discardKernelEvents() {
+  if (m_fd < 0)
+    return;
+  const bool wasEnabled = m_notifier && m_notifier->isEnabled();
+  if (m_notifier)
+    m_notifier->setEnabled(false);
+  alignas(struct inotify_event) char buf[65536];
+  while (true) {
+    const ssize_t n = ::read(m_fd, buf, sizeof(buf));
+    if (n <= 0)
+      break;
+  }
+  if (m_notifier && wasEnabled)
+    m_notifier->setEnabled(true);
 }
 
 void DirectoryWatcher::addWatch() {
@@ -142,6 +162,7 @@ void DirectoryWatcher::drain() {
       if (ev->mask & IN_Q_OVERFLOW) {
         RawEvent raw;
         raw.mask = ev->mask;
+        raw.serial = m_serial;
         m_queue.append(raw);
         continue;
       }
@@ -154,6 +175,7 @@ void DirectoryWatcher::drain() {
       raw.mask = ev->mask;
       raw.cookie = ev->cookie;
       raw.wd = ev->wd;
+      raw.serial = m_serial;
       if (ev->len > 0)
         raw.name = QFile::decodeName(QByteArray(ev->name));
       m_queue.append(raw);
@@ -178,6 +200,8 @@ void DirectoryWatcher::flush() {
   bool overflow = false;
 
   for (const RawEvent &raw : queued) {
+    if (raw.serial != m_serial)
+      continue;
     if (raw.mask & IN_Q_OVERFLOW) {
       overflow = true;
       continue;
@@ -197,6 +221,7 @@ void DirectoryWatcher::flush() {
   if (gone) {
     DirectoryWatchEvent ev;
     ev.kind = DirectoryWatchEvent::Gone;
+    ev.serial = m_serial;
     logEvent(ev);
     emit eventsReady({ev});
     return;
@@ -204,6 +229,7 @@ void DirectoryWatcher::flush() {
   if (overflow) {
     DirectoryWatchEvent ev;
     ev.kind = DirectoryWatchEvent::Overflow;
+    ev.serial = m_serial;
     logEvent(ev);
     emit eventsReady({ev});
     return;
@@ -221,6 +247,7 @@ void DirectoryWatcher::flush() {
       }
     }
     DirectoryWatchEvent ev;
+    ev.serial = from.serial;
     if (match >= 0) {
       usedTo[match] = true;
       ev.kind = DirectoryWatchEvent::Renamed;
@@ -242,6 +269,7 @@ void DirectoryWatcher::flush() {
     ev.kind = DirectoryWatchEvent::Created;
     ev.name = tos.at(i).name;
     ev.isDir = (tos.at(i).mask & IN_ISDIR) != 0;
+    ev.serial = tos.at(i).serial;
     out.append(ev);
   }
 
@@ -249,6 +277,7 @@ void DirectoryWatcher::flush() {
     DirectoryWatchEvent ev;
     ev.isDir = (raw.mask & IN_ISDIR) != 0;
     ev.name = raw.name;
+    ev.serial = raw.serial;
     if (raw.mask & IN_CREATE)
       ev.kind = DirectoryWatchEvent::Created;
     else if (raw.mask & IN_DELETE)

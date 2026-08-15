@@ -6,10 +6,13 @@
 #include <QAbstractListModel>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QThread>
 #include <QVector>
+
+class DirectoryModelTest;
 
 class DirectoryModel : public QAbstractListModel {
   Q_OBJECT
@@ -101,10 +104,13 @@ private:
   void reload();
   const DirectoryEntry *entryAt(int visibleRow) const;
 
+  friend class DirectoryModelTest;
+
   QThread m_thread;
   DirectoryLister *m_lister = nullptr;
   DirectoryWatcher m_watcher;
   quint64 m_gen = 0;
+  quint64 m_watchSerial = 0;
 
   QString m_path;
   QString m_error;
@@ -114,6 +120,7 @@ private:
   QVector<int> m_visible;
   QHash<QString, int> m_indexByName;
   QHash<int, int> m_visibleRowByAll;
+  QSet<QString> m_suppressedNames;
 
   int m_currentIndex = -1;
   bool m_showHidden = false;

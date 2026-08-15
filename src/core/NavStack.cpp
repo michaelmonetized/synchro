@@ -18,7 +18,11 @@ NavStack::NavStack(DirectoryModel *model, QObject *parent)
     m_current.path = m_model->path();
 }
 
-QString NavStack::homePath() const { return QDir::homePath(); }
+QString NavStack::homePath() const {
+  const QString home = QDir::homePath();
+  const QString canon = QFileInfo(home).canonicalFilePath();
+  return canon.isEmpty() ? home : canon;
+}
 
 NavStack::Frame NavStack::snapshot() const {
   Frame f;
@@ -111,7 +115,7 @@ QVariantList NavStack::segmentsFor(const QString &path) const {
     segs.append(m);
   };
 
-  const QString home = QDir::homePath();
+  const QString home = homePath();
   QString prefix;
   QString rest;
   if (path == home || path.startsWith(home + QLatin1Char('/'))) {

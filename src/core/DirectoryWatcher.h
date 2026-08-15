@@ -15,6 +15,7 @@ struct DirectoryWatchEvent {
   QString name;
   QString newName;
   bool isDir = false;
+  quint64 serial = 0;
 };
 
 class DirectoryWatcher : public QObject {
@@ -26,6 +27,7 @@ public:
 
   QString path() const { return m_path; }
   bool watching() const { return m_wd >= 0; }
+  quint64 serial() const { return m_serial; }
 
   void setPath(const QString &path);
 
@@ -37,16 +39,19 @@ private:
     uint32_t mask = 0;
     uint32_t cookie = 0;
     int wd = -1;
+    quint64 serial = 0;
     QString name;
   };
 
   void ensureFd();
   void dropWatch();
   void addWatch();
+  void discardKernelEvents();
   void drain();
   void flush();
 
   QString m_path;
+  quint64 m_serial = 0;
   int m_fd = -1;
   int m_wd = -1;
   QSocketNotifier *m_notifier = nullptr;
