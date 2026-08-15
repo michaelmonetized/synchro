@@ -615,6 +615,12 @@ void CommandFieldTest::spaceTogglesPeekAndJkStep() {
   QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
   QVERIFY(!peek.isOpen());
+
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QVERIFY(peek.isOpen());
+  keys.focusFilter();
+  QVERIFY(!peek.isOpen());
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
 }
 
 void CommandFieldTest::mainQmlSlashThenSrcFilters() {

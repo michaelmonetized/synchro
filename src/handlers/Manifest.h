@@ -54,6 +54,10 @@ public:
   bool firstParty = false;
 
   static bool isSafeEntryPoint(const QString &value);
+  // Lexical + symlink + canonical prefix. resolvedOut is the real path.
+  static bool confineEntryPoint(const QString &sourceDir, const QString &rel,
+                                QString *resolvedOut = nullptr,
+                                QString *error = nullptr);
   static bool isValidId(const QString &id);
   static bool isReservedId(const QString &id);
   static bool matchMime(const QString &mime, const QString &pattern);

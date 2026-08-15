@@ -62,6 +62,7 @@ signals:
 
 private:
   void setMode(Mode mode);
+  void closePeek();
   void applyFieldText();
   void clearFieldAndFilter();
   void onPathChanged();

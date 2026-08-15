@@ -74,11 +74,13 @@ Window {
 
     Shortcut {
         sequence: "Ctrl+K"
+        enabled: root.keys && !root.keys.peekOpen
         onActivated: root.keys.focusFilter()
     }
 
     Shortcut {
         sequence: "Ctrl+L"
+        enabled: root.keys && !root.keys.peekOpen
         onActivated: root.keys.focusJump()
     }
 

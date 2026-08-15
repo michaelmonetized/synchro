@@ -185,6 +185,51 @@ bool Manifest::isSafeEntryPoint(const QString &value) {
   return true;
 }
 
+bool Manifest::confineEntryPoint(const QString &sourceDir, const QString &rel,
+                                 QString *resolvedOut, QString *error) {
+  if (!isSafeEntryPoint(rel)) {
+    if (error)
+      *error = QStringLiteral("unsafe entry point");
+    return false;
+  }
+  const QString base = QDir::cleanPath(sourceDir);
+  const QString resolved = QDir::cleanPath(QDir(base).filePath(rel));
+  if (resolved != base && !resolved.startsWith(base + QLatin1Char('/'))) {
+    if (error)
+      *error = QStringLiteral("entry point escapes sourceDir");
+    return false;
+  }
+  const QFileInfo info(resolved);
+  if (info.isSymLink()) {
+    if (error)
+      *error = QStringLiteral("entry point may not be a symlink");
+    return false;
+  }
+  if (!info.exists() || !info.isFile()) {
+    if (error)
+      *error = QStringLiteral("entry point file not found");
+    return false;
+  }
+  QString canonFile = info.canonicalFilePath();
+  QString canonBase = QFileInfo(base).canonicalFilePath();
+  if (canonBase.isEmpty())
+    canonBase = base;
+  if (canonFile.isEmpty()) {
+    if (error)
+      *error = QStringLiteral("entry point file not found");
+    return false;
+  }
+  const QString prefix = canonBase + QLatin1Char('/');
+  if (canonFile != canonBase && !canonFile.startsWith(prefix)) {
+    if (error)
+      *error = QStringLiteral("entry point escapes sourceDir");
+    return false;
+  }
+  if (resolvedOut)
+    *resolvedOut = canonFile;
+  return true;
+}
+
 bool Manifest::isValidId(const QString &id) {
   if (id.isEmpty() || id.contains(QLatin1Char('/')) ||
       id.contains(QLatin1String("..")) || id.startsWith(QLatin1Char('/')))
@@ -408,23 +453,12 @@ ManifestValidation validateManifestDir(const QString &dir, bool firstParty) {
         continue;
       }
       const QString ep = it.value().toString();
-      if (!Manifest::isSafeEntryPoint(ep)) {
+      QString confineErr;
+      if (!Manifest::confineEntryPoint(root, ep, nullptr, &confineErr)) {
         result.errors.append(
-            QStringLiteral("unsafe entryPoint '%1'='%2'").arg(it.key(), ep));
-        continue;
+            QStringLiteral("unsafe entryPoint '%1'='%2' (%3)")
+                .arg(it.key(), ep, confineErr));
       }
-      const QString resolved =
-          QDir::cleanPath(QDir(root).filePath(ep));
-      const QString base = QDir::cleanPath(root);
-      if (resolved != base &&
-          !resolved.startsWith(base + QLatin1Char('/'))) {
-        result.errors.append(
-            QStringLiteral("entry point escapes sourceDir: %1").arg(resolved));
-        continue;
-      }
-      if (!QFileInfo::exists(resolved) || !QFileInfo(resolved).isFile())
-        result.errors.append(
-            QStringLiteral("entry point file not found: '%1'").arg(ep));
     }
   }
 

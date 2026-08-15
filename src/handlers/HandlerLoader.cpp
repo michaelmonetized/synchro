@@ -1,7 +1,5 @@
 #include "HandlerLoader.h"
 
-#include <QDir>
-#include <QFileInfo>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -12,16 +10,10 @@
 QUrl HandlerLoader::entryPointUrl(const HandlerRegistry::Record &rec,
                                   const QString &kind) {
   const QString rel = rec.manifest.entryPoints.value(kind);
-  if (!Manifest::isSafeEntryPoint(rel))
+  QString resolved;
+  if (!Manifest::confineEntryPoint(rec.sourceDir, rel, &resolved, nullptr))
     return {};
-  const QString base = QDir::cleanPath(rec.sourceDir);
-  const QString resolved = QDir::cleanPath(QDir(base).filePath(rel));
-  if (resolved != base && !resolved.startsWith(base + QLatin1Char('/')))
-    return {};
-  const QFileInfo info(resolved);
-  if (!info.isFile())
-    return {};
-  return QUrl::fromLocalFile(info.absoluteFilePath());
+  return QUrl::fromLocalFile(resolved);
 }
 
 QQmlComponent *HandlerLoader::componentFor(QQmlEngine *engine,

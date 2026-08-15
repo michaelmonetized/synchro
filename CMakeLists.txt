@@ -251,6 +251,49 @@ if(BUILD_TESTING)
         target_compile_options(match_test PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME match_test COMMAND match_test)
+
+    qt_add_executable(peek_overlay_test
+        tests/peek_overlay_test.cpp
+        src/core/DirectoryModel.cpp
+        src/core/DirectoryLister.cpp
+        src/core/DirectoryWatcher.cpp
+        src/core/NavStack.cpp
+        src/core/FilterProxy.cpp
+        src/core/KeyMachine.cpp
+        src/core/PeekHost.cpp
+        src/core/ThumbnailService.cpp
+        src/core/MimeMap.cpp
+        src/handlers/Manifest.cpp
+        src/handlers/HandlerRegistry.cpp
+        src/handlers/HandlerLoader.cpp
+        src/handlers/HostApi.cpp
+        src/handlers/HandlerExec.cpp
+        src/handlers/XdgOpen.cpp
+    )
+    target_include_directories(peek_overlay_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core
+        ${CMAKE_SOURCE_DIR}/src/handlers
+    )
+    target_compile_definitions(peek_overlay_test PRIVATE
+        SYNCHRO_MAIN_QML="${CMAKE_SOURCE_DIR}/src/ui/qml/Main.qml"
+        SYNCHRO_FIRST_PARTY_HANDLER_DIR="${CMAKE_SOURCE_DIR}/handlers"
+    )
+    target_link_libraries(peek_overlay_test PRIVATE
+        Qt6::Test
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+        synchro_theme
+        synchro_themeplugin
+        synchro_handler
+        synchro_handlerplugin
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(peek_overlay_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME peek_overlay_test COMMAND peek_overlay_test)
+    set_tests_properties(peek_overlay_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 endif()
 
 set_target_properties(synchro PROPERTIES

@@ -137,12 +137,19 @@ void KeyMachine::restoreField(const QString &text) {
   setMode(Mode::ListFocused);
 }
 
+void KeyMachine::closePeek() {
+  if (m_host && m_host->isOpen())
+    m_host->close();
+}
+
 void KeyMachine::focusFilter() {
+  closePeek();
   setMode(Mode::FieldFilter);
   applyFieldText();
 }
 
 void KeyMachine::focusJump() {
+  closePeek();
   const QString path = m_model ? m_model->path() : QString();
   setMode(Mode::FieldJump);
   if (m_fieldText != path) {
@@ -156,9 +163,16 @@ void KeyMachine::focusJump() {
   emit jumpEpochChanged();
 }
 
-void KeyMachine::focusList() { setMode(Mode::ListFocused); }
+void KeyMachine::focusList() {
+  closePeek();
+  setMode(Mode::ListFocused);
+}
 
 void KeyMachine::escape() {
+  if (m_mode == Mode::PeekOpen || (m_host && m_host->isOpen())) {
+    closePeek();
+    return;
+  }
   if (m_mode != Mode::ListFocused) {
     if (!m_fieldText.isEmpty()) {
       clearFieldAndFilter();

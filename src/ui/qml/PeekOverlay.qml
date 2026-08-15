@@ -8,6 +8,9 @@ Item {
     objectName: "peekOverlay"
     visible: host && host.open
     z: 100
+    // List keeps focus so KeyMachine owns Space / j / k / Esc.
+    focus: false
+    activeFocusOnTab: false
 
     Rectangle {
         anchors.fill: parent
@@ -51,8 +54,7 @@ Item {
             return
         item.parent = surface
         item.anchors.fill = surface
-        if (item.forceActiveFocus)
-            item.forceActiveFocus()
+        item.focus = false
     }
 
     Connections {

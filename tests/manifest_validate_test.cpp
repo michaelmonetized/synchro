@@ -51,6 +51,8 @@ private slots:
   void openExecOnlyOk();
   void symlinkRejected();
   void isSafeEntryPointCopy();
+  void gitSymlinkEntryPointRejected();
+  void entryFileSymlinkRejected();
 };
 
 void ManifestValidateTest::firstPartyImageValid() {
@@ -324,6 +326,54 @@ void ManifestValidateTest::symlinkRejected() {
 void ManifestValidateTest::isSafeEntryPointCopy() {
   QVERIFY(Manifest::isSafeEntryPoint(QStringLiteral("Preview.qml")));
   QVERIFY(!Manifest::isSafeEntryPoint(QStringLiteral("Preview.qml\n")));
+}
+
+void ManifestValidateTest::gitSymlinkEntryPointRejected() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString outside = tmp.filePath(QStringLiteral("outside"));
+  QVERIFY(QDir().mkpath(outside));
+  QVERIFY(writeText(outside + QStringLiteral("/Preview.qml"),
+                    QByteArrayLiteral("import QtQuick\nItem {}\n")));
+  const QString dir = writeHandler(
+      tmp, QStringLiteral("acme.gitpeek"),
+      QByteArrayLiteral("{\n"
+                        "  \"schemaVersion\": 1,\n"
+                        "  \"id\": \"acme.gitpeek\",\n"
+                        "  \"name\": \"G\",\n"
+                        "  \"version\": \"1\",\n"
+                        "  \"kinds\": [\"preview\"],\n"
+                        "  \"entryPoints\": { \"preview\": \".git/Preview.qml\" }\n"
+                        "}\n"));
+  QVERIFY(QFile::link(outside, dir + QStringLiteral("/.git")));
+  const auto v = validateManifestDir(dir, false);
+  QVERIFY(!v.ok);
+  QVERIFY(v.errors.join(QLatin1Char(' ')).contains(QStringLiteral("escapes")) ||
+          v.errors.join(QLatin1Char(' ')).contains(QStringLiteral("symlink")));
+}
+
+void ManifestValidateTest::entryFileSymlinkRejected() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString outside = tmp.filePath(QStringLiteral("outside.qml"));
+  QVERIFY(writeText(outside, QByteArrayLiteral("import QtQuick\nItem {}\n")));
+  const QString dir = writeHandler(
+      tmp, QStringLiteral("acme.linkep"),
+      QByteArrayLiteral("{\n"
+                        "  \"schemaVersion\": 1,\n"
+                        "  \"id\": \"acme.linkep\",\n"
+                        "  \"name\": \"L\",\n"
+                        "  \"version\": \"1\",\n"
+                        "  \"kinds\": [\"preview\"],\n"
+                        "  \"entryPoints\": { \"preview\": \"Preview.qml\" }\n"
+                        "}\n"));
+  QVERIFY(QFile::link(outside, dir + QStringLiteral("/Preview.qml")));
+  QString err;
+  QVERIFY(!Manifest::confineEntryPoint(dir, QStringLiteral("Preview.qml"),
+                                       nullptr, &err));
+  QVERIFY(err.contains(QStringLiteral("symlink")) ||
+          err.contains(QStringLiteral("escapes")));
+  QVERIFY(!validateManifestDir(dir, false).ok);
 }
 
 int main(int argc, char **argv) {
