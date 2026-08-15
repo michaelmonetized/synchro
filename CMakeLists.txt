@@ -28,6 +28,9 @@ qt_add_qml_module(synchro
         src/ui/qml/Main.qml
 )
 
+set_source_files_properties(src/ui/qml/Synchro/Theme/Theme.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
 qt_add_qml_module(synchro_theme
     STATIC
     URI Synchro.Theme
@@ -48,9 +51,6 @@ qt_add_qml_module(synchro_handler
         src/ui/qml/Synchro/Handler/HandlerSurface.qml
     OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml/Synchro/Handler"
 )
-
-set_source_files_properties(src/ui/qml/Synchro/Theme/Theme.qml
-    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 target_link_libraries(synchro PRIVATE
     Qt6::Quick

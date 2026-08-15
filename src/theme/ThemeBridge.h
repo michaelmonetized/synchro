@@ -8,8 +8,7 @@
 #include <QTimer>
 #include <QtQml/qqmlregistration.h>
 
-// Watches the Omarchy theme-set *directory swap* (rm -rf theme && mv) rather
-// than a stable colors.toml inode, then exposes the Color/Style vocabulary.
+// Survives omarchy-theme-set replacing theme/ (inode death).
 class ThemeBridge : public QObject {
   Q_OBJECT
   QML_ELEMENT

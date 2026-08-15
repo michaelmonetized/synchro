@@ -16,7 +16,6 @@ namespace {
 constexpr int kDebounceMs = 50;
 constexpr int kMaxMissingRetries = 40;
 
-// Used when theme/colors.toml is missing.
 const QColor kFallbackForeground(QStringLiteral("#d7e9cb"));
 const QColor kFallbackBackground(QStringLiteral("#020000"));
 const QColor kFallbackAccent(QStringLiteral("#55937c"));
@@ -255,8 +254,6 @@ void ThemeBridge::loadColors(const QString &raw) {
 }
 
 QHash<QString, QString> ThemeBridge::parseShell(const QString &raw) const {
-  // Same walker as Color.parseShell: quoted strings, bare numbers, width
-  // lists, role names; inline comments; numbers kept as strings.
   QHash<QString, QString> parsed;
   if (raw.isEmpty())
     return parsed;
