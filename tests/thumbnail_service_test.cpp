@@ -110,6 +110,9 @@ void ThumbnailServiceTest::xdgUriIsGlibCompatible() {
            QStringLiteral(
                "file:///home/ryanr/Downloads/"
                "ChatGPT%20Image%20Nov%2012,%202025,%2006_35_48%20AM.png"));
+  QCOMPARE(
+      ThumbnailService::canonicalFileUri(QStringLiteral("/tmp/foo;bar.png")),
+      QStringLiteral("file:///tmp/foo%3Bbar.png"));
 }
 
 void ThumbnailServiceTest::validXdgPngAccepted() {

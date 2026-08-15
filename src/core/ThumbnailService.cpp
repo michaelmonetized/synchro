@@ -54,6 +54,7 @@ void debugLog(const char *fmt, ...) {
   std::fputc('\n', stderr);
 }
 
+// g_filename_to_uri leaves path extras unescaped except ';', which is %3B.
 bool uriPathAllowed(unsigned char c) {
   if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
       (c >= '0' && c <= '9'))
@@ -72,7 +73,6 @@ bool uriPathAllowed(unsigned char c) {
   case '*':
   case '+':
   case ',':
-  case ';':
   case '=':
   case ':':
   case '@':
