@@ -1,0 +1,14 @@
+/build/
+/build-*/
+/.cache/
+/CMakeUserPresets.json
+*.user
+*.AppImage
+.qmlcache/
+.qmake.stash
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+*.o
+*.a
+*.so

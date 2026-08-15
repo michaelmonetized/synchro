@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Synchro
+GenericName=File Manager
+Comment=Omarchy file OS
+Exec=synchro %U
+Terminal=false
+Categories=Utility;FileManager;FileTools;
+StartupWMClass=org.omarchy.synchro
+Keywords=files;browser;manager;
