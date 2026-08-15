@@ -336,8 +336,10 @@ void DirectoryModel::maybeActivatePending() {
   if (m_pendingActivate.isEmpty())
     return;
   const auto it = m_indexByName.constFind(m_pendingActivate);
-  if (it == m_indexByName.cend())
+  if (it == m_indexByName.cend()) {
+    m_pendingActivate.clear();
     return;
+  }
   const DirectoryEntry &e = m_all.at(it.value());
   if (e.dirKind == QLatin1String("pending"))
     return;
@@ -448,6 +450,8 @@ void DirectoryModel::insertPlaceholder(const QString &name, bool isDir) {
 }
 
 void DirectoryModel::removeByName(const QString &name) {
+  if (m_pendingActivate == name)
+    m_pendingActivate.clear();
   const auto it = m_indexByName.constFind(name);
   if (it == m_indexByName.cend())
     return;

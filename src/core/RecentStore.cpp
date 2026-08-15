@@ -11,6 +11,67 @@
 #include <QStandardPaths>
 #include <QTextStream>
 
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+
+namespace {
+
+// Compact replaces the JSONL inode (QSaveFile rename). flock on the
+// data file would not serialize writers across that replace, so the
+// lock lives on a sidecar.
+class FileLock {
+public:
+  FileLock(const QString &lockPath, int op) {
+    const QByteArray enc = QFile::encodeName(lockPath);
+    m_fd = ::open(enc.constData(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    if (m_fd < 0)
+      return;
+    if (::flock(m_fd, op) != 0) {
+      ::close(m_fd);
+      m_fd = -1;
+    }
+  }
+  ~FileLock() {
+    if (m_fd >= 0) {
+      ::flock(m_fd, LOCK_UN);
+      ::close(m_fd);
+    }
+  }
+  bool ok() const { return m_fd >= 0; }
+  FileLock(const FileLock &) = delete;
+  FileLock &operator=(const FileLock &) = delete;
+
+private:
+  int m_fd = -1;
+};
+
+QVector<RecentStore::Entry> parseEntries(const QString &path) {
+  QVector<RecentStore::Entry> out;
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly))
+    return out;
+  QTextStream in(&file);
+  while (!in.atEnd()) {
+    const QString line = in.readLine().trimmed();
+    if (line.isEmpty())
+      continue;
+    const QJsonDocument doc = QJsonDocument::fromJson(line.toUtf8());
+    if (!doc.isObject())
+      continue;
+    const QJsonObject obj = doc.object();
+    RecentStore::Entry e;
+    e.ts = obj.value(QStringLiteral("ts")).toString();
+    e.path = obj.value(QStringLiteral("path")).toString();
+    e.mime = obj.value(QStringLiteral("mime")).toString();
+    if (!e.path.isEmpty())
+      out.append(e);
+  }
+  return out;
+}
+
+} // namespace
+
 RecentStore::RecentStore(QObject *parent)
     : RecentStore(QString(), 500, 1000, parent) {}
 
@@ -27,12 +88,20 @@ QString RecentStore::defaultPath() {
       .filePath(QStringLiteral("synchro/recent.jsonl"));
 }
 
+QString RecentStore::lockPath() const {
+  return m_path + QStringLiteral(".lock");
+}
+
 void RecentStore::record(const QString &path, const QString &mime) {
   if (path.isEmpty())
     return;
 
   const QString dir = QFileInfo(m_path).absolutePath();
   if (!QDir().mkpath(dir))
+    return;
+
+  FileLock lock(lockPath(), LOCK_EX);
+  if (!lock.ok())
     return;
 
   QFile file(m_path);
@@ -50,55 +119,22 @@ void RecentStore::record(const QString &path, const QString &mime) {
   file.write("\n");
   file.close();
 
-  if (!m_counted) {
-    m_lines = countLines();
-    m_counted = true;
-  } else {
-    ++m_lines;
-  }
+  m_lines = parseEntries(m_path).size();
+  m_counted = true;
   if (m_lines >= m_compactAt)
     compact();
 }
 
 QVector<RecentStore::Entry> RecentStore::entries() const {
-  QVector<Entry> out;
-  QFile file(m_path);
-  if (!file.open(QIODevice::ReadOnly))
-    return out;
-  QTextStream in(&file);
-  while (!in.atEnd()) {
-    const QString line = in.readLine().trimmed();
-    if (line.isEmpty())
-      continue;
-    const QJsonDocument doc = QJsonDocument::fromJson(line.toUtf8());
-    if (!doc.isObject())
-      continue;
-    const QJsonObject obj = doc.object();
-    Entry e;
-    e.ts = obj.value(QStringLiteral("ts")).toString();
-    e.path = obj.value(QStringLiteral("path")).toString();
-    e.mime = obj.value(QStringLiteral("mime")).toString();
-    if (!e.path.isEmpty())
-      out.append(e);
-  }
-  return out;
-}
-
-int RecentStore::countLines() const {
-  QFile file(m_path);
-  if (!file.open(QIODevice::ReadOnly))
-    return 0;
-  int n = 0;
-  QTextStream in(&file);
-  while (!in.atEnd()) {
-    if (!in.readLine().trimmed().isEmpty())
-      ++n;
-  }
-  return n;
+  FileLock lock(lockPath(), LOCK_SH);
+  if (!lock.ok())
+    return {};
+  return parseEntries(m_path);
 }
 
 void RecentStore::compact() {
-  const QVector<Entry> all = entries();
+  // Caller holds LOCK_EX. Re-read so a sibling window's append is kept.
+  const QVector<Entry> all = parseEntries(m_path);
   QVector<Entry> kept;
   QSet<QString> seen;
   kept.reserve(qMin(all.size(), m_keep));

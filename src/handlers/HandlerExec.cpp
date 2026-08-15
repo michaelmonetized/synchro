@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QObject>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -14,6 +15,30 @@
 #include <QUrl>
 
 namespace {
+
+QStringList g_selectionFiles;
+bool g_quitHooked = false;
+
+void trackSelectionFile(const QString &path) {
+  auto *app = QCoreApplication::instance();
+  if (!app)
+    return;
+  if (!g_quitHooked) {
+    g_quitHooked = true;
+    QObject::connect(app, &QCoreApplication::aboutToQuit, app, [] {
+      for (const QString &p : g_selectionFiles)
+        QFile::remove(p);
+      g_selectionFiles.clear();
+    });
+  }
+  g_selectionFiles.append(path);
+  QTimer::singleShot(60000, app, [path] {
+    QFile::remove(path);
+    g_selectionFiles.removeAll(path);
+  });
+}
+
+
 
 QString firstPath(const HandlerExec::Request &req) {
   return req.items.isEmpty() ? QString() : req.items.constFirst().path;
@@ -209,9 +234,7 @@ QString HandlerExec::writeSelection(const Request &req) {
   file.flush();
   file.close();
 
-  const QString victim = path;
-  if (auto *app = QCoreApplication::instance())
-    QTimer::singleShot(60000, app, [victim] { QFile::remove(victim); });
+  trackSelectionFile(path);
   return path;
 }
 
@@ -244,8 +267,13 @@ bool HandlerExec::run(const Request &req) {
   const QStringList arguments = wrapped.mid(1);
   const QProcessEnvironment env = buildEnv(req);
 
-  if (m_hook)
-    return m_hook(program, arguments, env);
+  if (m_hook) {
+    if (m_hook(program, arguments, env))
+      return true;
+    if (m_error.isEmpty())
+      m_error = QStringLiteral("launch hook rejected");
+    return false;
+  }
 
   QProcess proc;
   proc.setProgram(program);

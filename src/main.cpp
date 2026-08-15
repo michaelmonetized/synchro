@@ -54,15 +54,16 @@ int main(int argc, char *argv[]) {
   NavStack navStack(&directoryModel);
   KeyMachine keyMachine(&directoryModel, &filterProxy, &navStack);
   MimeMap mimeMap;
-  RecentStore recents;
   XdgOpen xdgOpen;
   if (!xdgOpen.load()) {
     std::fprintf(stderr, "synchro: %s\n", qPrintable(xdgOpen.lastError()));
   }
+  // Declared last so it dies first and drops this connection before the
+  // captured xdgOpen / mimeMap refs.
+  RecentStore recents;
 
   QObject::connect(
-      &directoryModel, &DirectoryModel::fileActivated,
-      &directoryModel,
+      &directoryModel, &DirectoryModel::fileActivated, &recents,
       [&](const QString &path, const QString &mime) {
         QString resolved = mime;
         if (resolved.isEmpty())

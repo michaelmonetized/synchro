@@ -81,7 +81,9 @@ bool XdgOpen::open(const QString &path, const QString &mime,
   m_error.clear();
   if (!m_loaded && !load())
     return false;
-  if (!m_tryExec.isEmpty() &&
+  // Hooks replace the real spawn; skip TryExec so tests need not have
+  // xdg-open on PATH (and cannot accidentally startDetached it).
+  if (!m_exec.hasLaunchHook() && !m_tryExec.isEmpty() &&
       QStandardPaths::findExecutable(m_tryExec).isEmpty()) {
     m_error = QStringLiteral("tryExec %1 not found").arg(m_tryExec);
     return false;

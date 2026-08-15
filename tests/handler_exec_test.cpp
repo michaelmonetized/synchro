@@ -20,6 +20,8 @@
 #include <QTest>
 #include <QUrl>
 
+#include <thread>
+
 namespace {
 
 bool waitListingDone(DirectoryModel &model, int timeoutMs = 5000) {
@@ -64,6 +66,31 @@ HandlerExec::Request singleFile(const QString &path,
   return req;
 }
 
+void dropSelection(const QProcessEnvironment &env) {
+  const QString sel = env.value(QStringLiteral("SYNCHRO_SELECTION"));
+  if (!sel.isEmpty())
+    QFile::remove(sel);
+}
+
+bool writeXdgManifest(const QString &root, const QByteArray &openBlock) {
+  if (!QDir(root).mkpath(QStringLiteral("synchro.open.xdg")))
+    return false;
+  QFile man(QDir(root).filePath(QStringLiteral("synchro.open.xdg/manifest.json")));
+  if (!man.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    return false;
+  man.write("{\n"
+            "  \"schemaVersion\": 1,\n"
+            "  \"id\": \"synchro.open.xdg\",\n"
+            "  \"name\": \"Open\",\n"
+            "  \"version\": \"1.0.0\",\n"
+            "  \"kinds\": [\"open\"],\n"
+            "  \"entryPoints\": {},\n"
+            "  \"open\": ");
+  man.write(openBlock);
+  man.write("\n}\n");
+  return true;
+}
+
 } // namespace
 
 class HandlerExecTest : public QObject {
@@ -77,11 +104,13 @@ private slots:
   void wrapPrefersUwsmThenSetsidFallback();
   void runUsesHookNotRealExec();
   void runSetsHandlerEnv();
+  void hookFailureSetsError();
   void loadFirstPartyManifest();
   void loadCustomManifestExec();
   void mimeForTextAndDir();
   void recentAppendAndCompact();
   void recentDefaultPathIsXdgDataHome();
+  void recentTwoStoresSerialize();
   void enterFileOpensViaManifestAndRecords();
   void enterDirDoesNotOpen();
 };
@@ -168,13 +197,16 @@ void HandlerExecTest::runUsesHookNotRealExec() {
   HandlerExec exec;
   QString program;
   QStringList args;
+  QProcessEnvironment env;
   exec.setLaunchHook([&](const QString &prog, const QStringList &a,
-                         const QProcessEnvironment &) {
+                         const QProcessEnvironment &e) {
     program = prog;
     args = a;
+    env = e;
     return true;
   });
   QVERIFY(exec.run(singleFile(QStringLiteral("/tmp/only-in-test.txt"))));
+  dropSelection(env);
   QVERIFY(!program.isEmpty());
   QVERIFY(args.contains(QStringLiteral("xdg-open")) ||
           program.endsWith(QStringLiteral("xdg-open")) ||
@@ -207,7 +239,20 @@ void HandlerExecTest::runSetsHandlerEnv() {
   QVERIFY(f.open(QIODevice::ReadOnly));
   const QJsonObject obj = QJsonDocument::fromJson(f.readAll()).object();
   QCOMPARE(obj.value(QStringLiteral("cwd")).toString(), QStringLiteral("/tmp"));
-  QFile::remove(sel);
+  dropSelection(env);
+}
+
+void HandlerExecTest::hookFailureSetsError() {
+  HandlerExec exec;
+  QProcessEnvironment env;
+  exec.setLaunchHook([&](const QString &, const QStringList &,
+                         const QProcessEnvironment &e) {
+    env = e;
+    return false;
+  });
+  QVERIFY(!exec.run(singleFile(QStringLiteral("/tmp/hook-fail.txt"))));
+  dropSelection(env);
+  QCOMPARE(exec.lastError(), QStringLiteral("launch hook rejected"));
 }
 
 void HandlerExecTest::loadFirstPartyManifest() {
@@ -223,19 +268,8 @@ void HandlerExecTest::loadFirstPartyManifest() {
 void HandlerExecTest::loadCustomManifestExec() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
-  QVERIFY(QDir(tmp.path()).mkpath(QStringLiteral("synchro.open.xdg")));
-  QFile man(tmp.filePath(QStringLiteral("synchro.open.xdg/manifest.json")));
-  QVERIFY(man.open(QIODevice::WriteOnly));
-  man.write(R"({
-    "schemaVersion": 1,
-    "id": "synchro.open.xdg",
-    "name": "Open",
-    "version": "1.0.0",
-    "kinds": ["open"],
-    "entryPoints": {},
-    "open": { "runtime": "exec", "exec": "true %f" }
-  })");
-  man.close();
+  QVERIFY(writeXdgManifest(
+      tmp.path(), QByteArrayLiteral("{ \"runtime\": \"exec\", \"exec\": \"true %f\" }")));
 
   XdgOpen xdg;
   QVERIFY(xdg.load(tmp.path()));
@@ -243,14 +277,17 @@ void HandlerExecTest::loadCustomManifestExec() {
 
   QStringList args;
   QString program;
+  QProcessEnvironment env;
   xdg.exec().setLaunchHook([&](const QString &p, const QStringList &a,
-                               const QProcessEnvironment &) {
+                               const QProcessEnvironment &e) {
     program = p;
     args = a;
+    env = e;
     return true;
   });
   QVERIFY(xdg.open(tmp.filePath(QStringLiteral("note.txt")),
                    QStringLiteral("text/plain"), tmp.path()));
+  dropSelection(env);
   const QStringList all = QStringList{program} + args;
   QVERIFY(all.contains(QStringLiteral("true")));
   QVERIFY(all.contains(tmp.filePath(QStringLiteral("note.txt"))));
@@ -324,12 +361,57 @@ void HandlerExecTest::recentDefaultPathIsXdgDataHome() {
                      .filePath(QStringLiteral("synchro/recent.jsonl")));
 }
 
+void HandlerExecTest::recentTwoStoresSerialize() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString path = tmp.filePath(QStringLiteral("recent.jsonl"));
+
+  auto worker = [&](const QString &prefix) {
+    RecentStore store(path, 500, 10000);
+    for (int i = 0; i < 25; ++i)
+      store.record(prefix + QString::number(i), QStringLiteral("text/plain"));
+  };
+  std::thread t1([&] { worker(QStringLiteral("a")); });
+  std::thread t2([&] { worker(QStringLiteral("b")); });
+  t1.join();
+  t2.join();
+
+  RecentStore reader(path, 500, 10000);
+  QCOMPARE(reader.entries().size(), 50);
+
+  RecentStore a(path, 500, 10000);
+  RecentStore b(path, 500, 10000);
+  a.record(QStringLiteral("/from-a"), QStringLiteral("text/plain"));
+  b.record(QStringLiteral("/from-b"), QStringLiteral("text/plain"));
+  QStringList paths;
+  for (const auto &e : a.entries())
+    paths.append(e.path);
+  QVERIFY(paths.contains(QStringLiteral("/from-a")));
+  QVERIFY(paths.contains(QStringLiteral("/from-b")));
+
+  RecentStore compacting(path, 5, 53);
+  compacting.record(QStringLiteral("/compact"), QStringLiteral("text/plain"));
+  const auto after = compacting.entries();
+  QVERIFY(!after.isEmpty());
+  QVERIFY(after.size() <= 5);
+  QFile f(path);
+  QVERIFY(f.open(QIODevice::ReadOnly));
+  const QByteArray raw = f.readAll();
+  for (const QByteArray &line : raw.split('\n')) {
+    if (line.trimmed().isEmpty())
+      continue;
+    QVERIFY(QJsonDocument::fromJson(line).isObject());
+  }
+}
+
 void HandlerExecTest::enterFileOpensViaManifestAndRecords() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   const QString filePath = tmp.filePath(QStringLiteral("README.md"));
   QVERIFY(writeFile(filePath));
   QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src")));
+  QVERIFY(writeXdgManifest(
+      tmp.path(), QByteArrayLiteral("{ \"runtime\": \"exec\", \"exec\": \"true %f\" }")));
 
   DirectoryModel model;
   FilterProxy proxy;
@@ -339,7 +421,8 @@ void HandlerExecTest::enterFileOpensViaManifestAndRecords() {
   RecentStore recents(tmp.filePath(QStringLiteral("recent.jsonl")), 50, 100);
   MimeMap mimeMap;
   XdgOpen xdg;
-  QVERIFY(xdg.load());
+  QVERIFY(xdg.load(tmp.path()));
+  QCOMPARE(xdg.execLine(), QStringLiteral("true %f"));
 
   QString program;
   QStringList args;
@@ -370,7 +453,7 @@ void HandlerExecTest::enterFileOpensViaManifestAndRecords() {
 
   QCOMPARE(canon(model.path()), canon(tmp.path()));
   const QStringList launched = QStringList{program} + args;
-  QVERIFY(launched.contains(QStringLiteral("xdg-open")));
+  QVERIFY(launched.contains(QStringLiteral("true")));
   QVERIFY(launched.contains(filePath) ||
           launched.contains(QFileInfo(filePath).absoluteFilePath()));
   const QString setsid =
@@ -389,9 +472,7 @@ void HandlerExecTest::enterFileOpensViaManifestAndRecords() {
   QCOMPARE(rec.size(), 1);
   QCOMPARE(QFileInfo(rec.at(0).path).fileName(),
            QStringLiteral("README.md"));
-  const QString sel = env.value(QStringLiteral("SYNCHRO_SELECTION"));
-  if (!sel.isEmpty())
-    QFile::remove(sel);
+  dropSelection(env);
 }
 
 void HandlerExecTest::enterDirDoesNotOpen() {

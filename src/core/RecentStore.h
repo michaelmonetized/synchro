@@ -28,7 +28,7 @@ public:
 
 private:
   void compact();
-  int countLines() const;
+  QString lockPath() const;
 
   QString m_path;
   int m_keep = 500;

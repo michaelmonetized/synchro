@@ -41,6 +41,7 @@ public:
 
   bool run(const Request &req);
   void setLaunchHook(LaunchHook hook) { m_hook = std::move(hook); }
+  bool hasLaunchHook() const { return static_cast<bool>(m_hook); }
   QString lastError() const { return m_error; }
 
 private:

@@ -120,6 +120,7 @@ private slots:
   void activateDirChangesPath();
   void activateFileEmitsAndStays();
   void activatePendingSymlinkToFile();
+  void pendingActivateDroppedIfNameDeleted();
   void staleSetPathDoesNotClobber();
   void activatePendingSymlinkToDir();
   void listingTwoThousandLeavesGuiResponsive();
@@ -461,6 +462,50 @@ void DirectoryModelTest::activatePendingSymlinkToFile() {
   QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
            QFileInfo(tmp.path()).canonicalFilePath());
   QVERIFY(spy.at(0).at(0).toString().endsWith(QStringLiteral("filelink")));
+}
+
+void DirectoryModelTest::pendingActivateDroppedIfNameDeleted() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QFile target(tmp.filePath(QStringLiteral("targetfile")));
+  QVERIFY(target.open(QIODevice::WriteOnly));
+  target.write("x", 1);
+  target.close();
+  QVERIFY(QFile::link(QStringLiteral("targetfile"),
+                      tmp.filePath(QStringLiteral("filelink"))));
+
+  DirectoryModel model;
+  QSignalSpy spy(&model, &DirectoryModel::fileActivated);
+  bool hadPending = false;
+  bool cleared = false;
+  connect(&model, &DirectoryModel::firstRowsInserted, this, [&] {
+    const int row = findRow(model, QStringLiteral("filelink"));
+    if (row < 0)
+      return;
+    model.setCurrentIndex(row);
+    model.activateCurrent();
+    hadPending = !model.m_pendingActivate.isEmpty();
+    QFile::remove(tmp.filePath(QStringLiteral("filelink")));
+    model.removeByName(QStringLiteral("filelink"));
+    cleared = model.m_pendingActivate.isEmpty();
+  });
+  model.setPath(tmp.path());
+  QVERIFY(QTest::qWaitFor([&] { return hadPending && !model.listing(); }, 3000));
+  QVERIFY(cleared);
+  QCOMPARE(spy.count(), 0);
+
+  QVERIFY(QFile::link(QStringLiteral("targetfile"),
+                      tmp.filePath(QStringLiteral("filelink"))));
+  QVERIFY(QTest::qWaitFor(
+      [&] { return findRow(model, QStringLiteral("filelink")) >= 0; }, 3000));
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        const int row = findRow(model, QStringLiteral("filelink"));
+        return row >= 0 && roleAt(model, row, DirectoryModel::DirKindRole)
+                                   .toString() != QStringLiteral("pending");
+      },
+      3000));
+  QCOMPARE(spy.count(), 0);
 }
 
 void DirectoryModelTest::staleSetPathDoesNotClobber() {
