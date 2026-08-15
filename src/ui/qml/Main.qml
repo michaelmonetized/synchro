@@ -9,22 +9,13 @@ Window {
     minimumWidth: 480
     minimumHeight: 320
     visible: true
-    title: "Synchro"
+    title: directoryModel.path.length ? directoryModel.path : "Synchro"
     color: Theme.background
 
-    Rectangle {
+    FileList {
+        id: fileList
         anchors.fill: parent
-        color: Theme.background
-        radius: Theme.radius
-        border.width: 1
-        border.color: Theme.normalBorder
-
-        Text {
-            anchors.centerIn: parent
-            text: "Synchro"
-            color: Theme.foreground
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontBody
-        }
+        fileModel: directoryModel
+        Component.onCompleted: forceActiveFocus()
     }
 }

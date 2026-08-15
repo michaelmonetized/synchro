@@ -13,6 +13,12 @@ set(QT_QML_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml")
 
 qt_add_executable(synchro
     src/main.cpp
+    src/core/DirectoryModel.cpp
+    src/core/DirectoryLister.cpp
+)
+
+target_include_directories(synchro PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/core
 )
 
 # Debug / uninstalled builds resolve first-party handlers from the source tree.
@@ -26,6 +32,7 @@ qt_add_qml_module(synchro
     VERSION 1.0
     QML_FILES
         src/ui/qml/Main.qml
+        src/ui/qml/FileList.qml
 )
 
 set_source_files_properties(src/ui/qml/Synchro/Theme/Theme.qml
@@ -71,6 +78,31 @@ target_include_directories(synchro_theme PUBLIC
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(synchro PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(synchro_theme PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    qt_add_executable(directory_model_test
+        tests/directory_model_test.cpp
+        src/core/DirectoryModel.cpp
+        src/core/DirectoryLister.cpp
+    )
+    target_include_directories(directory_model_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core
+    )
+    target_link_libraries(directory_model_test PRIVATE
+        Qt6::Test
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(directory_model_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME directory_model_test COMMAND directory_model_test)
+    set_tests_properties(directory_model_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 endif()
 
 set_target_properties(synchro PROPERTIES

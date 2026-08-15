@@ -1,6 +1,10 @@
+#include "DirectoryModel.h"
+
 #include <QCommandLineParser>
+#include <QDir>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
 #include <QtQml/QQmlExtensionPlugin>
 
 Q_IMPORT_QML_PLUGIN(Synchro_ThemePlugin)
@@ -31,9 +35,19 @@ int main(int argc, char *argv[]) {
   parser.process(app);
   Q_UNUSED(parser.isSet(newWindowOption));
 
+  QString startPath = QDir::homePath();
+  const QStringList positional = parser.positionalArguments();
+  if (!positional.isEmpty())
+    startPath = positional.first();
+
+  DirectoryModel directoryModel;
+  directoryModel.setPath(startPath);
+
   QQmlApplicationEngine engine;
   engine.addImportPath(QCoreApplication::applicationDirPath() +
                        QStringLiteral("/qml"));
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &directoryModel);
 
   QObject::connect(
       &engine, &QQmlApplicationEngine::objectCreationFailed, &app,
