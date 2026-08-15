@@ -123,7 +123,9 @@ Window {
                 if (typeof hostApi !== "undefined" && hostApi && hostApi.actionOpen)
                     actionOverlay.reparentAction()
                 if (typeof hostApi !== "undefined" && hostApi && !hostApi.actionOpen) {
-                    if (root.gridMode)
+                    if (root.keys && root.keys.fieldFocused)
+                        commandField.focusInput()
+                    else if (root.gridMode)
                         fileGrid.forceActiveFocus()
                     else
                         fileList.forceActiveFocus()
@@ -134,13 +136,13 @@ Window {
 
     Shortcut {
         sequence: "Ctrl+K"
-        enabled: root.keys && !root.keys.peekOpen
+        enabled: root.keys && !root.keys.peekOpen && !root.keys.actionOpen
         onActivated: root.keys.focusFilter()
     }
 
     Shortcut {
         sequence: "Ctrl+L"
-        enabled: root.keys && !root.keys.peekOpen
+        enabled: root.keys && !root.keys.peekOpen && !root.keys.actionOpen
         onActivated: root.keys.focusJump()
     }
 

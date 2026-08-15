@@ -58,6 +58,10 @@ QString KeyMachine::mode() const {
   return QStringLiteral("list-focused");
 }
 
+bool KeyMachine::actionOpen() const {
+  return m_host && m_host->actionOpen();
+}
+
 void KeyMachine::setPeekHost(PeekHost *host) {
   if (m_host == host)
     return;
@@ -72,6 +76,8 @@ void KeyMachine::setPeekHost(PeekHost *host) {
     else if (m_mode == Mode::PeekOpen)
       setMode(Mode::ListFocused);
   });
+  connect(m_host, &PeekHost::actionOpenChanged, this,
+          &KeyMachine::actionOpenChanged);
 }
 
 void KeyMachine::setMode(Mode mode) {
@@ -142,14 +148,24 @@ void KeyMachine::closePeek() {
     m_host->close();
 }
 
-void KeyMachine::focusFilter() {
+void KeyMachine::closeAction() {
+  if (m_host && m_host->actionOpen())
+    m_host->closeAction();
+}
+
+void KeyMachine::closeOverlays() {
   closePeek();
+  closeAction();
+}
+
+void KeyMachine::focusFilter() {
+  closeOverlays();
   setMode(Mode::FieldFilter);
   applyFieldText();
 }
 
 void KeyMachine::focusJump() {
-  closePeek();
+  closeOverlays();
   const QString path = m_model ? m_model->path() : QString();
   setMode(Mode::FieldJump);
   if (m_fieldText != path) {
@@ -164,11 +180,15 @@ void KeyMachine::focusJump() {
 }
 
 void KeyMachine::focusList() {
-  closePeek();
+  closeOverlays();
   setMode(Mode::ListFocused);
 }
 
 void KeyMachine::escape() {
+  if (m_host && m_host->actionOpen()) {
+    closeAction();
+    return;
+  }
   if (m_mode == Mode::PeekOpen || (m_host && m_host->isOpen())) {
     closePeek();
     return;
@@ -361,7 +381,7 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
     return true;
   }
   if (key == Qt::Key_T && !alt && !chord && !shift) {
-    closePeek();
+    closeOverlays();
     emit terminalRequested();
     return true;
   }
@@ -380,14 +400,14 @@ void KeyMachine::seek(const QString &chunk) {
 bool KeyMachine::handlePeekKey(int key, int modifiers) {
   if ((key == Qt::Key_Return || key == Qt::Key_Enter) && hasCtrl(modifiers) &&
       !hasAlt(modifiers) && !hasMeta(modifiers)) {
-    closePeek();
+    closeOverlays();
     emit openWithRequested();
     return true;
   }
   if (hasChord(modifiers) || hasAlt(modifiers))
     return true;
   if (key == Qt::Key_T && !hasShift(modifiers)) {
-    closePeek();
+    closeOverlays();
     emit terminalRequested();
     return true;
   }
@@ -429,7 +449,7 @@ bool KeyMachine::handleListKey(int key, int modifiers, const QString &text) {
   }
   if ((key == Qt::Key_Return || key == Qt::Key_Enter) &&
       hasCtrl(modifiers) && !hasAlt(modifiers) && !hasMeta(modifiers)) {
-    closePeek();
+    closeOverlays();
     emit openWithRequested();
     return true;
   }

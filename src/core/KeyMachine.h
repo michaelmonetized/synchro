@@ -17,6 +17,7 @@ class KeyMachine : public QObject {
   Q_PROPERTY(bool listFocused READ listFocused NOTIFY modeChanged)
   Q_PROPERTY(bool fieldFocused READ fieldFocused NOTIFY modeChanged)
   Q_PROPERTY(bool peekOpen READ peekOpen NOTIFY modeChanged)
+  Q_PROPERTY(bool actionOpen READ actionOpen NOTIFY actionOpenChanged)
   Q_PROPERTY(QString fieldText READ fieldText WRITE setFieldText NOTIFY
                  fieldTextChanged)
   Q_PROPERTY(int jumpEpoch READ jumpEpoch NOTIFY jumpEpochChanged)
@@ -36,6 +37,7 @@ public:
     return m_mode == Mode::FieldFilter || m_mode == Mode::FieldJump;
   }
   bool peekOpen() const { return m_mode == Mode::PeekOpen; }
+  bool actionOpen() const;
   void setPeekHost(PeekHost *host);
   QString fieldText() const { return m_fieldText; }
   int jumpEpoch() const { return m_jumpEpoch; }
@@ -61,10 +63,13 @@ signals:
   void jumpEpochChanged();
   void terminalRequested();
   void openWithRequested();
+  void actionOpenChanged();
 
 private:
   void setMode(Mode mode);
   void closePeek();
+  void closeAction();
+  void closeOverlays();
   void applyFieldText();
   void clearFieldAndFilter();
   void onPathChanged();

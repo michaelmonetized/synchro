@@ -66,6 +66,7 @@ class PeekOverlayTest : public QObject {
 
 private slots:
   void spaceTogglesImagePeekAndJSteps();
+  void ctrlKClosesOpenWithOverlay();
 };
 
 void PeekOverlayTest::spaceTogglesImagePeekAndJSteps() {
@@ -160,6 +161,84 @@ void PeekOverlayTest::spaceTogglesImagePeekAndJSteps() {
   QCOMPARE(nameAt(proxy, proxy.currentIndex()),
            nameAt(proxy, second));
   QVERIFY(hostApi.isOpen());
+}
+
+void PeekOverlayTest::ctrlKClosesOpenWithOverlay() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writePng(tmp.filePath(QStringLiteral("a.png"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  MimeMap mimeMap;
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user-handlers")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+  QVERIFY(registry.contains(QStringLiteral("synchro.action.open-with")));
+  HandlerLoader loader;
+  XdgOpen xdg;
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const int row = findProxy(proxy, QStringLiteral("a.png"));
+  QVERIFY(row >= 0);
+  proxy.setCurrentIndex(row);
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  HostApi hostApi(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+                  &engine);
+  keys.setPeekHost(&hostApi);
+  QObject::connect(&keys, &KeyMachine::openWithRequested, &hostApi,
+                   &HostApi::openWithPalette);
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), &hostApi);
+
+  QString errors;
+  QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
+                   &engine,
+                   [&]() { errors = QStringLiteral("create failed"); });
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY2(!engine.rootObjects().isEmpty(),
+           qPrintable(errors.isEmpty() ? QStringLiteral("Main.qml produced no "
+                                                        "root object")
+                                       : errors));
+
+  auto *window =
+      qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+  QVERIFY(window);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  auto *list = window->findChild<QQuickItem *>(QStringLiteral("fileList"));
+  QVERIFY(list);
+  auto *overlay = window->findChild<QQuickItem *>(QStringLiteral("actionOverlay"));
+  QVERIFY(overlay);
+
+  list->forceActiveFocus();
+  QVERIFY(QTest::qWaitFor([&] { return list->hasActiveFocus(); }, 1000));
+  QVERIFY(keys.handleListKey(Qt::Key_Return, Qt::ControlModifier, QString()));
+  QVERIFY2(QTest::qWaitFor([&] { return hostApi.actionOpen(); }, 2000),
+           qPrintable(hostApi.lastError()));
+  QVERIFY(overlay->isVisible());
+  QVERIFY(keys.actionOpen());
+
+  keys.focusFilter();
+  QVERIFY(QTest::qWaitFor([&] { return !hostApi.actionOpen(); }, 2000));
+  QVERIFY(!overlay->isVisible());
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
 }
 
 int main(int argc, char **argv) {

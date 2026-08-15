@@ -42,7 +42,7 @@ public:
   bool isOpen() const override { return m_open; }
   QObject *previewItem() const { return m_previewItem; }
   QString title() const { return m_title; }
-  bool actionOpen() const { return m_actionOpen; }
+  bool actionOpen() const override { return m_actionOpen; }
   QObject *actionItem() const { return m_actionItem; }
   QVariantList openCandidates() const { return m_openCandidates; }
   QString lastError() const { return m_error; }
@@ -63,7 +63,7 @@ public:
   Q_INVOKABLE bool runTerminal();
   Q_INVOKABLE bool runTrash();
   Q_INVOKABLE bool openWithPalette();
-  Q_INVOKABLE void closeAction();
+  Q_INVOKABLE void closeAction() override;
 
 signals:
   void fileChanged();
@@ -71,7 +71,6 @@ signals:
   void previewItemChanged();
   void titleChanged();
   void statReady(const QUrl &url, const QVariantMap &st);
-  void actionOpenChanged();
   void actionItemChanged();
   void openCandidatesChanged();
 

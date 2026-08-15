@@ -83,10 +83,22 @@ public:
     emit openChanged();
   }
   void step(int delta) override { lastStep = delta; }
+  bool actionOpen() const override { return m_action; }
+  void closeAction() override {
+    if (!m_action)
+      return;
+    m_action = false;
+    emit actionOpenChanged();
+  }
+  void openAction() {
+    m_action = true;
+    emit actionOpenChanged();
+  }
   int lastStep = 0;
 
 private:
   bool m_open = false;
+  bool m_action = false;
 };
 
 class CommandFieldTest : public QObject {
@@ -114,6 +126,7 @@ private slots:
   void mainQmlSlashThenSrcFilters();
   void tRequestsTerminal();
   void ctrlReturnRequestsOpenWith();
+  void focusFilterClosesActionOverlay();
 };
 
 void CommandFieldTest::launchIsListFocused() {
@@ -721,6 +734,29 @@ void CommandFieldTest::ctrlReturnRequestsOpenWith() {
   QSignalSpy spy(&keys, &KeyMachine::openWithRequested);
   QVERIFY(keys.handleListKey(Qt::Key_Return, Qt::ControlModifier, QString()));
   QCOMPARE(spy.count(), 1);
+}
+
+void CommandFieldTest::focusFilterClosesActionOverlay() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  StubPeek peek;
+  keys.setPeekHost(&peek);
+
+  peek.openAction();
+  QVERIFY(keys.actionOpen());
+  QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
+  QVERIFY(!peek.actionOpen());
+  QVERIFY(!keys.actionOpen());
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+
+  peek.openAction();
+  keys.focusFilter();
+  QVERIFY(!peek.actionOpen());
+  QVERIFY(!keys.actionOpen());
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
 }
 
 int main(int argc, char **argv) {

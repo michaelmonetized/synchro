@@ -14,7 +14,12 @@ public:
   virtual bool openCurrent() = 0;
   virtual void close() = 0;
   virtual void step(int delta) = 0;
+  // Open-with (and later action) overlays. Default no-op so list tests
+  // can keep a stub peek host.
+  virtual bool actionOpen() const { return false; }
+  virtual void closeAction() {}
 
 signals:
   void openChanged();
+  void actionOpenChanged();
 };

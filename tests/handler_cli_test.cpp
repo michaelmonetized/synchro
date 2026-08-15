@@ -205,8 +205,15 @@ void HandlerCliTest::updateFastForward() {
                   QStringLiteral("bump")},
                  origin));
 
+  QString surfaced;
+  install.setReviewSink([&](const QString &diff) { surfaced = diff; });
   QVERIFY2(install.update(QStringLiteral("acme.up")),
            qPrintable(install.lastError()));
+  QVERIFY2(!install.lastReviewDiff().isEmpty(),
+           "update must surface a review diff when HEAD != FETCH_HEAD");
+  QVERIFY(install.lastReviewDiff().contains(QStringLiteral("1.1.0")));
+  QCOMPARE(surfaced, install.lastReviewDiff());
+  QVERIFY(install.lastMessage().contains(QStringLiteral("Updated acme.up")));
   const QString landed =
       QDir(reg.userDir()).filePath(QStringLiteral("acme.up/manifest.json"));
   QFile f(landed);

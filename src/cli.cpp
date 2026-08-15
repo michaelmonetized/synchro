@@ -198,6 +198,12 @@ int cmdUpdate(const QStringList &args) {
   HandlerInstall install(&reg);
   install.setAssumeYes(yes);
   install.setPrompt([&](const QString &q) { return confirmCli(q, yes); });
+  install.setReviewSink([](const QString &diff) {
+    std::fprintf(stdout, "%s", qPrintable(diff));
+    if (!diff.endsWith(QLatin1Char('\n')))
+      std::fputc('\n', stdout);
+    std::fflush(stdout);
+  });
   if (!install.update(id)) {
     std::fprintf(stderr, "synchro: %s\n", qPrintable(install.lastError()));
     if (!install.lastMessage().isEmpty())

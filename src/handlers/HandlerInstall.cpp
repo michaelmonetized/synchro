@@ -194,8 +194,9 @@ bool HandlerInstall::updateOne(const QString &id, const QString &dir) {
   runGit({QStringLiteral("diff"), QStringLiteral("HEAD"),
           QStringLiteral("FETCH_HEAD")},
          dir, &diff, nullptr, 30000);
-  if (!diff.isEmpty())
-    m_message = QString::fromUtf8(diff);
+  m_reviewDiff = QString::fromUtf8(diff);
+  if (!m_reviewDiff.isEmpty() && m_review)
+    m_review(m_reviewDiff);
 
   if (!confirm(QStringLiteral("Update %1?").arg(id))) {
     m_message = QStringLiteral("Skipped %1.").arg(id);
@@ -229,6 +230,7 @@ bool HandlerInstall::update(const QString &id) {
   m_error.clear();
   m_message.clear();
   m_lastId.clear();
+  m_reviewDiff.clear();
   if (!m_reg) {
     m_error = QStringLiteral("no registry");
     return false;
@@ -323,13 +325,19 @@ bool HandlerInstall::remove(const QString &id) {
   if (!confirm(prompt))
     return false;
 
-  m_reg->forget(id);
-
+  // Drop config only after the tree is gone so a failed rename cannot
+  // leave a checkout that scan() would reload as disabled.
   if (info.isSymLink()) {
-    QFile::remove(target);
+    if (!QFile::remove(target)) {
+      m_error = QStringLiteral("failed to unlink %1").arg(target);
+      return false;
+    }
     m_message = QStringLiteral("Unlinked %1.").arg(id);
   } else if (isGitCheckout(target)) {
-    removeRecursively(target);
+    if (!QDir(target).removeRecursively()) {
+      m_error = QStringLiteral("failed to delete %1").arg(target);
+      return false;
+    }
     m_message = QStringLiteral("Removed %1.").arg(id);
   } else {
     const QString stamp =
@@ -348,6 +356,7 @@ bool HandlerInstall::remove(const QString &id) {
     }
     m_message = QStringLiteral("Removed %1. Backup at: %2").arg(id, backup);
   }
+  m_reg->forget(id);
   m_lastId = id;
   return true;
 }
