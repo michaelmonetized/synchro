@@ -21,21 +21,51 @@ Window {
         navStack: navStack
     }
 
+    CommandField {
+        id: commandField
+        anchors.top: pathBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        keyMachine: keyMachine
+    }
+
     FileList {
         id: fileList
-        anchors.top: pathBar.bottom
+        anchors.top: commandField.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         fileModel: directoryModel
+        filterProxy: filterProxy
         navStack: navStack
+        keyMachine: keyMachine
         Component.onCompleted: forceActiveFocus()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+K"
+        onActivated: keyMachine.focusFilter()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+L"
+        onActivated: keyMachine.focusJump()
     }
 
     Connections {
         target: directoryModel
         function onPathChanged() {
             fileList.forceActiveFocus()
+        }
+    }
+
+    Connections {
+        target: keyMachine
+        function onModeChanged() {
+            if (keyMachine.listFocused)
+                fileList.forceActiveFocus()
+            else
+                commandField.focusInput()
         }
     }
 }

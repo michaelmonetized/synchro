@@ -1,4 +1,6 @@
 #include "DirectoryModel.h"
+#include "FilterProxy.h"
+#include "KeyMachine.h"
 #include "NavStack.h"
 
 #include <QCommandLineParser>
@@ -42,7 +44,10 @@ int main(int argc, char *argv[]) {
     startPath = positional.first();
 
   DirectoryModel directoryModel;
+  FilterProxy filterProxy;
+  filterProxy.setDirectoryModel(&directoryModel);
   NavStack navStack(&directoryModel);
+  KeyMachine keyMachine(&directoryModel, &filterProxy, &navStack);
   directoryModel.setPath(startPath);
 
   QQmlApplicationEngine engine;
@@ -50,8 +55,12 @@ int main(int argc, char *argv[]) {
                        QStringLiteral("/qml"));
   engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
                                            &directoryModel);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &filterProxy);
   engine.rootContext()->setContextProperty(QStringLiteral("navStack"),
                                            &navStack);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"),
+                                           &keyMachine);
 
   QObject::connect(
       &engine, &QQmlApplicationEngine::objectCreationFailed, &app,

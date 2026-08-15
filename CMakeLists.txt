@@ -17,6 +17,8 @@ qt_add_executable(synchro
     src/core/DirectoryLister.cpp
     src/core/DirectoryWatcher.cpp
     src/core/NavStack.cpp
+    src/core/FilterProxy.cpp
+    src/core/KeyMachine.cpp
 )
 
 target_include_directories(synchro PRIVATE
@@ -36,6 +38,7 @@ qt_add_qml_module(synchro
         src/ui/qml/Main.qml
         src/ui/qml/FileList.qml
         src/ui/qml/PathBar.qml
+        src/ui/qml/CommandField.qml
 )
 
 set_source_files_properties(src/ui/qml/Synchro/Theme/Theme.qml
@@ -107,6 +110,31 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME directory_model_test COMMAND directory_model_test)
     set_tests_properties(directory_model_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
+    qt_add_executable(command_field_test
+        tests/command_field_test.cpp
+        src/core/DirectoryModel.cpp
+        src/core/DirectoryLister.cpp
+        src/core/DirectoryWatcher.cpp
+        src/core/NavStack.cpp
+        src/core/FilterProxy.cpp
+        src/core/KeyMachine.cpp
+    )
+    target_include_directories(command_field_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core
+    )
+    target_link_libraries(command_field_test PRIVATE
+        Qt6::Test
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(command_field_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME command_field_test COMMAND command_field_test)
+    set_tests_properties(command_field_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 endif()
 

@@ -5,16 +5,20 @@ ListView {
     id: list
 
     required property var fileModel
+    property var filterProxy
     property var navStack
+    property var keyMachine
 
-    model: fileModel
+    readonly property var rows: filterProxy ? filterProxy : fileModel
+
+    model: list.rows
     clip: true
     reuseItems: true
     boundsBehavior: Flickable.StopAtBounds
     keyNavigationEnabled: false
     highlightFollowsCurrentItem: true
     highlightMoveDuration: 0
-    currentIndex: fileModel ? fileModel.currentIndex : -1
+    currentIndex: list.rows ? list.rows.currentIndex : -1
     focus: true
     activeFocusOnTab: true
     cacheBuffer: Math.max(0, Theme.fontBody + Theme.space(8)) * 8
@@ -59,12 +63,27 @@ ListView {
         MouseArea {
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton
-            onClicked: list.fileModel.currentIndex = row.index
-            onDoubleClicked: list.fileModel.activateCurrent()
+            onClicked: {
+                if (list.filterProxy)
+                    list.filterProxy.selectRow(row.index)
+                else
+                    list.fileModel.currentIndex = row.index
+            }
+            onDoubleClicked: {
+                if (list.filterProxy)
+                    list.filterProxy.activateCurrent()
+                else
+                    list.fileModel.activateCurrent()
+            }
         }
     }
 
     Keys.onPressed: function (event) {
+        if (list.keyMachine &&
+                list.keyMachine.handleListKey(event.key, event.modifiers, event.text)) {
+            event.accepted = true
+            return
+        }
         if (!list.fileModel)
             return
         var alt = event.modifiers & Qt.AltModifier
@@ -75,20 +94,32 @@ ListView {
         if (event.key === Qt.Key_J || event.key === Qt.Key_Down) {
             if (alt || chord)
                 return
-            list.fileModel.moveCursor(1)
+            if (list.filterProxy)
+                list.filterProxy.moveCursor(1)
+            else
+                list.fileModel.moveCursor(1)
             event.accepted = true
         } else if (event.key === Qt.Key_K || event.key === Qt.Key_Up) {
             if (alt || chord)
                 return
-            list.fileModel.moveCursor(-1)
+            if (list.filterProxy)
+                list.filterProxy.moveCursor(-1)
+            else
+                list.fileModel.moveCursor(-1)
             event.accepted = true
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             if (alt || chord)
                 return
-            list.fileModel.activateCurrent()
+            if (list.filterProxy)
+                list.filterProxy.activateCurrent()
+            else
+                list.fileModel.activateCurrent()
             event.accepted = true
         } else if (event.key === Qt.Key_L && !alt && !chord && !shift) {
-            list.fileModel.activateCurrent()
+            if (list.filterProxy)
+                list.filterProxy.activateCurrent()
+            else
+                list.fileModel.activateCurrent()
             event.accepted = true
         } else if ((event.key === Qt.Key_H || event.key === Qt.Key_Backspace) &&
                    !alt && !chord && !shift) {
@@ -109,11 +140,16 @@ ListView {
         }
     }
 
+    onActiveFocusChanged: {
+        if (activeFocus && list.keyMachine && list.keyMachine.fieldFocused)
+            list.keyMachine.focusList()
+    }
+
     Connections {
-        target: list.fileModel
+        target: list.rows
         function onCurrentIndexChanged() {
-            if (list.fileModel.currentIndex >= 0)
-                list.positionViewAtIndex(list.fileModel.currentIndex, ListView.Contain)
+            if (list.rows && list.rows.currentIndex >= 0)
+                list.positionViewAtIndex(list.rows.currentIndex, ListView.Contain)
         }
     }
 }

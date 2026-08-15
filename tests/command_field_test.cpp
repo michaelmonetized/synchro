@@ -1,0 +1,416 @@
+#include "DirectoryModel.h"
+#include "FilterProxy.h"
+#include "KeyMachine.h"
+#include "NavStack.h"
+
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QGuiApplication>
+#include <QTemporaryDir>
+#include <QTest>
+
+namespace {
+
+bool waitListingDone(DirectoryModel &model, int timeoutMs = 5000) {
+  return QTest::qWaitFor([&] { return !model.listing(); }, timeoutMs);
+}
+
+QString nameAt(const FilterProxy &proxy, int row) {
+  return proxy.data(proxy.index(row, 0), DirectoryModel::NameRole).toString();
+}
+
+int findProxy(const FilterProxy &proxy, const QString &name) {
+  for (int i = 0; i < proxy.rowCount(); ++i) {
+    if (nameAt(proxy, i) == name)
+      return i;
+  }
+  return -1;
+}
+
+bool allNamesContain(const FilterProxy &proxy, const QString &needle) {
+  if (proxy.rowCount() == 0)
+    return false;
+  for (int i = 0; i < proxy.rowCount(); ++i) {
+    if (!nameAt(proxy, i).contains(needle, Qt::CaseInsensitive))
+      return false;
+  }
+  return true;
+}
+
+QString canon(const QString &path) {
+  const QString c = QFileInfo(path).canonicalFilePath();
+  return c.isEmpty() ? QFileInfo(path).absoluteFilePath() : c;
+}
+
+bool writeFile(const QString &path) {
+  QFile f(path);
+  if (!f.open(QIODevice::WriteOnly))
+    return false;
+  f.write("x", 1);
+  return true;
+}
+
+} // namespace
+
+class CommandFieldTest : public QObject {
+  Q_OBJECT
+
+private slots:
+  void launchIsListFocused();
+  void bareSrcFiltersDoesNotNavigate();
+  void slashAndCtrlKEnterFieldFilter();
+  void ctrlLEntersFieldJumpWithPathSelected();
+  void enterFilterKeepsFilterReturnsToList();
+  void enterOnSrcSlashNavigates();
+  void pathSigilRules();
+  void missingPrefixWithSlashStillFilters();
+  void escSingleStepPop();
+  void typeToSeekHighlightsFirstMatch();
+  void verbsDoNotTypeToSeek();
+  void fieldFilterTypesVerbsAsText();
+  void filterIsCaseInsensitiveSubstring();
+};
+
+void CommandFieldTest::launchIsListFocused() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(keys.listFocused());
+  QVERIFY(!keys.fieldFocused());
+  QVERIFY(keys.fieldText().isEmpty());
+  QVERIFY(proxy.filter().isEmpty());
+}
+
+void CommandFieldTest::bareSrcFiltersDoesNotNavigate() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src")));
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src_other")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("README.md"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("src_notes.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("LICENSE"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const QString root = model.path();
+  QVERIFY(model.rowCount() >= 5);
+  QCOMPARE(findProxy(proxy, QStringLiteral("src")) >= 0, true);
+  QCOMPARE(findProxy(proxy, QStringLiteral("README.md")) >= 0, true);
+
+  keys.focusFilter();
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+  keys.setFieldText(QStringLiteral("src"));
+
+  QCOMPARE(canon(model.path()), canon(root));
+  QVERIFY2(!model.path().endsWith(QStringLiteral("/src")) ||
+               canon(model.path()) == canon(root),
+           "bare src must not navigate into src/");
+  QCOMPARE(keys.fieldText(), QStringLiteral("src"));
+  QCOMPARE(proxy.filter(), QStringLiteral("src"));
+  QVERIFY(proxy.rowCount() >= 1);
+  QVERIFY(proxy.rowCount() < model.rowCount());
+  QVERIFY(allNamesContain(proxy, QStringLiteral("src")));
+  QVERIFY(findProxy(proxy, QStringLiteral("src")) >= 0);
+  QVERIFY(findProxy(proxy, QStringLiteral("src_other")) >= 0);
+  QVERIFY(findProxy(proxy, QStringLiteral("src_notes.txt")) >= 0);
+  QVERIFY(findProxy(proxy, QStringLiteral("README.md")) < 0);
+  QVERIFY(findProxy(proxy, QStringLiteral("LICENSE")) < 0);
+  QVERIFY(!KeyMachine::isJumpText(QStringLiteral("src"), root));
+}
+
+void CommandFieldTest::slashAndCtrlKEnterFieldFilter() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Slash, Qt::NoModifier, QStringLiteral("/")));
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+  QVERIFY(keys.fieldText().isEmpty());
+
+  keys.focusList();
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(keys.handleListKey(Qt::Key_K, Qt::ControlModifier, QString()));
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+}
+
+void CommandFieldTest::ctrlLEntersFieldJumpWithPathSelected() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src")));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const int before = keys.jumpEpoch();
+  QVERIFY(keys.handleListKey(Qt::Key_L, Qt::ControlModifier, QString()));
+  QCOMPARE(keys.mode(), QStringLiteral("field-jump"));
+  QCOMPARE(keys.fieldText(), model.path());
+  QVERIFY(KeyMachine::isJumpText(keys.fieldText(), model.path()));
+  QVERIFY(keys.jumpEpoch() > before);
+  QVERIFY(proxy.filter().isEmpty());
+}
+
+void CommandFieldTest::enterFilterKeepsFilterReturnsToList() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("README.md"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const QString root = model.path();
+
+  keys.focusFilter();
+  keys.setFieldText(QStringLiteral("src"));
+  QVERIFY(keys.handleFieldKey(Qt::Key_Return, Qt::NoModifier));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QCOMPARE(keys.fieldText(), QStringLiteral("src"));
+  QCOMPARE(proxy.filter(), QStringLiteral("src"));
+  QCOMPARE(canon(model.path()), canon(root));
+  QVERIFY(findProxy(proxy, QStringLiteral("README.md")) < 0);
+  QVERIFY(findProxy(proxy, QStringLiteral("src")) >= 0);
+}
+
+void CommandFieldTest::enterOnSrcSlashNavigates() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("src/inside.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("README.md"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const QString root = model.path();
+
+  keys.focusFilter();
+  keys.setFieldText(QStringLiteral("src/"));
+  QVERIFY(KeyMachine::isJumpText(QStringLiteral("src/"), root));
+  keys.acceptField();
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(canon(model.path()), canon(tmp.filePath(QStringLiteral("src"))));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(keys.fieldText().isEmpty());
+  QVERIFY(findProxy(proxy, QStringLiteral("inside.txt")) >= 0);
+}
+
+void CommandFieldTest::pathSigilRules() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src")));
+  QVERIFY(QDir(tmp.path()).mkpath(QStringLiteral("src/foo")));
+
+  const QString cwd = tmp.path();
+  QVERIFY(KeyMachine::isJumpText(QStringLiteral("/usr"), cwd));
+  QVERIFY(KeyMachine::isJumpText(QStringLiteral("/"), cwd));
+  QVERIFY(KeyMachine::isJumpText(QStringLiteral("~/"), cwd));
+  QVERIFY(KeyMachine::isJumpText(QStringLiteral("~/Downloads"), cwd));
+  QVERIFY(KeyMachine::isJumpText(QStringLiteral("src/"), cwd));
+  QVERIFY(KeyMachine::isJumpText(QStringLiteral("src/foo"), cwd));
+  QVERIFY(!KeyMachine::isJumpText(QStringLiteral("src"), cwd));
+  QVERIFY(!KeyMachine::isJumpText(QStringLiteral("README"), cwd));
+  QVERIFY(!KeyMachine::isJumpText(QStringLiteral("~"), cwd));
+  QVERIFY(!KeyMachine::isJumpText(QString(), cwd));
+
+  const QString home = KeyMachine::resolveJump(QStringLiteral("~/"), cwd);
+  QCOMPARE(canon(home), canon(QDir::homePath()));
+  QCOMPARE(canon(KeyMachine::resolveJump(QStringLiteral("src/"), cwd)),
+           canon(tmp.filePath(QStringLiteral("src"))));
+}
+
+void CommandFieldTest::missingPrefixWithSlashStillFilters() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("README.md"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const QString root = model.path();
+
+  QVERIFY(!KeyMachine::isJumpText(QStringLiteral("nope/foo"), root));
+  keys.focusFilter();
+  keys.setFieldText(QStringLiteral("nope/foo"));
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+  QCOMPARE(proxy.filter(), QStringLiteral("nope/foo"));
+  QCOMPARE(proxy.rowCount(), 0);
+  keys.acceptField();
+  QCOMPARE(canon(model.path()), canon(root));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+}
+
+void CommandFieldTest::escSingleStepPop() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("README.md"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+
+  keys.focusFilter();
+  keys.setFieldText(QStringLiteral("src"));
+  QVERIFY(proxy.rowCount() < model.rowCount());
+  QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
+  QVERIFY(keys.fieldText().isEmpty());
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+  QVERIFY(proxy.filter().isEmpty());
+  QVERIFY(findProxy(proxy, QStringLiteral("README.md")) >= 0);
+
+  QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+
+  keys.focusFilter();
+  keys.setFieldText(QStringLiteral("src"));
+  keys.acceptField();
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(!proxy.filter().isEmpty());
+  QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
+  QVERIFY(keys.fieldText().isEmpty());
+  QVERIFY(proxy.filter().isEmpty());
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+}
+
+void CommandFieldTest::typeToSeekHighlightsFirstMatch() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("aaa.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("qxy_only"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("zzz.txt"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QVERIFY(findProxy(proxy, QStringLiteral("qxy_only")) >= 0);
+
+  QVERIFY(keys.handleListKey(Qt::Key_Q, Qt::NoModifier, QStringLiteral("q")));
+  QCOMPARE(proxy.currentName(), QStringLiteral("qxy_only"));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+}
+
+void CommandFieldTest::verbsDoNotTypeToSeek() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("aaa.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("bbb.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("jjj.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("zzz.txt"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QVERIFY(proxy.rowCount() >= 4);
+  proxy.setCurrentIndex(0);
+  const int before = proxy.currentIndex();
+  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
+  QCOMPARE(proxy.currentIndex(), qMin(before + 1, proxy.rowCount() - 1));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+}
+
+void CommandFieldTest::fieldFilterTypesVerbsAsText() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("jacket"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("keep"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("notes"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  keys.focusFilter();
+  keys.setFieldText(QStringLiteral("j"));
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+  QCOMPARE(proxy.filter(), QStringLiteral("j"));
+  QVERIFY(findProxy(proxy, QStringLiteral("jacket")) >= 0);
+  QVERIFY(findProxy(proxy, QStringLiteral("keep")) < 0);
+  keys.setFieldText(QStringLiteral("."));
+  QCOMPARE(proxy.filter(), QStringLiteral("."));
+}
+
+void CommandFieldTest::filterIsCaseInsensitiveSubstring() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("README.md"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("SrcNotes.txt"))));
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src")));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  keys.focusFilter();
+  keys.setFieldText(QStringLiteral("SRC"));
+  QVERIFY(allNamesContain(proxy, QStringLiteral("src")));
+  QVERIFY(findProxy(proxy, QStringLiteral("SrcNotes.txt")) >= 0);
+  QVERIFY(findProxy(proxy, QStringLiteral("src")) >= 0);
+  QVERIFY(findProxy(proxy, QStringLiteral("README.md")) < 0);
+}
+
+int main(int argc, char **argv) {
+  QGuiApplication app(argc, argv);
+  CommandFieldTest tc;
+  return QTest::qExec(&tc, argc, argv);
+}
+
+#include "command_field_test.moc"
