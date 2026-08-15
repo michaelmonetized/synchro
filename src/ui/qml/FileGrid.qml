@@ -5,6 +5,7 @@ GridView {
     id: grid
 
     required property var fileModel
+    property var keyMachine
     readonly property int thumbSizePx: 256
     readonly property int cellInner: 96
 
@@ -154,6 +155,14 @@ GridView {
     }
 
     Keys.onPressed: function (event) {
+        var peekKeys = event.key === Qt.Key_Space || event.key === Qt.Key_L ||
+                       event.key === Qt.Key_Escape ||
+                       (grid.keyMachine && grid.keyMachine.peekOpen)
+        if (grid.keyMachine && peekKeys &&
+                grid.keyMachine.handleListKey(event.key, event.modifiers, event.text)) {
+            event.accepted = true
+            return
+        }
         if (!grid.fileModel)
             return
         if (event.key === Qt.Key_J || event.key === Qt.Key_Down) {

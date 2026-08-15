@@ -7,6 +7,7 @@
 class DirectoryModel;
 class FilterProxy;
 class NavStack;
+class PeekHost;
 
 // Ranger-with-visible-field keyboard states (K7). The list owns keys on
 // launch; the field is chrome, not an always-focused omnibar.
@@ -15,20 +16,27 @@ class KeyMachine : public QObject {
   Q_PROPERTY(QString mode READ mode NOTIFY modeChanged)
   Q_PROPERTY(bool listFocused READ listFocused NOTIFY modeChanged)
   Q_PROPERTY(bool fieldFocused READ fieldFocused NOTIFY modeChanged)
+  Q_PROPERTY(bool peekOpen READ peekOpen NOTIFY modeChanged)
   Q_PROPERTY(QString fieldText READ fieldText WRITE setFieldText NOTIFY
                  fieldTextChanged)
   Q_PROPERTY(int jumpEpoch READ jumpEpoch NOTIFY jumpEpochChanged)
 
 public:
-  enum class Mode { ListFocused, FieldFilter, FieldJump };
+  enum class Mode { ListFocused, FieldFilter, FieldJump, PeekOpen };
   Q_ENUM(Mode)
 
   explicit KeyMachine(DirectoryModel *model, FilterProxy *proxy, NavStack *nav,
                       QObject *parent = nullptr);
 
   QString mode() const;
-  bool listFocused() const { return m_mode == Mode::ListFocused; }
-  bool fieldFocused() const { return m_mode != Mode::ListFocused; }
+  bool listFocused() const {
+    return m_mode == Mode::ListFocused || m_mode == Mode::PeekOpen;
+  }
+  bool fieldFocused() const {
+    return m_mode == Mode::FieldFilter || m_mode == Mode::FieldJump;
+  }
+  bool peekOpen() const { return m_mode == Mode::PeekOpen; }
+  void setPeekHost(PeekHost *host);
   QString fieldText() const { return m_fieldText; }
   int jumpEpoch() const { return m_jumpEpoch; }
   Mode modeEnum() const { return m_mode; }
@@ -58,6 +66,7 @@ private:
   void clearFieldAndFilter();
   void onPathChanged();
   bool handleListVerbs(int key, int modifiers);
+  bool handlePeekKey(int key, int modifiers);
   void seek(const QString &chunk);
 
   static bool isReservedVerb(int key, int modifiers);
@@ -65,6 +74,7 @@ private:
   DirectoryModel *m_model = nullptr;
   FilterProxy *m_proxy = nullptr;
   NavStack *m_nav = nullptr;
+  PeekHost *m_host = nullptr;
   Mode m_mode = Mode::ListFocused;
   QString m_fieldText;
   QString m_seek;

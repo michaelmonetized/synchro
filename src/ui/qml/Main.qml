@@ -63,7 +63,13 @@ Window {
         visible: root.gridMode
         enabled: visible
         fileModel: root.files
+        keyMachine: root.keys
         onViewToggleRequested: root.gridMode = false
+    }
+
+    PeekOverlay {
+        anchors.fill: parent
+        host: typeof hostApi !== "undefined" ? hostApi : null
     }
 
     Shortcut {

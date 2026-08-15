@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.preview.image",
+  "name": "Image preview",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "In-window peek for raster images. Does not execute file content.",
+  "kinds": ["preview"],
+  "priority": 60,
+  "keepLoaded": true,
+  "match": {
+    "mime": [
+      "image/jpeg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+      "image/bmp",
+      "image/tiff",
+      "image/svg+xml"
+    ],
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {
+    "preview": "Preview.qml"
+  },
+  "preview": {
+    "runtime": "inprocess",
+    "autoplay": false
+  },
+  "permissions": ["fs-read"]
+}

@@ -3,6 +3,7 @@
 #include "DirectoryModel.h"
 #include "FilterProxy.h"
 #include "NavStack.h"
+#include "PeekHost.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -51,8 +52,26 @@ QString KeyMachine::mode() const {
     return QStringLiteral("field-filter");
   case Mode::FieldJump:
     return QStringLiteral("field-jump");
+  case Mode::PeekOpen:
+    return QStringLiteral("peek-open");
   }
   return QStringLiteral("list-focused");
+}
+
+void KeyMachine::setPeekHost(PeekHost *host) {
+  if (m_host == host)
+    return;
+  if (m_host)
+    disconnect(m_host, nullptr, this, nullptr);
+  m_host = host;
+  if (!m_host)
+    return;
+  connect(m_host, &PeekHost::openChanged, this, [this] {
+    if (m_host->isOpen())
+      setMode(Mode::PeekOpen);
+    else if (m_mode == Mode::PeekOpen)
+      setMode(Mode::ListFocused);
+  });
 }
 
 void KeyMachine::setMode(Mode mode) {
@@ -286,10 +305,20 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
     return true;
   }
   if (key == Qt::Key_L && !alt && !chord && !shift) {
+    const bool isDir = m_model && m_model->currentIsDir();
+    if (!isDir && m_host) {
+      m_host->openCurrent();
+      return true;
+    }
     if (m_proxy)
       m_proxy->activateCurrent();
     else if (m_model)
       m_model->activateCurrent();
+    return true;
+  }
+  if (key == Qt::Key_Space && !alt && !chord && !shift) {
+    if (m_host)
+      m_host->toggle();
     return true;
   }
   if ((key == Qt::Key_H || key == Qt::Key_Backspace) && !alt && !chord &&
@@ -329,7 +358,32 @@ void KeyMachine::seek(const QString &chunk) {
     m_proxy->seekPrefix(m_seek);
 }
 
+bool KeyMachine::handlePeekKey(int key, int modifiers) {
+  if (hasChord(modifiers) || hasAlt(modifiers))
+    return true;
+  if (key == Qt::Key_Space || key == Qt::Key_Escape) {
+    if (m_host)
+      m_host->close();
+    else
+      setMode(Mode::ListFocused);
+    return true;
+  }
+  if (key == Qt::Key_J || key == Qt::Key_Down) {
+    if (m_host)
+      m_host->step(1);
+    return true;
+  }
+  if (key == Qt::Key_K || key == Qt::Key_Up) {
+    if (m_host)
+      m_host->step(-1);
+    return true;
+  }
+  return true;
+}
+
 bool KeyMachine::handleListKey(int key, int modifiers, const QString &text) {
+  if (m_mode == Mode::PeekOpen)
+    return handlePeekKey(key, modifiers);
   if (m_mode != Mode::ListFocused)
     return false;
 

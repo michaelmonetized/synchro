@@ -19,11 +19,17 @@ qt_add_executable(synchro
     src/core/NavStack.cpp
     src/core/FilterProxy.cpp
     src/core/KeyMachine.cpp
+    src/core/PeekHost.cpp
     src/core/MimeMap.cpp
     src/core/RecentStore.cpp
     src/core/ThumbnailService.cpp
     src/handlers/HandlerExec.cpp
     src/handlers/XdgOpen.cpp
+    src/handlers/Manifest.cpp
+    src/handlers/HandlerRegistry.cpp
+    src/handlers/HandlerLoader.cpp
+    src/handlers/HostApi.cpp
+    src/cli.cpp
 )
 
 target_include_directories(synchro PRIVATE
@@ -46,6 +52,7 @@ qt_add_qml_module(synchro
         src/ui/qml/FileGrid.qml
         src/ui/qml/PathBar.qml
         src/ui/qml/CommandField.qml
+        src/ui/qml/PeekOverlay.qml
 )
 
 set_source_files_properties(src/ui/qml/Synchro/Theme/Theme.qml
@@ -128,6 +135,7 @@ if(BUILD_TESTING)
         src/core/NavStack.cpp
         src/core/FilterProxy.cpp
         src/core/KeyMachine.cpp
+        src/core/PeekHost.cpp
         src/core/ThumbnailService.cpp
     )
     target_include_directories(command_field_test PRIVATE
@@ -158,6 +166,7 @@ if(BUILD_TESTING)
         src/core/DirectoryWatcher.cpp
         src/core/FilterProxy.cpp
         src/core/KeyMachine.cpp
+        src/core/PeekHost.cpp
         src/core/NavStack.cpp
         src/core/MimeMap.cpp
         src/core/RecentStore.cpp
@@ -203,6 +212,45 @@ if(BUILD_TESTING)
     add_test(NAME thumbnail_service_test COMMAND thumbnail_service_test)
     set_tests_properties(thumbnail_service_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    qt_add_executable(manifest_validate_test
+        tests/manifest_validate_test.cpp
+        src/handlers/Manifest.cpp
+    )
+    target_include_directories(manifest_validate_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/handlers
+    )
+    target_compile_definitions(manifest_validate_test PRIVATE
+        SYNCHRO_FIRST_PARTY_HANDLER_DIR="${CMAKE_SOURCE_DIR}/handlers"
+    )
+    target_link_libraries(manifest_validate_test PRIVATE
+        Qt6::Test
+        Qt6::Core
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(manifest_validate_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME manifest_validate_test COMMAND manifest_validate_test)
+
+    qt_add_executable(match_test
+        tests/match_test.cpp
+        src/handlers/Manifest.cpp
+        src/handlers/HandlerRegistry.cpp
+    )
+    target_include_directories(match_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/handlers
+    )
+    target_compile_definitions(match_test PRIVATE
+        SYNCHRO_FIRST_PARTY_HANDLER_DIR="${CMAKE_SOURCE_DIR}/handlers"
+    )
+    target_link_libraries(match_test PRIVATE
+        Qt6::Test
+        Qt6::Core
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(match_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME match_test COMMAND match_test)
 endif()
 
 set_target_properties(synchro PROPERTIES

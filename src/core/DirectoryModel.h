@@ -11,6 +11,7 @@
 #include <QString>
 #include <QStringList>
 #include <QThread>
+#include <QVariantMap>
 #include <QVector>
 
 class DirectoryModelTest;
@@ -67,10 +68,14 @@ public:
   Q_INVOKABLE void moveCursor(int delta);
   Q_INVOKABLE void activateCurrent();
   Q_INVOKABLE QString currentName() const;
+  Q_INVOKABLE bool currentIsDir() const;
   Q_INVOKABLE void requestVisibleThumbs(int first, int last, int sizePx);
+  QVariantMap cachedStat(const QString &path) const;
+  void requestStatPath(const QString &path);
 
 signals:
   void fileActivated(const QString &path, const QString &mime);
+  void entryStatReady(const QString &path, const QVariantMap &st);
   void pathChanged();
   void showHiddenChanged();
   void currentIndexChanged();
@@ -107,6 +112,7 @@ private:
   void navigateToExistingParent();
   void reload();
   const DirectoryEntry *entryAt(int visibleRow) const;
+  QVariantMap entryToMap(const DirectoryEntry &e) const;
 
   friend class DirectoryModelTest;
 

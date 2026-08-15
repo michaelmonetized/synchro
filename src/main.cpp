@@ -1,12 +1,17 @@
 #include "DirectoryModel.h"
 #include "FilterProxy.h"
+#include "HandlerLoader.h"
+#include "HandlerRegistry.h"
+#include "HostApi.h"
 #include "KeyMachine.h"
 #include "MimeMap.h"
 #include "NavStack.h"
 #include "RecentStore.h"
 #include "XdgOpen.h"
+#include "cli.h"
 
 #include <QCommandLineParser>
+#include <QCoreApplication>
 #include <QDir>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
@@ -14,11 +19,21 @@
 #include <QtQml/QQmlExtensionPlugin>
 
 #include <cstdio>
+#include <cstring>
 
 Q_IMPORT_QML_PLUGIN(Synchro_ThemePlugin)
 Q_IMPORT_QML_PLUGIN(Synchro_HandlerPlugin)
 
 int main(int argc, char *argv[]) {
+  if (argc >= 2 && std::strcmp(argv[1], "handler") == 0) {
+    QCoreApplication app(argc, argv);
+    app.setApplicationName(QStringLiteral("synchro"));
+    app.setApplicationVersion(QStringLiteral(SYNCHRO_VERSION));
+    app.setOrganizationName(QStringLiteral("omarchy"));
+    app.setOrganizationDomain(QStringLiteral("omarchy.org"));
+    return runHandlerCli(argc, argv);
+  }
+
   QGuiApplication app(argc, argv);
   app.setApplicationName(QStringLiteral("synchro"));
   app.setApplicationDisplayName(QStringLiteral("Synchro"));
@@ -54,6 +69,9 @@ int main(int argc, char *argv[]) {
   NavStack navStack(&directoryModel);
   KeyMachine keyMachine(&directoryModel, &filterProxy, &navStack);
   MimeMap mimeMap;
+  HandlerRegistry handlerRegistry;
+  handlerRegistry.scan();
+  HandlerLoader handlerLoader;
   XdgOpen xdgOpen;
   if (!xdgOpen.load()) {
     std::fprintf(stderr, "synchro: %s\n", qPrintable(xdgOpen.lastError()));
@@ -89,6 +107,12 @@ int main(int argc, char *argv[]) {
                                            &navStack);
   engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"),
                                            &keyMachine);
+
+  HostApi hostApi(&directoryModel, &filterProxy, &navStack, &handlerRegistry,
+                  &handlerLoader, &xdgOpen, &mimeMap, &engine);
+  keyMachine.setPeekHost(&hostApi);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"),
+                                           &hostApi);
 
   QObject::connect(
       &engine, &QQmlApplicationEngine::objectCreationFailed, &app,

@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QUrl>
+#include <QVariantMap>
 
 #include <cstdio>
 
@@ -193,6 +194,48 @@ QString DirectoryModel::currentName() const {
   return e ? e->name : QString();
 }
 
+bool DirectoryModel::currentIsDir() const {
+  const DirectoryEntry *e = entryAt(m_currentIndex);
+  return e && e->isDir;
+}
+
+QVariantMap DirectoryModel::entryToMap(const DirectoryEntry &e) const {
+  QVariantMap m;
+  m.insert(QStringLiteral("name"), e.name);
+  m.insert(QStringLiteral("path"), e.path);
+  m.insert(QStringLiteral("uri"), e.uri);
+  m.insert(QStringLiteral("isDir"), e.isDir);
+  m.insert(QStringLiteral("size"), e.size);
+  m.insert(QStringLiteral("mtime"), e.mtime);
+  m.insert(QStringLiteral("mime"), e.mime);
+  m.insert(QStringLiteral("isSymlink"), e.isSymlink);
+  return m;
+}
+
+QVariantMap DirectoryModel::cachedStat(const QString &path) const {
+  if (path.isEmpty())
+    return {};
+  auto it = m_indexByPath.constFind(path);
+  if (it == m_indexByPath.cend())
+    it = m_indexByPath.constFind(QDir::cleanPath(path));
+  if (it == m_indexByPath.cend())
+    return {};
+  const int all = it.value();
+  if (all < 0 || all >= m_all.size())
+    return {};
+  return entryToMap(m_all.at(all));
+}
+
+void DirectoryModel::requestStatPath(const QString &path) {
+  if (path.isEmpty() || m_path.isEmpty())
+    return;
+  const QFileInfo fi(path);
+  const QString parent = QDir::cleanPath(fi.absolutePath());
+  if (parent != QDir::cleanPath(m_path))
+    return;
+  emit statRequested(m_gen, m_path, QStringList{fi.fileName()});
+}
+
 void DirectoryModel::setShowHidden(bool show) {
   if (m_showHidden == show)
     return;
@@ -347,8 +390,10 @@ void DirectoryModel::onStatsReady(quint64 generation,
   Q_UNUSED(priority);
   if (generation != m_gen)
     return;
-  for (const DirectoryEntry &e : batch)
+  for (const DirectoryEntry &e : batch) {
     applyEntry(e);
+    emit entryStatReady(e.path, entryToMap(e));
+  }
   maybeActivatePending();
   if (m_thumbFirst >= 0)
     requestVisibleThumbs(m_thumbFirst, m_thumbLast, m_thumbSizePx);

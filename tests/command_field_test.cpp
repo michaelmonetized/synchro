@@ -2,6 +2,7 @@
 #include "FilterProxy.h"
 #include "KeyMachine.h"
 #include "NavStack.h"
+#include "PeekHost.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -62,6 +63,32 @@ bool writeFile(const QString &path) {
 
 } // namespace
 
+class StubPeek : public PeekHost {
+public:
+  bool isOpen() const override { return m_open; }
+  bool toggle() override {
+    m_open = !m_open;
+    emit openChanged();
+    return m_open;
+  }
+  bool openCurrent() override {
+    m_open = true;
+    emit openChanged();
+    return true;
+  }
+  void close() override {
+    if (!m_open)
+      return;
+    m_open = false;
+    emit openChanged();
+  }
+  void step(int delta) override { lastStep = delta; }
+  int lastStep = 0;
+
+private:
+  bool m_open = false;
+};
+
 class CommandFieldTest : public QObject {
   Q_OBJECT
 
@@ -83,6 +110,7 @@ private slots:
   void goBackRestoresFilter();
   void emptyFilterKeepsSourceCursor();
   void enterOnFileActivatesDoesNotNavigate();
+  void spaceTogglesPeekAndJkStep();
   void mainQmlSlashThenSrcFilters();
 };
 
@@ -553,6 +581,42 @@ void CommandFieldTest::enterOnFileActivatesDoesNotNavigate() {
            QStringLiteral("README.md"));
 }
 
+void CommandFieldTest::spaceTogglesPeekAndJkStep() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("a.png"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("b.png"))));
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src")));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  StubPeek peek;
+  keys.setPeekHost(&peek);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const int fileRow = findProxy(proxy, QStringLiteral("a.png"));
+  QVERIFY(fileRow >= 0);
+  proxy.setCurrentIndex(fileRow);
+
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QCOMPARE(keys.mode(), QStringLiteral("peek-open"));
+  QVERIFY(peek.isOpen());
+  QVERIFY(keys.listFocused());
+  QVERIFY(!keys.fieldFocused());
+
+  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
+  QCOMPARE(peek.lastStep, 1);
+  QCOMPARE(keys.mode(), QStringLiteral("peek-open"));
+
+  QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(!peek.isOpen());
+}
+
 void CommandFieldTest::mainQmlSlashThenSrcFilters() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
@@ -578,6 +642,7 @@ void CommandFieldTest::mainQmlSlashThenSrcFilters() {
                                            &proxy);
   engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
   engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
 
   QString errors;
   QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,

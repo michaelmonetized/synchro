@@ -16,6 +16,6 @@ Item {
     signal requestOpen(url file)   // ask host to run `open` on another file
     signal requestReveal(url file)
 
-    Component.onCompleted: if (host && host.register)
-        host.register(root)
+    Component.onCompleted: if (host && host.registerSurface)
+        host.registerSurface(root)
 }
