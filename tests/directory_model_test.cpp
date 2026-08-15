@@ -1,5 +1,6 @@
 #include "DirectoryLister.h"
 #include "DirectoryModel.h"
+#include "NavStack.h"
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -121,6 +122,16 @@ private slots:
   void activatePendingSymlinkToDir();
   void listingTwoThousandLeavesGuiResponsive();
   void warmTimeToFirstFrame();
+  void watcherCreateDeleteUpdatesModel();
+  void watcherRenameUpdatesModel();
+  void watchedDirGoneNavigatesUp();
+  void watcherDoesNotAdoptSubdirCreates();
+  void navStackBackForward();
+  void navStackGoUpSelectsChild();
+  void activateRecordsHistory();
+  void goHomeJumpsToHome();
+  void pathSegmentsTildeAndRoot();
+  void samePathSetPathIsNoop();
 
 private:
   QTemporaryDir m_fixture;
@@ -538,6 +549,254 @@ ListView {
         static_cast<long long>(model.lastFirstRowsMs()));
   QVERIFY2(ttf < 80,
            qPrintable(QStringLiteral("warm TTF %1ms exceeds 80ms").arg(ttf)));
+}
+
+void DirectoryModelTest::watcherCreateDeleteUpdatesModel() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  DirectoryModel model;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(model.rowCount(), 0);
+
+  QFile f(tmp.filePath(QStringLiteral("appeared.txt")));
+  QVERIFY(f.open(QIODevice::WriteOnly));
+  f.write("x", 1);
+  f.close();
+  QVERIFY(QTest::qWaitFor(
+      [&] { return findRow(model, QStringLiteral("appeared.txt")) >= 0; },
+      2000));
+  const int row = findRow(model, QStringLiteral("appeared.txt"));
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return roleAt(model, row, DirectoryModel::DirKindRole).toString() !=
+               QStringLiteral("pending");
+      },
+      2000));
+  QCOMPARE(roleAt(model, row, DirectoryModel::IsDirRole).toBool(), false);
+
+  QVERIFY(f.remove());
+  QVERIFY(QTest::qWaitFor(
+      [&] { return findRow(model, QStringLiteral("appeared.txt")) < 0; },
+      2000));
+}
+
+void DirectoryModelTest::watcherRenameUpdatesModel() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QFile f(tmp.filePath(QStringLiteral("oldname.txt")));
+  QVERIFY(f.open(QIODevice::WriteOnly));
+  f.write("x", 1);
+  f.close();
+
+  DirectoryModel model;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QVERIFY(findRow(model, QStringLiteral("oldname.txt")) >= 0);
+
+  QVERIFY(QFile::rename(tmp.filePath(QStringLiteral("oldname.txt")),
+                        tmp.filePath(QStringLiteral("newname.txt"))));
+  QVERIFY(QTest::qWaitFor(
+      [&] { return findRow(model, QStringLiteral("newname.txt")) >= 0; },
+      2000));
+  QVERIFY(findRow(model, QStringLiteral("oldname.txt")) < 0);
+}
+
+void DirectoryModelTest::watchedDirGoneNavigatesUp() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("child")));
+  DirectoryModel model;
+  model.setPath(tmp.filePath(QStringLiteral("child")));
+  QVERIFY(waitListingDone(model));
+  QVERIFY(model.path().endsWith(QStringLiteral("child")));
+
+  QVERIFY(QDir(tmp.path()).rmdir(QStringLiteral("child")));
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return QFileInfo(model.path()).canonicalFilePath() ==
+               QFileInfo(tmp.path()).canonicalFilePath();
+      },
+      2000));
+}
+
+void DirectoryModelTest::watcherDoesNotAdoptSubdirCreates() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("sub")));
+  DirectoryModel model;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const int before = model.rowCount();
+
+  QFile f(tmp.filePath(QStringLiteral("sub/inside.txt")));
+  QVERIFY(f.open(QIODevice::WriteOnly));
+  f.write("x", 1);
+  f.close();
+  QTest::qWait(120);
+  QCOMPARE(model.rowCount(), before);
+  QVERIFY(findRow(model, QStringLiteral("inside.txt")) < 0);
+  QVERIFY(findRow(model, QStringLiteral("sub")) >= 0);
+}
+
+void DirectoryModelTest::navStackBackForward() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkpath(QStringLiteral("a/b")));
+  QFile leaf(tmp.filePath(QStringLiteral("a/b/leaf.txt")));
+  QVERIFY(leaf.open(QIODevice::WriteOnly));
+  leaf.write("x", 1);
+  leaf.close();
+
+  DirectoryModel model;
+  NavStack nav(&model);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QVERIFY(!nav.canGoBack());
+  QVERIFY(!nav.canGoForward());
+
+  nav.navigate(tmp.filePath(QStringLiteral("a")));
+  QVERIFY(waitListingDone(model));
+  QVERIFY(nav.canGoBack());
+  QVERIFY(!nav.canGoForward());
+
+  nav.navigate(tmp.filePath(QStringLiteral("a/b")));
+  QVERIFY(waitListingDone(model));
+  QVERIFY(findRow(model, QStringLiteral("leaf.txt")) >= 0);
+
+  nav.goBack();
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(QFileInfo(model.path()).fileName(), QStringLiteral("a"));
+  QVERIFY(nav.canGoForward());
+
+  nav.goForward();
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(QFileInfo(model.path()).fileName(), QStringLiteral("b"));
+  QVERIFY(findRow(model, QStringLiteral("leaf.txt")) >= 0);
+}
+
+void DirectoryModelTest::navStackGoUpSelectsChild() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("child")));
+  QFile inside(tmp.filePath(QStringLiteral("child/inside.txt")));
+  QVERIFY(inside.open(QIODevice::WriteOnly));
+  inside.write("x", 1);
+  inside.close();
+
+  DirectoryModel model;
+  NavStack nav(&model);
+  model.setPath(tmp.filePath(QStringLiteral("child")));
+  QVERIFY(waitListingDone(model));
+  nav.goUp();
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
+           QFileInfo(tmp.path()).canonicalFilePath());
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return model.currentIndex() >= 0 &&
+               roleAt(model, model.currentIndex(), DirectoryModel::NameRole)
+                       .toString() == QStringLiteral("child");
+      },
+      2000));
+}
+
+void DirectoryModelTest::activateRecordsHistory() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("child")));
+
+  DirectoryModel model;
+  NavStack nav(&model);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QVERIFY(!nav.canGoBack());
+  const int row = findRow(model, QStringLiteral("child"));
+  QVERIFY(row >= 0);
+  model.setCurrentIndex(row);
+  model.activateCurrent();
+  QVERIFY(waitListingDone(model));
+  QVERIFY(model.path().endsWith(QStringLiteral("child")));
+  QVERIFY(nav.canGoBack());
+
+  nav.goBack();
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
+           QFileInfo(tmp.path()).canonicalFilePath());
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return model.currentIndex() >= 0 &&
+               roleAt(model, model.currentIndex(), DirectoryModel::NameRole)
+                       .toString() == QStringLiteral("child");
+      },
+      2000));
+}
+
+void DirectoryModelTest::goHomeJumpsToHome() {
+  DirectoryModel model;
+  NavStack nav(&model);
+  model.setPath(m_scratch.path());
+  QVERIFY(waitListingDone(model));
+  nav.goHome();
+  QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
+           QFileInfo(QDir::homePath()).canonicalFilePath());
+  QVERIFY(nav.canGoBack());
+  nav.goBack();
+  QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
+           QFileInfo(m_scratch.path()).canonicalFilePath());
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(model.rowCount(), 1);
+}
+
+void DirectoryModelTest::pathSegmentsTildeAndRoot() {
+  DirectoryModel model;
+  NavStack nav(&model);
+  const QString home = QDir::homePath();
+
+  const QVariantList homeSegs = nav.segmentsFor(home);
+  QCOMPARE(homeSegs.size(), 1);
+  QCOMPARE(homeSegs.at(0).toMap().value(QStringLiteral("label")).toString(),
+           QStringLiteral("~"));
+  QCOMPARE(homeSegs.at(0).toMap().value(QStringLiteral("path")).toString(),
+           home);
+
+  const QVariantList child =
+      nav.segmentsFor(home + QStringLiteral("/Projects/foo"));
+  QCOMPARE(child.size(), 3);
+  QCOMPARE(child.at(0).toMap().value(QStringLiteral("label")).toString(),
+           QStringLiteral("~"));
+  QCOMPARE(child.at(1).toMap().value(QStringLiteral("label")).toString(),
+           QStringLiteral("Projects"));
+  QCOMPARE(child.at(2).toMap().value(QStringLiteral("label")).toString(),
+           QStringLiteral("foo"));
+  QCOMPARE(child.at(2).toMap().value(QStringLiteral("path")).toString(),
+           home + QStringLiteral("/Projects/foo"));
+
+  const QVariantList root = nav.segmentsFor(QStringLiteral("/"));
+  QCOMPARE(root.size(), 1);
+  QCOMPARE(root.at(0).toMap().value(QStringLiteral("label")).toString(),
+           QStringLiteral("/"));
+
+  const QVariantList abs = nav.segmentsFor(QStringLiteral("/usr/bin"));
+  QCOMPARE(abs.size(), 3);
+  QCOMPARE(abs.at(0).toMap().value(QStringLiteral("label")).toString(),
+           QStringLiteral("/"));
+  QCOMPARE(abs.at(1).toMap().value(QStringLiteral("label")).toString(),
+           QStringLiteral("usr"));
+  QCOMPARE(abs.at(2).toMap().value(QStringLiteral("path")).toString(),
+           QStringLiteral("/usr/bin"));
+}
+
+void DirectoryModelTest::samePathSetPathIsNoop() {
+  DirectoryModel model;
+  model.setPath(m_scratch.path());
+  QVERIFY(waitListingDone(model));
+  const quint64 before = static_cast<quint64>(model.rowCount());
+  QSignalSpy pathSpy(&model, &DirectoryModel::pathChanged);
+  model.setPath(m_scratch.path());
+  QCOMPARE(pathSpy.count(), 0);
+  QCOMPARE(model.rowCount(), static_cast<int>(before));
+  QVERIFY(!model.listing());
 }
 
 int main(int argc, char **argv) {

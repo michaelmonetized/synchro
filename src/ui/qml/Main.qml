@@ -12,10 +12,30 @@ Window {
     title: directoryModel.path.length ? directoryModel.path : "Synchro"
     color: Theme.background
 
+    PathBar {
+        id: pathBar
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        fileModel: directoryModel
+        navStack: navStack
+    }
+
     FileList {
         id: fileList
-        anchors.fill: parent
+        anchors.top: pathBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
         fileModel: directoryModel
+        navStack: navStack
         Component.onCompleted: forceActiveFocus()
+    }
+
+    Connections {
+        target: directoryModel
+        function onPathChanged() {
+            fileList.forceActiveFocus()
+        }
     }
 }

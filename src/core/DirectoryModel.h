@@ -1,11 +1,13 @@
 #pragma once
 
 #include "DirectoryLister.h"
+#include "DirectoryWatcher.h"
 
 #include <QAbstractListModel>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QString>
+#include <QStringList>
 #include <QThread>
 #include <QVector>
 
@@ -53,11 +55,14 @@ public:
 
   qint64 lastFirstRowsMs() const { return m_lastFirstRowsMs; }
 
-  Q_INVOKABLE void setPath(const QString &path);
+  Q_INVOKABLE void setPath(const QString &path,
+                           const QString &selectName = QString(),
+                           bool force = false);
   Q_INVOKABLE void setShowHidden(bool show);
   Q_INVOKABLE void setCurrentIndex(int index);
   Q_INVOKABLE void moveCursor(int delta);
   Q_INVOKABLE void activateCurrent();
+  Q_INVOKABLE QString currentName() const;
 
 signals:
   void pathChanged();
@@ -66,7 +71,10 @@ signals:
   void countChanged();
   void listingChanged();
   void errorStringChanged();
+  void aboutToNavigate();
   void listRequested(quint64 generation, const QString &path);
+  void statRequested(quint64 generation, const QString &path,
+                     const QStringList &names);
   void firstRowsInserted(qint64 elapsedMs, int rows);
 
 private slots:
@@ -74,6 +82,7 @@ private slots:
   void onStatsReady(quint64 generation, const QVector<DirectoryEntry> &batch,
                     bool priority);
   void onFinished(quint64 generation, bool ok, const QString &error);
+  void onWatchEvents(const QVector<DirectoryWatchEvent> &events);
 
 private:
   static QString normalizePath(const QString &path);
@@ -81,15 +90,26 @@ private:
   void rebuildVisible();
   void applyEntry(const DirectoryEntry &entry);
   void maybeActivatePending();
+  void maybeSelectPending();
+  void insertPlaceholder(const QString &name, bool isDir);
+  void removeByName(const QString &name);
+  void renameEntry(const QString &from, const QString &to);
+  void insertVisible(int allIndex);
+  void removeVisible(int allIndex);
+  DirectoryEntry makePlaceholder(const QString &name, bool isDir) const;
+  void navigateToExistingParent();
+  void reload();
   const DirectoryEntry *entryAt(int visibleRow) const;
 
   QThread m_thread;
   DirectoryLister *m_lister = nullptr;
+  DirectoryWatcher m_watcher;
   quint64 m_gen = 0;
 
   QString m_path;
   QString m_error;
   QString m_pendingActivate;
+  QString m_pendingSelect;
   QVector<DirectoryEntry> m_all;
   QVector<int> m_visible;
   QHash<QString, int> m_indexByName;

@@ -15,6 +15,8 @@ qt_add_executable(synchro
     src/main.cpp
     src/core/DirectoryModel.cpp
     src/core/DirectoryLister.cpp
+    src/core/DirectoryWatcher.cpp
+    src/core/NavStack.cpp
 )
 
 target_include_directories(synchro PRIVATE
@@ -33,6 +35,7 @@ qt_add_qml_module(synchro
     QML_FILES
         src/ui/qml/Main.qml
         src/ui/qml/FileList.qml
+        src/ui/qml/PathBar.qml
 )
 
 set_source_files_properties(src/ui/qml/Synchro/Theme/Theme.qml
@@ -87,6 +90,8 @@ if(BUILD_TESTING)
         tests/directory_model_test.cpp
         src/core/DirectoryModel.cpp
         src/core/DirectoryLister.cpp
+        src/core/DirectoryWatcher.cpp
+        src/core/NavStack.cpp
     )
     target_include_directories(directory_model_test PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core

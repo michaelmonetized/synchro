@@ -282,3 +282,33 @@ void DirectoryLister::listPath(quint64 generation, const QString &path) {
   if (!abandoned(generation))
     emit finished(generation, true, QString());
 }
+
+void DirectoryLister::requestStatNames(quint64 generation,
+                                       const QString &dirPath,
+                                       const QStringList &names) {
+  if (abandoned(generation) || names.isEmpty())
+    return;
+
+  const QByteArray encoded = QFile::encodeName(dirPath);
+  const int fd =
+      ::open(encoded.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (fd < 0)
+    return;
+
+  QMimeDatabase db;
+  QVector<DirectoryEntry> stats;
+  stats.reserve(names.size());
+  for (const QString &name : names) {
+    if (abandoned(generation)) {
+      ::close(fd);
+      return;
+    }
+    RawEntry raw;
+    raw.rawName = QFile::encodeName(name);
+    raw.dType = DT_UNKNOWN;
+    stats.append(enrich(fd, dirPath, raw, db));
+  }
+  ::close(fd);
+  if (!abandoned(generation) && !stats.isEmpty())
+    emit statsReady(generation, stats, true);
+}

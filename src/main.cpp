@@ -1,4 +1,5 @@
 #include "DirectoryModel.h"
+#include "NavStack.h"
 
 #include <QCommandLineParser>
 #include <QDir>
@@ -41,6 +42,7 @@ int main(int argc, char *argv[]) {
     startPath = positional.first();
 
   DirectoryModel directoryModel;
+  NavStack navStack(&directoryModel);
   directoryModel.setPath(startPath);
 
   QQmlApplicationEngine engine;
@@ -48,6 +50,8 @@ int main(int argc, char *argv[]) {
                        QStringLiteral("/qml"));
   engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
                                            &directoryModel);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"),
+                                           &navStack);
 
   QObject::connect(
       &engine, &QQmlApplicationEngine::objectCreationFailed, &app,

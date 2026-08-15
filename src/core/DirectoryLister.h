@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QUrl>
 #include <QVector>
 
@@ -33,6 +34,8 @@ public:
 
 public slots:
   void requestList(quint64 generation, const QString &path);
+  void requestStatNames(quint64 generation, const QString &dirPath,
+                        const QStringList &names);
 
 signals:
   void batchReady(quint64 generation, const QVector<DirectoryEntry> &batch);
