@@ -8,6 +8,9 @@ ListView {
     property var filterProxy
     property var navStack
     property var keyMachine
+    readonly property int thumbSizePx: 128
+
+    signal viewToggleRequested()
 
     readonly property var rows: filterProxy ? filterProxy : fileModel
 
@@ -27,6 +30,43 @@ ListView {
         color: Theme.selectedFill
     }
 
+    function syncThumbnails() {
+        if (!list.fileModel || !list.visible)
+            return
+        if (list.count <= 0) {
+            list.fileModel.requestVisibleThumbs(0, -1, list.thumbSizePx)
+            return
+        }
+        var first = list.indexAt(1, list.contentY + 1)
+        var last = list.indexAt(1, list.contentY + list.height - 2)
+        if (first < 0 && last < 0) {
+            thumbSync.interval = 50
+            thumbSync.start()
+            return
+        }
+        if (first < 0)
+            first = 0
+        if (last < 0)
+            last = Math.min(list.count - 1, first + 40)
+        list.fileModel.requestVisibleThumbs(first, last, list.thumbSizePx)
+    }
+
+    Timer {
+        id: thumbSync
+        interval: 16
+        repeat: false
+        onTriggered: {
+            interval = 16
+            list.syncThumbnails()
+        }
+    }
+
+    onContentYChanged: thumbSync.restart()
+    onHeightChanged: thumbSync.restart()
+    onCountChanged: thumbSync.restart()
+    onVisibleChanged: if (visible) thumbSync.restart()
+    Component.onCompleted: thumbSync.restart()
+
     delegate: Item {
         id: row
 
@@ -34,6 +74,7 @@ ListView {
         required property string name
         required property bool isDir
         required property bool isSymlink
+        required property string thumbnail
 
         width: ListView.view.width
         height: Math.max(Theme.fontBody + Theme.space(8), 20)
@@ -48,12 +89,44 @@ ListView {
             id: hover
         }
 
+        Item {
+            id: iconBox
+            width: Theme.fontBody
+            height: Theme.fontBody
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+
+            Image {
+                anchors.fill: parent
+                visible: row.thumbnail.length > 0
+                source: row.thumbnail
+                asynchronous: true
+                cache: true
+                fillMode: Image.PreserveAspectCrop
+                sourceSize.width: iconBox.width
+                sourceSize.height: iconBox.height
+            }
+
+            Text {
+                anchors.fill: parent
+                visible: row.thumbnail.length === 0
+                verticalAlignment: Text.AlignVCenter
+                horizontalAlignment: Text.AlignHCenter
+                text: row.isDir ? "▸" : row.isSymlink ? "↗" : ""
+                color: Theme.foreground
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontBody
+            }
+        }
+
         Text {
-            anchors.fill: parent
+            anchors.left: iconBox.right
+            anchors.right: parent.right
             anchors.leftMargin: Theme.space(8)
             anchors.rightMargin: Theme.space(8)
-            verticalAlignment: Text.AlignVCenter
-            text: (row.isDir ? "▸ " : row.isSymlink ? "↗ " : "  ") + row.name
+            anchors.verticalCenter: parent.verticalCenter
+            text: row.name
             color: Theme.foreground
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontBody
@@ -136,6 +209,9 @@ ListView {
             event.accepted = true
         } else if (event.key === Qt.Key_Period && !alt && !chord && !shift) {
             list.fileModel.showHidden = !list.fileModel.showHidden
+            event.accepted = true
+        } else if (event.key === Qt.Key_V && event.modifiers === Qt.NoModifier) {
+            list.viewToggleRequested()
             event.accepted = true
         }
     }

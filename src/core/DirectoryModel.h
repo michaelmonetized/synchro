@@ -2,6 +2,7 @@
 
 #include "DirectoryLister.h"
 #include "DirectoryWatcher.h"
+#include "ThumbnailService.h"
 
 #include <QAbstractListModel>
 #include <QElapsedTimer>
@@ -66,6 +67,7 @@ public:
   Q_INVOKABLE void moveCursor(int delta);
   Q_INVOKABLE void activateCurrent();
   Q_INVOKABLE QString currentName() const;
+  Q_INVOKABLE void requestVisibleThumbs(int first, int last, int sizePx);
 
 signals:
   void fileActivated(const QString &path, const QString &mime);
@@ -87,6 +89,7 @@ private slots:
                     bool priority);
   void onFinished(quint64 generation, bool ok, const QString &error);
   void onWatchEvents(const QVector<DirectoryWatchEvent> &events);
+  void onThumbnailReady(const QString &path, const QString &url);
 
 private:
   static QString normalizePath(const QString &path);
@@ -110,6 +113,7 @@ private:
   QThread m_thread;
   DirectoryLister *m_lister = nullptr;
   DirectoryWatcher m_watcher;
+  ThumbnailService *m_thumbs = nullptr;
   quint64 m_gen = 0;
   quint64 m_watchSerial = 0;
 
@@ -120,8 +124,12 @@ private:
   QVector<DirectoryEntry> m_all;
   QVector<int> m_visible;
   QHash<QString, int> m_indexByName;
+  QHash<QString, int> m_indexByPath;
   QHash<int, int> m_visibleRowByAll;
   QSet<QString> m_suppressedNames;
+  int m_thumbFirst = -1;
+  int m_thumbLast = -1;
+  int m_thumbSizePx = 128;
 
   int m_currentIndex = -1;
   bool m_showHidden = false;

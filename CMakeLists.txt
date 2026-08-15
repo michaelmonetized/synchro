@@ -21,6 +21,7 @@ qt_add_executable(synchro
     src/core/KeyMachine.cpp
     src/core/MimeMap.cpp
     src/core/RecentStore.cpp
+    src/core/ThumbnailService.cpp
     src/handlers/HandlerExec.cpp
     src/handlers/XdgOpen.cpp
 )
@@ -42,6 +43,7 @@ qt_add_qml_module(synchro
     QML_FILES
         src/ui/qml/Main.qml
         src/ui/qml/FileList.qml
+        src/ui/qml/FileGrid.qml
         src/ui/qml/PathBar.qml
         src/ui/qml/CommandField.qml
 )
@@ -100,6 +102,7 @@ if(BUILD_TESTING)
         src/core/DirectoryLister.cpp
         src/core/DirectoryWatcher.cpp
         src/core/NavStack.cpp
+        src/core/ThumbnailService.cpp
     )
     target_include_directories(directory_model_test PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core
@@ -125,6 +128,7 @@ if(BUILD_TESTING)
         src/core/NavStack.cpp
         src/core/FilterProxy.cpp
         src/core/KeyMachine.cpp
+        src/core/ThumbnailService.cpp
     )
     target_include_directories(command_field_test PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core
@@ -157,6 +161,7 @@ if(BUILD_TESTING)
         src/core/NavStack.cpp
         src/core/MimeMap.cpp
         src/core/RecentStore.cpp
+        src/core/ThumbnailService.cpp
         src/handlers/HandlerExec.cpp
         src/handlers/XdgOpen.cpp
     )
@@ -179,6 +184,25 @@ if(BUILD_TESTING)
     add_test(NAME handler_exec_test COMMAND handler_exec_test)
     set_tests_properties(handler_exec_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
+    qt_add_executable(thumbnail_service_test
+        tests/thumbnail_service_test.cpp
+        src/core/ThumbnailService.cpp
+    )
+    target_include_directories(thumbnail_service_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core
+    )
+    target_link_libraries(thumbnail_service_test PRIVATE
+        Qt6::Test
+        Qt6::Gui
+        Qt6::Core
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(thumbnail_service_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME thumbnail_service_test COMMAND thumbnail_service_test)
+    set_tests_properties(thumbnail_service_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 set_target_properties(synchro PROPERTIES

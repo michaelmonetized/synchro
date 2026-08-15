@@ -10,6 +10,7 @@ Window {
     readonly property var listing: filterProxy
     readonly property var history: navStack
     readonly property var keys: keyMachine
+    property bool gridMode: false
 
     width: 960
     height: 640
@@ -44,11 +45,25 @@ Window {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
+        visible: !root.gridMode
+        enabled: visible
         fileModel: root.files
         filterProxy: root.listing
         navStack: root.history
         keyMachine: root.keys
-        Component.onCompleted: forceActiveFocus()
+        onViewToggleRequested: root.gridMode = true
+    }
+
+    FileGrid {
+        id: fileGrid
+        anchors.top: commandField.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        visible: root.gridMode
+        enabled: visible
+        fileModel: root.files
+        onViewToggleRequested: root.gridMode = false
     }
 
     Shortcut {
@@ -64,17 +79,33 @@ Window {
     Connections {
         target: root.files
         function onPathChanged() {
-            fileList.forceActiveFocus()
+            if (root.gridMode)
+                fileGrid.forceActiveFocus()
+            else
+                fileList.forceActiveFocus()
         }
     }
 
     Connections {
         target: root.keys
         function onModeChanged() {
-            if (root.keys.listFocused)
-                fileList.forceActiveFocus()
-            else
+            if (root.keys.listFocused) {
+                if (root.gridMode)
+                    fileGrid.forceActiveFocus()
+                else
+                    fileList.forceActiveFocus()
+            } else {
                 commandField.focusInput()
+            }
         }
     }
+
+    onGridModeChanged: {
+        if (root.gridMode)
+            fileGrid.forceActiveFocus()
+        else
+            fileList.forceActiveFocus()
+    }
+
+    Component.onCompleted: fileList.forceActiveFocus()
 }
