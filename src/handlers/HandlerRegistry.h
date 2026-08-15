@@ -47,6 +47,12 @@ public:
   Record handler(const QString &id) const;
   bool contains(const QString &id) const { return m_byId.contains(id); }
 
+  bool setEnabled(const QString &id, bool enabled, QString *error = nullptr);
+  bool forget(const QString &id);
+  bool saveConfig() const;
+  QStringList enabledIds() const { return m_enabled; }
+  QStringList disabledIds() const { return m_disabled; }
+
   QVector<Match> resolve(const QString &kind,
                          const QVector<Manifest::Item> &items) const;
 

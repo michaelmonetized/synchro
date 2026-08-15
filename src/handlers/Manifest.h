@@ -71,6 +71,7 @@ public:
   QString tryExec(const QString &kind) const;
   QString execLine(const QString &kind) const;
   QString runtime(const QString &kind) const;
+  QString coreVerb(const QString &kind) const;
 };
 
 struct ManifestValidation {

@@ -29,6 +29,9 @@ qt_add_executable(synchro
     src/handlers/HandlerRegistry.cpp
     src/handlers/HandlerLoader.cpp
     src/handlers/HostApi.cpp
+    src/handlers/HandlerInstall.cpp
+    src/handlers/HandlerActions.cpp
+    src/handlers/CoreVerbs.cpp
     src/cli.cpp
 )
 
@@ -269,6 +272,8 @@ if(BUILD_TESTING)
         src/handlers/HostApi.cpp
         src/handlers/HandlerExec.cpp
         src/handlers/XdgOpen.cpp
+        src/handlers/HandlerActions.cpp
+        src/handlers/CoreVerbs.cpp
     )
     target_include_directories(peek_overlay_test PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core
@@ -294,6 +299,50 @@ if(BUILD_TESTING)
     add_test(NAME peek_overlay_test COMMAND peek_overlay_test)
     set_tests_properties(peek_overlay_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
+    qt_add_executable(handler_cli_test
+        tests/handler_cli_test.cpp
+        src/handlers/HandlerInstall.cpp
+        src/handlers/HandlerRegistry.cpp
+        src/handlers/Manifest.cpp
+    )
+    target_include_directories(handler_cli_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/handlers
+    )
+    target_compile_definitions(handler_cli_test PRIVATE
+        SYNCHRO_FIRST_PARTY_HANDLER_DIR="${CMAKE_SOURCE_DIR}/handlers"
+    )
+    target_link_libraries(handler_cli_test PRIVATE
+        Qt6::Test
+        Qt6::Core
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(handler_cli_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME handler_cli_test COMMAND handler_cli_test)
+
+    qt_add_executable(handler_actions_test
+        tests/handler_actions_test.cpp
+        src/handlers/HandlerActions.cpp
+        src/handlers/CoreVerbs.cpp
+        src/handlers/HandlerExec.cpp
+        src/handlers/HandlerRegistry.cpp
+        src/handlers/Manifest.cpp
+    )
+    target_include_directories(handler_actions_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/handlers
+    )
+    target_compile_definitions(handler_actions_test PRIVATE
+        SYNCHRO_FIRST_PARTY_HANDLER_DIR="${CMAKE_SOURCE_DIR}/handlers"
+    )
+    target_link_libraries(handler_actions_test PRIVATE
+        Qt6::Test
+        Qt6::Core
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(handler_actions_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME handler_actions_test COMMAND handler_actions_test)
 endif()
 
 set_target_properties(synchro PROPERTIES
@@ -305,3 +354,5 @@ include(GNUInstallDirs)
 install(TARGETS synchro RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES packaging/org.omarchy.synchro.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(DIRECTORY handlers/
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/synchro/handlers)

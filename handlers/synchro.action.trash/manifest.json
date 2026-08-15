@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.action.trash",
+  "name": "Move to Trash",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Trash the selection via the core FileOpEngine verb. Not the trash:// location.",
+  "kinds": ["action"],
+  "priority": 50,
+  "match": {
+    "minItems": 1,
+    "maxItems": 1000000,
+    "host": "posix-local"
+  },
+  "entryPoints": {},
+  "action": {
+    "runtime": "core",
+    "verb": "trash"
+  },
+  "permissions": ["fs-write"]
+}

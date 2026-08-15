@@ -76,23 +76,6 @@ int main(int argc, char *argv[]) {
   if (!xdgOpen.load()) {
     std::fprintf(stderr, "synchro: %s\n", qPrintable(xdgOpen.lastError()));
   }
-  // Declared last so it dies first and drops this connection before the
-  // captured xdgOpen / mimeMap refs.
-  RecentStore recents;
-
-  QObject::connect(
-      &directoryModel, &DirectoryModel::fileActivated, &recents,
-      [&](const QString &path, const QString &mime) {
-        QString resolved = mime;
-        if (resolved.isEmpty())
-          resolved = mimeMap.mimeForFile(path);
-        if (!xdgOpen.open(path, resolved, directoryModel.path())) {
-          std::fprintf(stderr, "synchro: open %s: %s\n", qPrintable(path),
-                       qPrintable(xdgOpen.lastError()));
-          return;
-        }
-        recents.record(path, resolved);
-      });
 
   directoryModel.setPath(startPath);
 
@@ -111,8 +94,28 @@ int main(int argc, char *argv[]) {
   HostApi hostApi(&directoryModel, &filterProxy, &navStack, &handlerRegistry,
                   &handlerLoader, &xdgOpen, &mimeMap, &engine);
   keyMachine.setPeekHost(&hostApi);
+  QObject::connect(&keyMachine, &KeyMachine::terminalRequested, &hostApi,
+                   &HostApi::runTerminal);
+  QObject::connect(&keyMachine, &KeyMachine::openWithRequested, &hostApi,
+                   &HostApi::openWithPalette);
   engine.rootContext()->setContextProperty(QStringLiteral("hostApi"),
                                            &hostApi);
+
+  // Declared last so it dies first and drops this connection before hostApi.
+  RecentStore recents;
+  QObject::connect(
+      &directoryModel, &DirectoryModel::fileActivated, &recents,
+      [&](const QString &path, const QString &mime) {
+        QString resolved = mime;
+        if (resolved.isEmpty())
+          resolved = mimeMap.mimeForFile(path);
+        if (!hostApi.openFile(path, resolved)) {
+          std::fprintf(stderr, "synchro: open %s: %s\n", qPrintable(path),
+                       qPrintable(hostApi.lastError()));
+          return;
+        }
+        recents.record(path, resolved);
+      });
 
   QObject::connect(
       &engine, &QQmlApplicationEngine::objectCreationFailed, &app,

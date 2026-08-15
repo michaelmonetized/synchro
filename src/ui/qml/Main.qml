@@ -72,6 +72,66 @@ Window {
         host: typeof hostApi !== "undefined" ? hostApi : null
     }
 
+    Item {
+        id: actionOverlay
+        objectName: "actionOverlay"
+        anchors.fill: parent
+        z: 110
+        visible: typeof hostApi !== "undefined" && hostApi && hostApi.actionOpen
+        focus: false
+
+        Rectangle {
+            anchors.fill: parent
+            color: Theme.background
+            opacity: 0.86
+            MouseArea {
+                anchors.fill: parent
+                onClicked: if (typeof hostApi !== "undefined" && hostApi)
+                    hostApi.closeAction()
+            }
+        }
+
+        Rectangle {
+            id: actionFrame
+            anchors.centerIn: parent
+            width: Math.min(parent.width - Theme.space(48), 480)
+            height: Math.min(parent.height - Theme.space(48), 360)
+            color: Theme.background
+            border.color: Theme.normalBorder
+            border.width: 1
+
+            Item {
+                id: actionSurface
+                objectName: "actionSurface"
+                anchors.fill: parent
+                anchors.margins: Theme.space(8)
+            }
+        }
+
+        function reparentAction() {
+            if (typeof hostApi === "undefined" || !hostApi || !hostApi.actionItem)
+                return
+            hostApi.actionItem.parent = actionSurface
+            hostApi.actionItem.anchors.fill = actionSurface
+            hostApi.actionItem.forceActiveFocus()
+        }
+
+        Connections {
+            target: typeof hostApi !== "undefined" ? hostApi : null
+            function onActionItemChanged() { actionOverlay.reparentAction() }
+            function onActionOpenChanged() {
+                if (typeof hostApi !== "undefined" && hostApi && hostApi.actionOpen)
+                    actionOverlay.reparentAction()
+                if (typeof hostApi !== "undefined" && hostApi && !hostApi.actionOpen) {
+                    if (root.gridMode)
+                        fileGrid.forceActiveFocus()
+                    else
+                        fileList.forceActiveFocus()
+                }
+            }
+        }
+    }
+
     Shortcut {
         sequence: "Ctrl+K"
         enabled: root.keys && !root.keys.peekOpen

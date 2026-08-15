@@ -112,6 +112,8 @@ private slots:
   void enterOnFileActivatesDoesNotNavigate();
   void spaceTogglesPeekAndJkStep();
   void mainQmlSlashThenSrcFilters();
+  void tRequestsTerminal();
+  void ctrlReturnRequestsOpenWith();
 };
 
 void CommandFieldTest::launchIsListFocused() {
@@ -697,6 +699,28 @@ void CommandFieldTest::mainQmlSlashThenSrcFilters() {
   QCOMPARE(proxy.filter(), QStringLiteral("src"));
   QVERIFY(findProxy(proxy, QStringLiteral("src")) >= 0);
   QVERIFY(findProxy(proxy, QStringLiteral("README.md")) < 0);
+}
+
+void CommandFieldTest::tRequestsTerminal() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  QSignalSpy spy(&keys, &KeyMachine::terminalRequested);
+  QVERIFY(keys.handleListKey(Qt::Key_T, Qt::NoModifier, QStringLiteral("t")));
+  QCOMPARE(spy.count(), 1);
+}
+
+void CommandFieldTest::ctrlReturnRequestsOpenWith() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  QSignalSpy spy(&keys, &KeyMachine::openWithRequested);
+  QVERIFY(keys.handleListKey(Qt::Key_Return, Qt::ControlModifier, QString()));
+  QCOMPARE(spy.count(), 1);
 }
 
 int main(int argc, char **argv) {

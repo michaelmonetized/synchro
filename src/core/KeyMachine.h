@@ -59,6 +59,8 @@ signals:
   void modeChanged();
   void fieldTextChanged();
   void jumpEpochChanged();
+  void terminalRequested();
+  void openWithRequested();
 
 private:
   void setMode(Mode mode);

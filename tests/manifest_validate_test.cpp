@@ -38,6 +38,9 @@ class ManifestValidateTest : public QObject {
 private slots:
   void firstPartyImageValid();
   void firstPartyXdgValid();
+  void firstPartyOmawriteValid();
+  void firstPartyActionHandlersValid();
+  void actionCoreRequiresVerb();
   void schemaVersionMustBeNumberOne();
   void requiredFields();
   void invalidId();
@@ -72,6 +75,65 @@ void ManifestValidateTest::firstPartyXdgValid() {
   const auto v = validateManifestDir(dir, true);
   QVERIFY2(v.ok, qPrintable(v.errors.join(QLatin1Char(';'))));
   QCOMPARE(v.manifest.id, QStringLiteral("synchro.open.xdg"));
+}
+
+void ManifestValidateTest::firstPartyOmawriteValid() {
+  const QString dir = QDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR))
+                          .filePath(QStringLiteral("synchro.open.omawrite"));
+  const auto v = validateManifestDir(dir, true);
+  QVERIFY2(v.ok, qPrintable(v.errors.join(QLatin1Char(';'))));
+  QCOMPARE(v.manifest.id, QStringLiteral("synchro.open.omawrite"));
+  QCOMPARE(v.manifest.execLine(QStringLiteral("open")),
+           QStringLiteral("omawrite %f"));
+  QCOMPARE(v.manifest.tryExec(QStringLiteral("open")),
+           QStringLiteral("omawrite"));
+  QCOMPARE(v.manifest.priority, 80);
+  QVERIFY(v.manifest.match.mime.contains(QStringLiteral("text/markdown")));
+}
+
+void ManifestValidateTest::firstPartyActionHandlersValid() {
+  const QString root = QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR);
+  const auto term = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.action.terminal")), true);
+  QVERIFY2(term.ok, qPrintable(term.errors.join(QLatin1Char(';'))));
+  QCOMPARE(term.manifest.execLine(QStringLiteral("action")),
+           QStringLiteral("xdg-terminal-exec --dir=%d"));
+  QVERIFY(!term.manifest.execLine(QStringLiteral("action"))
+               .contains(QStringLiteral("omarchy-launch-terminal")));
+
+  const auto trash = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.action.trash")), true);
+  QVERIFY2(trash.ok, qPrintable(trash.errors.join(QLatin1Char(';'))));
+  QCOMPARE(trash.manifest.runtime(QStringLiteral("action")),
+           QStringLiteral("core"));
+  QCOMPARE(trash.manifest.coreVerb(QStringLiteral("action")),
+           QStringLiteral("trash"));
+  QVERIFY(trash.manifest.execLine(QStringLiteral("action")).isEmpty());
+
+  const auto openWith = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.action.open-with")), true);
+  QVERIFY2(openWith.ok, qPrintable(openWith.errors.join(QLatin1Char(';'))));
+  QCOMPARE(openWith.manifest.entryPoints.value(QStringLiteral("action")),
+           QStringLiteral("Palette.qml"));
+}
+
+void ManifestValidateTest::actionCoreRequiresVerb() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString dir = writeHandler(
+      tmp, QStringLiteral("acme.core"),
+      QByteArrayLiteral("{\n"
+                        "  \"schemaVersion\": 1,\n"
+                        "  \"id\": \"acme.core\",\n"
+                        "  \"name\": \"C\",\n"
+                        "  \"version\": \"1\",\n"
+                        "  \"kinds\": [\"action\"],\n"
+                        "  \"entryPoints\": {},\n"
+                        "  \"action\": { \"runtime\": \"core\" }\n"
+                        "}\n"));
+  const auto v = validateManifestDir(dir, false);
+  QVERIFY(!v.ok);
+  QVERIFY(v.errors.join(QLatin1Char(' ')).contains(QStringLiteral("verb")));
 }
 
 void ManifestValidateTest::schemaVersionMustBeNumberOne() {

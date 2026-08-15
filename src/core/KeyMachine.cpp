@@ -360,6 +360,11 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
     focusFilter();
     return true;
   }
+  if (key == Qt::Key_T && !alt && !chord && !shift) {
+    closePeek();
+    emit terminalRequested();
+    return true;
+  }
   return false;
 }
 
@@ -373,8 +378,19 @@ void KeyMachine::seek(const QString &chunk) {
 }
 
 bool KeyMachine::handlePeekKey(int key, int modifiers) {
+  if ((key == Qt::Key_Return || key == Qt::Key_Enter) && hasCtrl(modifiers) &&
+      !hasAlt(modifiers) && !hasMeta(modifiers)) {
+    closePeek();
+    emit openWithRequested();
+    return true;
+  }
   if (hasChord(modifiers) || hasAlt(modifiers))
     return true;
+  if (key == Qt::Key_T && !hasShift(modifiers)) {
+    closePeek();
+    emit terminalRequested();
+    return true;
+  }
   if (key == Qt::Key_Space || key == Qt::Key_Escape) {
     if (m_host)
       m_host->close();
@@ -409,6 +425,12 @@ bool KeyMachine::handleListKey(int key, int modifiers, const QString &text) {
   if (key == Qt::Key_L && hasCtrl(modifiers) && !hasAlt(modifiers) &&
       !hasMeta(modifiers)) {
     focusJump();
+    return true;
+  }
+  if ((key == Qt::Key_Return || key == Qt::Key_Enter) &&
+      hasCtrl(modifiers) && !hasAlt(modifiers) && !hasMeta(modifiers)) {
+    closePeek();
+    emit openWithRequested();
     return true;
   }
   if (key == Qt::Key_Escape) {

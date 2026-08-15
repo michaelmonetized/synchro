@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.action.terminal",
+  "name": "Terminal",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Open a terminal in the listing directory. Uses xdg-terminal-exec --dir, not omarchy-launch-terminal.",
+  "kinds": ["action"],
+  "priority": 50,
+  "match": {
+    "minItems": 0,
+    "maxItems": 1000000,
+    "host": "posix-local"
+  },
+  "entryPoints": {},
+  "action": {
+    "runtime": "exec",
+    "exec": "xdg-terminal-exec --dir=%d",
+    "tryExec": "xdg-terminal-exec"
+  },
+  "permissions": ["exec"]
+}

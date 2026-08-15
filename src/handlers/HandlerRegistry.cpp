@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QSaveFile>
 #include <QStandardPaths>
 
 #include <algorithm>
@@ -157,6 +158,57 @@ QVector<HandlerRegistry::Record> HandlerRegistry::handlers() const {
 
 HandlerRegistry::Record HandlerRegistry::handler(const QString &id) const {
   return m_byId.value(id);
+}
+
+bool HandlerRegistry::saveConfig() const {
+  const QFileInfo info(m_configPath);
+  if (!QDir().mkpath(info.absolutePath()))
+    return false;
+  QSaveFile file(m_configPath);
+  if (!file.open(QIODevice::WriteOnly))
+    return false;
+  QJsonObject obj;
+  obj.insert(QStringLiteral("version"), 1);
+  obj.insert(QStringLiteral("disabled"), QJsonArray::fromStringList(m_disabled));
+  obj.insert(QStringLiteral("enabled"), QJsonArray::fromStringList(m_enabled));
+  QJsonObject ov;
+  for (auto it = m_openOverrides.cbegin(); it != m_openOverrides.cend(); ++it)
+    ov.insert(it.key(), it.value());
+  obj.insert(QStringLiteral("openOverrides"), ov);
+  file.write(QJsonDocument(obj).toJson(QJsonDocument::Indented));
+  return file.commit();
+}
+
+bool HandlerRegistry::setEnabled(const QString &id, bool enabled,
+                                 QString *error) {
+  if (!m_byId.contains(id)) {
+    if (error)
+      *error = QStringLiteral("handler '%1' is not known").arg(id);
+    return false;
+  }
+  Record &rec = m_byId[id];
+  m_disabled.removeAll(id);
+  m_enabled.removeAll(id);
+  if (enabled) {
+    if (!rec.firstParty)
+      m_enabled.append(id);
+  } else {
+    m_disabled.append(id);
+  }
+  rec.enabled = isEnabled(id, rec.firstParty);
+  if (!saveConfig()) {
+    if (error)
+      *error = QStringLiteral("failed to write %1").arg(m_configPath);
+    return false;
+  }
+  return true;
+}
+
+bool HandlerRegistry::forget(const QString &id) {
+  m_enabled.removeAll(id);
+  m_disabled.removeAll(id);
+  m_byId.remove(id);
+  return saveConfig();
 }
 
 QVector<HandlerRegistry::Match>

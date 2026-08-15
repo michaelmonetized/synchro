@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QUrl>
@@ -77,6 +78,8 @@ private slots:
   void reservedNotOverridden();
   void thirdPartyDisabledByDefault();
   void folderContains();
+  void omawriteBeatsXdgWhenPresent();
+  void enableDisablePersist();
 };
 
 void MatchTest::pathGlobBasename() {
@@ -259,6 +262,65 @@ void MatchTest::thirdPartyDisabledByDefault() {
                              QStringLiteral("image/png"))})
                .size(),
            0);
+}
+
+void MatchTest::omawriteBeatsXdgWhenPresent() {
+  HandlerRegistry reg;
+  reg.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  reg.setUserDir(tmp.path());
+  reg.setScanEnv(false);
+  reg.setConfigPath(tmp.filePath(QStringLiteral("none.json")));
+  reg.scan();
+  QVERIFY(reg.contains(QStringLiteral("synchro.open.omawrite")));
+  QVERIFY(reg.contains(QStringLiteral("synchro.open.xdg")));
+  QVERIFY(reg.handler(QStringLiteral("synchro.open.omawrite")).enabled);
+
+  const auto matches = reg.resolve(
+      QStringLiteral("open"),
+      {item(QStringLiteral("/tmp/README.md"), QStringLiteral("text/markdown"))});
+  QVERIFY(!matches.isEmpty());
+  const bool hasOma =
+      !QStandardPaths::findExecutable(QStringLiteral("omawrite")).isEmpty();
+  QStringList ids;
+  for (const auto &m : matches)
+    ids.append(m.id);
+  if (hasOma) {
+    QCOMPARE(matches.constFirst().id, QStringLiteral("synchro.open.omawrite"));
+  } else {
+    QVERIFY(!ids.contains(QStringLiteral("synchro.open.omawrite")));
+    QVERIFY(ids.contains(QStringLiteral("synchro.open.xdg")));
+  }
+}
+
+void MatchTest::enableDisablePersist() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  writePreview(tmp.path(), QStringLiteral("acme.photos"), 70,
+               QByteArrayLiteral("[\"image/*\"]"));
+  const QString cfg = tmp.filePath(QStringLiteral("handlers.json"));
+  HandlerRegistry reg;
+  reg.setFirstPartyDir(QStringLiteral("/nonexistent"));
+  reg.setUserDir(tmp.path());
+  reg.setScanEnv(false);
+  reg.setConfigPath(cfg);
+  reg.scan();
+  QVERIFY(!reg.handler(QStringLiteral("acme.photos")).enabled);
+  QString err;
+  QVERIFY(reg.setEnabled(QStringLiteral("acme.photos"), true, &err));
+  QVERIFY(reg.handler(QStringLiteral("acme.photos")).enabled);
+  QVERIFY(QFileInfo::exists(cfg));
+
+  HandlerRegistry again;
+  again.setFirstPartyDir(QStringLiteral("/nonexistent"));
+  again.setUserDir(tmp.path());
+  again.setScanEnv(false);
+  again.setConfigPath(cfg);
+  again.scan();
+  QVERIFY(again.handler(QStringLiteral("acme.photos")).enabled);
+  QVERIFY(again.setEnabled(QStringLiteral("acme.photos"), false, &err));
+  QVERIFY(!again.handler(QStringLiteral("acme.photos")).enabled);
 }
 
 void MatchTest::folderContains() {

@@ -146,6 +146,10 @@ void validateKindRequirements(const Manifest &m, QStringList *errors) {
           !m.action.value(QStringLiteral("exec")).toString().isEmpty();
       const bool core =
           kindObjectRuntime(m.action) == QLatin1String("core");
+      if (core &&
+          m.action.value(QStringLiteral("verb")).toString().isEmpty())
+        errors->append(QStringLiteral("action.runtime core requires "
+                                      "action.verb"));
       if (!hasEp && !hasExec && !core)
         errors->append(QStringLiteral("kind 'action' requires "
                                       "entryPoints.action, action.exec, or "
@@ -377,6 +381,14 @@ QString Manifest::runtime(const QString &kind) const {
     return kindObjectRuntime(folder);
   if (kind == QLatin1String("location"))
     return kindObjectRuntime(location);
+  return {};
+}
+
+QString Manifest::coreVerb(const QString &kind) const {
+  if (kind == QLatin1String("action"))
+    return action.value(QStringLiteral("verb")).toString();
+  if (kind == QLatin1String("location"))
+    return location.value(QStringLiteral("adapter")).toString();
   return {};
 }
 
