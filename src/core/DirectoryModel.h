@@ -68,6 +68,7 @@ public:
   Q_INVOKABLE QString currentName() const;
 
 signals:
+  void fileActivated(const QString &path, const QString &mime);
   void pathChanged();
   void showHiddenChanged();
   void currentIndexChanged();

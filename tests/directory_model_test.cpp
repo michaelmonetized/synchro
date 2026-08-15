@@ -118,6 +118,8 @@ private slots:
   void rolesArePopulated();
   void cursorMoves();
   void activateDirChangesPath();
+  void activateFileEmitsAndStays();
+  void activatePendingSymlinkToFile();
   void staleSetPathDoesNotClobber();
   void activatePendingSymlinkToDir();
   void listingTwoThousandLeavesGuiResponsive();
@@ -406,6 +408,59 @@ void DirectoryModelTest::activateDirChangesPath() {
   QVERIFY(waitListingDone(model));
   QVERIFY(model.path().endsWith(QStringLiteral("child")));
   QVERIFY(findRow(model, QStringLiteral("inside.txt")) >= 0);
+}
+
+void DirectoryModelTest::activateFileEmitsAndStays() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QFile f(tmp.filePath(QStringLiteral("readme.txt")));
+  QVERIFY(f.open(QIODevice::WriteOnly));
+  f.write("x", 1);
+  f.close();
+
+  DirectoryModel model;
+  QSignalSpy spy(&model, &DirectoryModel::fileActivated);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const int row = findRow(model, QStringLiteral("readme.txt"));
+  QVERIFY(row >= 0);
+  model.setCurrentIndex(row);
+  const QString before = model.path();
+  model.activateCurrent();
+  QCOMPARE(model.path(), before);
+  QCOMPARE(spy.count(), 1);
+  QCOMPARE(QFileInfo(spy.at(0).at(0).toString()).fileName(),
+           QStringLiteral("readme.txt"));
+}
+
+void DirectoryModelTest::activatePendingSymlinkToFile() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QFile target(tmp.filePath(QStringLiteral("targetfile")));
+  QVERIFY(target.open(QIODevice::WriteOnly));
+  target.write("x", 1);
+  target.close();
+  QVERIFY(QFile::link(QStringLiteral("targetfile"),
+                      tmp.filePath(QStringLiteral("filelink"))));
+
+  DirectoryModel model;
+  QSignalSpy spy(&model, &DirectoryModel::fileActivated);
+  QString kindAtFirstPaint;
+  connect(&model, &DirectoryModel::firstRowsInserted, this, [&] {
+    const int row = findRow(model, QStringLiteral("filelink"));
+    if (row < 0)
+      return;
+    kindAtFirstPaint =
+        roleAt(model, row, DirectoryModel::DirKindRole).toString();
+    model.setCurrentIndex(row);
+    model.activateCurrent();
+  });
+  model.setPath(tmp.path());
+  QVERIFY(QTest::qWaitFor([&] { return spy.count() == 1; }, 3000));
+  QCOMPARE(kindAtFirstPaint, QStringLiteral("pending"));
+  QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
+           QFileInfo(tmp.path()).canonicalFilePath());
+  QVERIFY(spy.at(0).at(0).toString().endsWith(QStringLiteral("filelink")));
 }
 
 void DirectoryModelTest::staleSetPathDoesNotClobber() {

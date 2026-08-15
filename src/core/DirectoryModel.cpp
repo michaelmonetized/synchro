@@ -257,6 +257,8 @@ void DirectoryModel::activateCurrent() {
   }
   if (e->isDir)
     setPath(e->path);
+  else
+    emit fileActivated(e->path, e->mime);
 }
 
 void DirectoryModel::onBatchReady(quint64 generation,
@@ -341,9 +343,12 @@ void DirectoryModel::maybeActivatePending() {
     return;
   const bool isDir = e.isDir;
   const QString dest = e.path;
+  const QString mime = e.mime;
   m_pendingActivate.clear();
   if (isDir)
     setPath(dest);
+  else
+    emit fileActivated(dest, mime);
 }
 
 void DirectoryModel::onFinished(quint64 generation, bool ok,

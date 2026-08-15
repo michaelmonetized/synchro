@@ -1,7 +1,10 @@
 #include "DirectoryModel.h"
 #include "FilterProxy.h"
 #include "KeyMachine.h"
+#include "MimeMap.h"
 #include "NavStack.h"
+#include "RecentStore.h"
+#include "XdgOpen.h"
 
 #include <QCommandLineParser>
 #include <QDir>
@@ -9,6 +12,8 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QtQml/QQmlExtensionPlugin>
+
+#include <cstdio>
 
 Q_IMPORT_QML_PLUGIN(Synchro_ThemePlugin)
 Q_IMPORT_QML_PLUGIN(Synchro_HandlerPlugin)
@@ -48,6 +53,28 @@ int main(int argc, char *argv[]) {
   filterProxy.setDirectoryModel(&directoryModel);
   NavStack navStack(&directoryModel);
   KeyMachine keyMachine(&directoryModel, &filterProxy, &navStack);
+  MimeMap mimeMap;
+  RecentStore recents;
+  XdgOpen xdgOpen;
+  if (!xdgOpen.load()) {
+    std::fprintf(stderr, "synchro: %s\n", qPrintable(xdgOpen.lastError()));
+  }
+
+  QObject::connect(
+      &directoryModel, &DirectoryModel::fileActivated,
+      &directoryModel,
+      [&](const QString &path, const QString &mime) {
+        QString resolved = mime;
+        if (resolved.isEmpty())
+          resolved = mimeMap.mimeForFile(path);
+        if (!xdgOpen.open(path, resolved, directoryModel.path())) {
+          std::fprintf(stderr, "synchro: open %s: %s\n", qPrintable(path),
+                       qPrintable(xdgOpen.lastError()));
+          return;
+        }
+        recents.record(path, resolved);
+      });
+
   directoryModel.setPath(startPath);
 
   QQmlApplicationEngine engine;

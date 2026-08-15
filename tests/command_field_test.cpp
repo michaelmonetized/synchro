@@ -12,6 +12,7 @@
 #include <QQmlContext>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QtQml/QQmlExtensionPlugin>
@@ -81,6 +82,7 @@ private slots:
   void failedJumpStaysInField();
   void goBackRestoresFilter();
   void emptyFilterKeepsSourceCursor();
+  void enterOnFileActivatesDoesNotNavigate();
   void mainQmlSlashThenSrcFilters();
 };
 
@@ -523,6 +525,32 @@ void CommandFieldTest::emptyFilterKeepsSourceCursor() {
   proxy.setFilter(QString());
   QCOMPARE(proxy.currentName(), QStringLiteral("zzz.txt"));
   QCOMPARE(model.currentName(), QStringLiteral("zzz.txt"));
+}
+
+void CommandFieldTest::enterOnFileActivatesDoesNotNavigate() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("README.md"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  QSignalSpy spy(&model, &DirectoryModel::fileActivated);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const QString root = model.path();
+  const int row = findProxy(proxy, QStringLiteral("README.md"));
+  QVERIFY(row >= 0);
+  proxy.setCurrentIndex(row);
+  QVERIFY(keys.handleListKey(Qt::Key_Return, Qt::NoModifier, QString()));
+  QCOMPARE(canon(model.path()), canon(root));
+  QCOMPARE(spy.count(), 1);
+  QCOMPARE(QFileInfo(spy.at(0).at(0).toString()).fileName(),
+           QStringLiteral("README.md"));
 }
 
 void CommandFieldTest::mainQmlSlashThenSrcFilters() {
