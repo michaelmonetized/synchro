@@ -34,6 +34,7 @@ Item {
 
     TextInput {
         id: input
+        objectName: "commandInput"
         anchors.left: prompt.right
         anchors.leftMargin: Theme.space(8)
         anchors.right: hint.left

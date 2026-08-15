@@ -18,6 +18,8 @@ NavStack::NavStack(DirectoryModel *model, QObject *parent)
     m_current.path = m_model->path();
 }
 
+void NavStack::setLiveFilter(const QString &filter) { m_liveFilter = filter; }
+
 QString NavStack::homePath() const {
   const QString home = QDir::homePath();
   const QString canon = QFileInfo(home).canonicalFilePath();
@@ -31,6 +33,7 @@ NavStack::Frame NavStack::snapshot() const {
   f.path = m_model->path();
   f.selectedName = m_model->currentName();
   f.viewMode = QStringLiteral("list");
+  f.filter = m_liveFilter;
   return f;
 }
 
@@ -39,6 +42,8 @@ void NavStack::restore(const Frame &frame) {
     return;
   m_restoring = true;
   m_model->setPath(frame.path, frame.selectedName);
+  m_liveFilter = frame.filter;
+  emit filterRestored(frame.filter);
   m_current = frame;
   m_restoring = false;
   emit historyChanged();

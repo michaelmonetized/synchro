@@ -39,6 +39,8 @@ KeyMachine::KeyMachine(DirectoryModel *model, FilterProxy *proxy, NavStack *nav,
   if (m_model)
     connect(m_model, &DirectoryModel::pathChanged, this,
             &KeyMachine::onPathChanged);
+  if (m_nav)
+    connect(m_nav, &NavStack::filterRestored, this, &KeyMachine::restoreField);
 }
 
 QString KeyMachine::mode() const {
@@ -77,23 +79,42 @@ void KeyMachine::applyFieldText() {
     m_proxy->setFilter(QString());
   else
     m_proxy->setFilter(m_fieldText);
+  if (m_nav)
+    m_nav->setLiveFilter(m_proxy->filter());
 }
 
 void KeyMachine::clearFieldAndFilter() {
   m_fieldText.clear();
   if (m_proxy)
     m_proxy->setFilter(QString());
+  if (m_nav)
+    m_nav->setLiveFilter(QString());
   emit fieldTextChanged();
 }
 
 void KeyMachine::onPathChanged() {
   m_seek.clear();
+  if (m_nav && m_nav->restoring()) {
+    setMode(Mode::ListFocused);
+    return;
+  }
   if (!m_fieldText.isEmpty() || (m_proxy && !m_proxy->filter().isEmpty())) {
     m_fieldText.clear();
     if (m_proxy)
       m_proxy->setFilter(QString());
     emit fieldTextChanged();
   }
+  if (m_nav)
+    m_nav->setLiveFilter(QString());
+  setMode(Mode::ListFocused);
+}
+
+void KeyMachine::restoreField(const QString &text) {
+  if (m_fieldText != text) {
+    m_fieldText = text;
+    emit fieldTextChanged();
+  }
+  applyFieldText();
   setMode(Mode::ListFocused);
 }
 
@@ -135,9 +156,11 @@ void KeyMachine::acceptField() {
   const QString cwd = m_model ? m_model->path() : QString();
   if (isJumpText(m_fieldText, cwd)) {
     const QString dest = resolveJump(m_fieldText, cwd);
-    if (!dest.isEmpty() && m_nav)
+    if (dest.isEmpty())
+      return;
+    if (m_nav)
       m_nav->navigate(dest);
-    else if (!dest.isEmpty() && m_model)
+    else if (m_model)
       m_model->setPath(dest);
     setMode(Mode::ListFocused);
     return;

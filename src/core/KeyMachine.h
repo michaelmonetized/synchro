@@ -39,6 +39,7 @@ public:
   Q_INVOKABLE void focusList();
   Q_INVOKABLE void escape();
   Q_INVOKABLE void acceptField();
+  void restoreField(const QString &text);
   Q_INVOKABLE bool handleListKey(int key, int modifiers, const QString &text);
   Q_INVOKABLE bool handleFieldKey(int key, int modifiers);
 

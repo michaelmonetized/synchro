@@ -124,11 +124,16 @@ if(BUILD_TESTING)
     target_include_directories(command_field_test PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core
     )
+    target_compile_definitions(command_field_test PRIVATE
+        SYNCHRO_MAIN_QML="${CMAKE_SOURCE_DIR}/src/ui/qml/Main.qml"
+    )
     target_link_libraries(command_field_test PRIVATE
         Qt6::Test
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
+        synchro_theme
+        synchro_themeplugin
     )
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(command_field_test PRIVATE -Wall -Wextra -Wpedantic)

@@ -16,6 +16,9 @@ class NavStack : public QObject {
 public:
   explicit NavStack(DirectoryModel *model, QObject *parent = nullptr);
 
+  bool restoring() const { return m_restoring; }
+  void setLiveFilter(const QString &filter);
+
   bool canGoBack() const { return !m_back.isEmpty(); }
   bool canGoForward() const { return !m_forward.isEmpty(); }
   QString homePath() const;
@@ -30,6 +33,7 @@ public:
 
 signals:
   void historyChanged();
+  void filterRestored(const QString &filter);
 
 private:
   struct Frame {
@@ -43,6 +47,7 @@ private:
   void restore(const Frame &frame);
 
   DirectoryModel *m_model = nullptr;
+  QString m_liveFilter;
   Frame m_current;
   QVector<Frame> m_back;
   QVector<Frame> m_forward;

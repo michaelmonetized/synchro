@@ -48,7 +48,8 @@ void FilterProxy::bindSource(DirectoryModel *model) {
 void FilterProxy::setFilter(const QString &filter) {
   if (m_filter == filter)
     return;
-  const QString keep = currentName();
+  auto *dm = directoryModel();
+  const QString keep = dm ? dm->currentName() : QString();
   beginFilterChange();
   m_filter = filter;
   endFilterChange(QSortFilterProxyModel::Direction::Rows);
@@ -61,18 +62,13 @@ void FilterProxy::setFilter(const QString &filter) {
       }
     }
   }
-  if (next < 0 && rowCount() > 0)
-    next = 0;
   if (next >= 0)
     setCurrentIndex(next);
-  else if (auto *dm = directoryModel()) {
-    m_syncing = true;
-    dm->setCurrentIndex(-1);
-    m_syncing = false;
-    emit currentIndexChanged();
-  }
+  else if (rowCount() > 0)
+    setCurrentIndex(0);
   emit filterChanged();
   emit countChanged();
+  emit currentIndexChanged();
 }
 
 int FilterProxy::currentIndex() const {
@@ -88,12 +84,7 @@ void FilterProxy::setCurrentIndex(int proxyRow) {
   if (!dm)
     return;
   if (rowCount() == 0) {
-    if (dm->currentIndex() != -1) {
-      m_syncing = true;
-      dm->setCurrentIndex(-1);
-      m_syncing = false;
-      emit currentIndexChanged();
-    }
+    emit currentIndexChanged();
     return;
   }
   const int next = qBound(0, proxyRow, rowCount() - 1);
