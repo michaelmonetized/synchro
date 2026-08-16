@@ -1,8 +1,10 @@
+#include "CommandPalette.h"
 #include "DirectoryModel.h"
 #include "FilterProxy.h"
 #include "KeyMachine.h"
 #include "NavStack.h"
 #include "PeekHost.h"
+#include "RecentStore.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -127,6 +129,23 @@ private slots:
   void tRequestsTerminal();
   void ctrlReturnRequestsOpenWith();
   void focusFilterClosesActionOverlay();
+  void paletteResolvePrefersBuiltins();
+  void colonFromListEntersFieldCommand();
+  void leadingColonPromotesAndDoesNotFilter();
+  void enterHomeNavigates();
+  void enterHiddenToggles();
+  void enterGridListTogglesView();
+  void enterTrashNoopsWithStatus();
+  void enterEmptyNoopsWithStatus();
+  void enterRecentEmptyStatus();
+  void enterRecentJumpsToLast();
+  void enterHelpOpensOverlay();
+  void escCommandSingleStep();
+  void colonDoesNotReplaceListVerbs();
+  void unknownAndAmbiguousStayInField();
+  void actionHandlerByIdAndTitle();
+  void vTogglesGridFromList();
+  void mainQmlColonEntersCommand();
 };
 
 void CommandFieldTest::launchIsListFocused() {
@@ -757,6 +776,405 @@ void CommandFieldTest::focusFilterClosesActionOverlay() {
   QVERIFY(!peek.actionOpen());
   QVERIFY(!keys.actionOpen());
   QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+}
+
+void CommandFieldTest::paletteResolvePrefersBuiltins() {
+  CommandPalette pal;
+  pal.registerAction(QStringLiteral("synchro.action.trash"),
+                     QStringLiteral("Move to Trash"));
+  pal.registerAction(QStringLiteral("synchro.action.terminal"),
+                     QStringLiteral("Terminal"));
+  CommandSpec spec;
+  QString err;
+  QVERIFY(pal.resolve(QStringLiteral(":trash"), &spec, &err));
+  QCOMPARE(spec.id, QStringLiteral("trash"));
+  QVERIFY(spec.builtin);
+  QVERIFY(pal.resolve(QStringLiteral(":synchro.action.trash"), &spec, &err));
+  QCOMPARE(spec.id, QStringLiteral("synchro.action.trash"));
+  QVERIFY(!spec.builtin);
+  QVERIFY(pal.resolve(QStringLiteral(":terminal"), &spec, &err));
+  QCOMPARE(spec.id, QStringLiteral("synchro.action.terminal"));
+  QVERIFY(pal.resolve(QStringLiteral(":Terminal"), &spec, &err));
+  QCOMPARE(spec.id, QStringLiteral("synchro.action.terminal"));
+  QVERIFY(pal.resolve(QStringLiteral(":?"), &spec, &err));
+  QCOMPARE(spec.id, QStringLiteral("?"));
+  QVERIFY(!pal.resolve(QStringLiteral(":h"), &spec, &err));
+  QCOMPARE(err, QStringLiteral("ambiguous command"));
+  QVERIFY(pal.resolve(QStringLiteral(":ho"), &spec, &err));
+  QCOMPARE(spec.id, QStringLiteral("home"));
+  QVERIFY(!pal.resolve(QStringLiteral(":nope"), &spec, &err));
+  QCOMPARE(err, QStringLiteral("unknown command"));
+}
+
+void CommandFieldTest::colonFromListEntersFieldCommand() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  QVERIFY(keys.handleListKey(Qt::Key_Colon, Qt::ShiftModifier,
+                             QStringLiteral(":")));
+  QCOMPARE(keys.mode(), QStringLiteral("field-command"));
+  QVERIFY(keys.fieldFocused());
+  QCOMPARE(keys.fieldText(), QStringLiteral(":"));
+  QVERIFY(proxy.filter().isEmpty());
+}
+
+void CommandFieldTest::leadingColonPromotesAndDoesNotFilter() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("README.md"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  keys.focusFilter();
+  keys.setFieldText(QStringLiteral(":home"));
+  QCOMPARE(keys.mode(), QStringLiteral("field-command"));
+  QVERIFY(proxy.filter().isEmpty());
+  QVERIFY(findProxy(proxy, QStringLiteral("README.md")) >= 0);
+  QVERIFY(findProxy(proxy, QStringLiteral("src")) >= 0);
+}
+
+void CommandFieldTest::enterHomeNavigates() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":home"));
+  keys.acceptField();
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(canon(model.path()), canon(QDir::homePath()));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(keys.fieldText().isEmpty());
+}
+
+void CommandFieldTest::enterHiddenToggles() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral(".secret"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("visible.txt"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QVERIFY(!model.showHidden());
+  QVERIFY(findProxy(proxy, QStringLiteral(".secret")) < 0);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":hidden"));
+  keys.acceptField();
+  QVERIFY(model.showHidden());
+  QVERIFY(findProxy(proxy, QStringLiteral(".secret")) >= 0);
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+}
+
+void CommandFieldTest::enterGridListTogglesView() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  QVERIFY(!keys.gridMode());
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":grid"));
+  keys.acceptField();
+  QVERIFY(keys.gridMode());
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":list"));
+  keys.acceptField();
+  QVERIFY(!keys.gridMode());
+}
+
+void CommandFieldTest::enterTrashNoopsWithStatus() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  const QString before = model.path();
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":trash"));
+  keys.acceptField();
+  QCOMPARE(model.path(), before);
+  QCOMPARE(keys.statusMessage(), QStringLiteral("trash is not available"));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+}
+
+void CommandFieldTest::enterEmptyNoopsWithStatus() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":empty"));
+  keys.acceptField();
+  QCOMPARE(keys.statusMessage(),
+           QStringLiteral("empty is only available in trash"));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+}
+
+void CommandFieldTest::enterRecentEmptyStatus() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  RecentStore recents(tmp.filePath(QStringLiteral("recent.jsonl")), 50, 100);
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  keys.setRecentStore(&recents);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":recent"));
+  keys.acceptField();
+  QCOMPARE(keys.statusMessage(), QStringLiteral("no recents"));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+}
+
+void CommandFieldTest::enterRecentJumpsToLast() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("foo.txt"))));
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("other")));
+  RecentStore recents(tmp.filePath(QStringLiteral("recent.jsonl")), 50, 100);
+  recents.record(tmp.filePath(QStringLiteral("foo.txt")),
+                 QStringLiteral("text/plain"));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  keys.setRecentStore(&recents);
+
+  model.setPath(tmp.filePath(QStringLiteral("other")));
+  QVERIFY(waitListingDone(model));
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":recent"));
+  keys.acceptField();
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(canon(model.path()), canon(tmp.path()));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+}
+
+void CommandFieldTest::enterHelpOpensOverlay() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":help"));
+  keys.acceptField();
+  QVERIFY(keys.helpOpen());
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(keys.helpText().contains(QStringLiteral(":trash")));
+
+  QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
+  QVERIFY(!keys.helpOpen());
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":?"));
+  keys.acceptField();
+  QVERIFY(keys.helpOpen());
+}
+
+void CommandFieldTest::escCommandSingleStep() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":home"));
+  QCOMPARE(keys.mode(), QStringLiteral("field-command"));
+  QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
+  QVERIFY(keys.fieldText().isEmpty());
+  QCOMPARE(keys.mode(), QStringLiteral("field-command"));
+  QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+}
+
+void CommandFieldTest::colonDoesNotReplaceListVerbs() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("aaa.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("bbb.txt"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  proxy.setCurrentIndex(0);
+  const int before = proxy.currentIndex();
+  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
+  QCOMPARE(proxy.currentIndex(), qMin(before + 1, proxy.rowCount() - 1));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+
+  const int mid = proxy.currentIndex();
+  QVERIFY(keys.handleListKey(Qt::Key_Colon, Qt::ShiftModifier,
+                             QStringLiteral(":")));
+  QCOMPARE(keys.mode(), QStringLiteral("field-command"));
+  QCOMPARE(proxy.currentIndex(), mid);
+}
+
+void CommandFieldTest::unknownAndAmbiguousStayInField() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":nope"));
+  keys.acceptField();
+  QCOMPARE(keys.mode(), QStringLiteral("field-command"));
+  QCOMPARE(keys.fieldText(), QStringLiteral(":nope"));
+  QCOMPARE(keys.statusMessage(), QStringLiteral("unknown command"));
+
+  keys.setFieldText(QStringLiteral(":h"));
+  keys.acceptField();
+  QCOMPARE(keys.mode(), QStringLiteral("field-command"));
+  QCOMPARE(keys.statusMessage(), QStringLiteral("ambiguous command"));
+}
+
+void CommandFieldTest::actionHandlerByIdAndTitle() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  QString ran;
+  keys.registerAction(QStringLiteral("synchro.action.terminal"),
+                      QStringLiteral("Terminal"));
+  keys.registerAction(QStringLiteral("synchro.action.trash"),
+                      QStringLiteral("Move to Trash"));
+  keys.setActionRunner([&](const QString &id, QString *) {
+    ran = id;
+    return true;
+  });
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":terminal"));
+  keys.acceptField();
+  QCOMPARE(ran, QStringLiteral("synchro.action.terminal"));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+
+  ran.clear();
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":synchro.action.terminal"));
+  keys.acceptField();
+  QCOMPARE(ran, QStringLiteral("synchro.action.terminal"));
+
+  ran.clear();
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":Terminal"));
+  keys.acceptField();
+  QCOMPARE(ran, QStringLiteral("synchro.action.terminal"));
+
+  ran.clear();
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":trash"));
+  keys.acceptField();
+  QVERIFY(ran.isEmpty());
+  QCOMPARE(keys.statusMessage(), QStringLiteral("trash is not available"));
+}
+
+void CommandFieldTest::vTogglesGridFromList() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  QVERIFY(!keys.gridMode());
+  QVERIFY(keys.handleListKey(Qt::Key_V, Qt::NoModifier, QStringLiteral("v")));
+  QVERIFY(keys.gridMode());
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(keys.handleListKey(Qt::Key_V, Qt::NoModifier, QStringLiteral("v")));
+  QVERIFY(!keys.gridMode());
+}
+
+void CommandFieldTest::mainQmlColonEntersCommand() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
+
+  QString errors;
+  QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
+                   &engine,
+                   [&]() { errors = QStringLiteral("create failed"); });
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY2(!engine.rootObjects().isEmpty(),
+           qPrintable(errors.isEmpty() ? QStringLiteral("Main.qml produced no "
+                                                        "root object")
+                                       : errors));
+
+  auto *window =
+      qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+  QVERIFY(window);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  auto *list = window->findChild<QQuickItem *>(QStringLiteral("fileList"));
+  QVERIFY(list);
+  list->forceActiveFocus();
+  QVERIFY(QTest::qWaitFor([&] { return list->hasActiveFocus(); }, 1000));
+  QTest::keyClick(window, Qt::Key_Colon, Qt::ShiftModifier);
+  QVERIFY(QTest::qWaitFor(
+      [&] { return keys.mode() == QStringLiteral("field-command"); }, 1000));
+  QCOMPARE(keys.fieldText(), QStringLiteral(":"));
+
+  auto *input = window->findChild<QQuickItem *>(QStringLiteral("commandInput"));
+  QVERIFY(input);
+  QVERIFY(QTest::qWaitFor([&] { return input->hasActiveFocus(); }, 1000));
 }
 
 int main(int argc, char **argv) {

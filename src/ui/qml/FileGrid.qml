@@ -155,13 +155,7 @@ GridView {
     }
 
     Keys.onPressed: function (event) {
-        var peekKeys = event.key === Qt.Key_Space || event.key === Qt.Key_L ||
-                       event.key === Qt.Key_Escape ||
-                       event.key === Qt.Key_T ||
-                       ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) &&
-                        (event.modifiers & Qt.ControlModifier)) ||
-                       (grid.keyMachine && grid.keyMachine.peekOpen)
-        if (grid.keyMachine && peekKeys &&
+        if (grid.keyMachine &&
                 grid.keyMachine.handleListKey(event.key, event.modifiers, event.text)) {
             event.accepted = true
             return

@@ -1,13 +1,18 @@
 #pragma once
 
+#include "CommandPalette.h"
+
 #include <QElapsedTimer>
 #include <QObject>
 #include <QString>
+
+#include <functional>
 
 class DirectoryModel;
 class FilterProxy;
 class NavStack;
 class PeekHost;
+class RecentStore;
 
 // Ranger-with-visible-field keyboard states (K7). The list owns keys on
 // launch; the field is chrome, not an always-focused omnibar.
@@ -21,10 +26,17 @@ class KeyMachine : public QObject {
   Q_PROPERTY(QString fieldText READ fieldText WRITE setFieldText NOTIFY
                  fieldTextChanged)
   Q_PROPERTY(int jumpEpoch READ jumpEpoch NOTIFY jumpEpochChanged)
+  Q_PROPERTY(bool gridMode READ gridMode WRITE setGridMode NOTIFY gridModeChanged)
+  Q_PROPERTY(bool helpOpen READ helpOpen NOTIFY helpOpenChanged)
+  Q_PROPERTY(QString helpText READ helpText CONSTANT)
+  Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
 
 public:
-  enum class Mode { ListFocused, FieldFilter, FieldJump, PeekOpen };
+  enum class Mode { ListFocused, FieldFilter, FieldJump, FieldCommand, PeekOpen };
   Q_ENUM(Mode)
+
+  using ActionRunner =
+      std::function<bool(const QString &id, QString *error)>;
 
   explicit KeyMachine(DirectoryModel *model, FilterProxy *proxy, NavStack *nav,
                       QObject *parent = nullptr);
@@ -34,18 +46,31 @@ public:
     return m_mode == Mode::ListFocused || m_mode == Mode::PeekOpen;
   }
   bool fieldFocused() const {
-    return m_mode == Mode::FieldFilter || m_mode == Mode::FieldJump;
+    return m_mode == Mode::FieldFilter || m_mode == Mode::FieldJump ||
+           m_mode == Mode::FieldCommand;
   }
   bool peekOpen() const { return m_mode == Mode::PeekOpen; }
   bool actionOpen() const;
   void setPeekHost(PeekHost *host);
+  void setRecentStore(RecentStore *store) { m_recents = store; }
+  // trash:// is a later core view; without it :trash only reports status.
+  void setTrashAvailable(bool on) { m_trashAvailable = on; }
+  void setActionRunner(ActionRunner runner) { m_actionRunner = std::move(runner); }
+  void registerAction(const QString &id, const QString &title);
   QString fieldText() const { return m_fieldText; }
   int jumpEpoch() const { return m_jumpEpoch; }
   Mode modeEnum() const { return m_mode; }
+  bool gridMode() const { return m_gridMode; }
+  bool helpOpen() const { return m_helpOpen; }
+  QString helpText() const { return CommandPalette::helpText(); }
+  QString statusMessage() const { return m_status; }
 
   Q_INVOKABLE void setFieldText(const QString &text);
+  Q_INVOKABLE void setGridMode(bool on);
+  Q_INVOKABLE void setStatusMessage(const QString &text);
   Q_INVOKABLE void focusFilter();
   Q_INVOKABLE void focusJump();
+  Q_INVOKABLE void focusCommand();
   Q_INVOKABLE void focusList();
   Q_INVOKABLE void escape();
   Q_INVOKABLE void acceptField();
@@ -56,6 +81,7 @@ public:
   // Path-sigil jump only. Bare names (even if they exist as dirs) never jump.
   static bool isJumpText(const QString &text, const QString &cwd);
   static QString resolveJump(const QString &text, const QString &cwd);
+  static bool isCommandText(const QString &text);
 
 signals:
   void modeChanged();
@@ -64,9 +90,13 @@ signals:
   void terminalRequested();
   void openWithRequested();
   void actionOpenChanged();
+  void gridModeChanged();
+  void helpOpenChanged();
+  void statusMessageChanged();
 
 private:
   void setMode(Mode mode);
+  void setHelpOpen(bool on);
   void closePeek();
   void closeAction();
   void closeOverlays();
@@ -76,6 +106,10 @@ private:
   bool handleListVerbs(int key, int modifiers);
   bool handlePeekKey(int key, int modifiers);
   void seek(const QString &chunk);
+  void runCommand(const QString &text);
+  bool runBuiltin(const QString &id);
+  bool runRecent();
+  void finishCommand();
 
   static bool isReservedVerb(int key, int modifiers);
 
@@ -83,9 +117,16 @@ private:
   FilterProxy *m_proxy = nullptr;
   NavStack *m_nav = nullptr;
   PeekHost *m_host = nullptr;
+  RecentStore *m_recents = nullptr;
+  CommandPalette m_palette;
+  ActionRunner m_actionRunner;
   Mode m_mode = Mode::ListFocused;
   QString m_fieldText;
   QString m_seek;
+  QString m_status;
   QElapsedTimer m_seekClock;
   int m_jumpEpoch = 0;
+  bool m_gridMode = false;
+  bool m_helpOpen = false;
+  bool m_trashAvailable = false;
 };

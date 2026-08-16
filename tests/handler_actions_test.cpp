@@ -45,6 +45,7 @@ private slots:
   void terminalDisabledOnVirtual();
   void trashMovesToXdgTrash();
   void trashRefusesHome();
+  void runActionById();
 };
 
 void HandlerActionsTest::terminalExecShape() {
@@ -140,6 +141,38 @@ void HandlerActionsTest::trashRefusesHome() {
   QVERIFY(!CoreVerbs::trash({QDir::homePath()}, &err));
   QVERIFY(err.contains(QStringLiteral("refusing")));
   CoreVerbs::setTrashRootOverride(QString());
+}
+
+void HandlerActionsTest::runActionById() {
+  HandlerRegistry reg;
+  reg.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  reg.setUserDir(tmp.filePath(QStringLiteral("none")));
+  reg.setConfigPath(tmp.filePath(QStringLiteral("none.json")));
+  reg.setScanEnv(false);
+  reg.scan();
+
+  HandlerExec exec;
+  QString program;
+  exec.setLaunchHook([&](const QString &p, const QStringList &,
+                         const QProcessEnvironment &) {
+    program = p;
+    return true;
+  });
+  HandlerActions actions(&reg, &exec);
+  QVERIFY2(actions.runAction(QStringLiteral("synchro.action.terminal"),
+                             {item(tmp.path(), QStringLiteral("inode/directory"),
+                                   true)},
+                             tmp.path()),
+           qPrintable(actions.lastError()));
+  QVERIFY(program.contains(QStringLiteral("xdg-terminal-exec")) ||
+          program.endsWith(QStringLiteral("xdg-terminal-exec")) ||
+          !program.isEmpty());
+
+  QVERIFY(!actions.runAction(QStringLiteral("synchro.open.xdg"), {},
+                             tmp.path()));
+  QVERIFY(actions.lastError().contains(QStringLiteral("not an action")));
 }
 
 int main(int argc, char **argv) {

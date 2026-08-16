@@ -19,6 +19,7 @@ qt_add_executable(synchro
     src/core/NavStack.cpp
     src/core/FilterProxy.cpp
     src/core/KeyMachine.cpp
+    src/core/CommandPalette.cpp
     src/core/PeekHost.cpp
     src/core/MimeMap.cpp
     src/core/RecentStore.cpp
@@ -138,7 +139,9 @@ if(BUILD_TESTING)
         src/core/NavStack.cpp
         src/core/FilterProxy.cpp
         src/core/KeyMachine.cpp
+        src/core/CommandPalette.cpp
         src/core/PeekHost.cpp
+        src/core/RecentStore.cpp
         src/core/ThumbnailService.cpp
     )
     target_include_directories(command_field_test PRIVATE
@@ -169,6 +172,7 @@ if(BUILD_TESTING)
         src/core/DirectoryWatcher.cpp
         src/core/FilterProxy.cpp
         src/core/KeyMachine.cpp
+        src/core/CommandPalette.cpp
         src/core/PeekHost.cpp
         src/core/NavStack.cpp
         src/core/MimeMap.cpp
@@ -263,7 +267,9 @@ if(BUILD_TESTING)
         src/core/NavStack.cpp
         src/core/FilterProxy.cpp
         src/core/KeyMachine.cpp
+        src/core/CommandPalette.cpp
         src/core/PeekHost.cpp
+        src/core/RecentStore.cpp
         src/core/ThumbnailService.cpp
         src/core/MimeMap.cpp
         src/handlers/Manifest.cpp

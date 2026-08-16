@@ -28,6 +28,8 @@ public:
   bool runCore(const Manifest &m, const QVector<Manifest::Item> &items);
   bool runTerminal(const QVector<Manifest::Item> &items, const QString &cwd);
   bool runTrash(const QVector<Manifest::Item> &items);
+  bool runAction(const QString &id, const QVector<Manifest::Item> &items,
+                 const QString &cwd);
 
   QVector<HandlerRegistry::Match>
   openMatches(const QVector<Manifest::Item> &items) const;

@@ -130,6 +130,40 @@ bool HandlerActions::runTerminal(const QVector<Manifest::Item> &items,
   return runExec(rec.manifest, QStringLiteral("action"), items, cwd);
 }
 
+bool HandlerActions::runAction(const QString &id,
+                               const QVector<Manifest::Item> &items,
+                               const QString &cwd) {
+  m_error.clear();
+  if (!m_reg) {
+    m_error = QStringLiteral("no registry");
+    return false;
+  }
+  const HandlerRegistry::Record rec = m_reg->handler(id);
+  if (rec.manifest.id.isEmpty()) {
+    m_error = QStringLiteral("unknown handler '%1'").arg(id);
+    return false;
+  }
+  if (!rec.enabled) {
+    m_error = QStringLiteral("handler '%1' is disabled").arg(id);
+    return false;
+  }
+  if (!rec.manifest.hasKind(QStringLiteral("action"))) {
+    m_error = QStringLiteral("handler '%1' is not an action").arg(id);
+    return false;
+  }
+  const Kind kind = classify(rec.manifest, QStringLiteral("action"));
+  if (kind == Kind::Core)
+    return runCore(rec.manifest, items);
+  if (kind == Kind::Exec)
+    return runExec(rec.manifest, QStringLiteral("action"), items, cwd);
+  if (kind == Kind::Qml) {
+    m_error = QStringLiteral("qml action requires host");
+    return false;
+  }
+  m_error = QStringLiteral("handler '%1' has no action runtime").arg(id);
+  return false;
+}
+
 bool HandlerActions::runTrash(const QVector<Manifest::Item> &items) {
   m_error.clear();
   QStringList paths;

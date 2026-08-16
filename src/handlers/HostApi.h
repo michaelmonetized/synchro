@@ -62,6 +62,7 @@ public:
   Q_INVOKABLE bool runOpen(const QString &handlerId);
   Q_INVOKABLE bool runTerminal();
   Q_INVOKABLE bool runTrash();
+  Q_INVOKABLE bool runAction(const QString &handlerId);
   Q_INVOKABLE bool openWithPalette();
   Q_INVOKABLE void closeAction() override;
 
@@ -84,6 +85,7 @@ private:
   void destroyAction();
   void refreshOpenCandidates();
   void onEntryStat(const QString &path, const QVariantMap &st);
+  bool loadActionSurface(const HandlerRegistry::Record &rec);
 
   DirectoryModel *m_model = nullptr;
   FilterProxy *m_proxy = nullptr;

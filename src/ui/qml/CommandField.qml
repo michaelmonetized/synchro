@@ -26,7 +26,7 @@ Item {
         anchors.left: parent.left
         anchors.leftMargin: Theme.space(8)
         anchors.verticalCenter: parent.verticalCenter
-        text: "/"
+        text: (root.keyMachine && root.keyMachine.mode === "field-command") ? ":" : "/"
         color: root.fieldActive ? Theme.accent : Theme.muted
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody
@@ -50,10 +50,21 @@ Item {
         activeFocusOnPress: true
         activeFocusOnTab: true
         focus: false
-        text: root.keyMachine ? root.keyMachine.fieldText : ""
+        text: {
+            var t = root.keyMachine ? root.keyMachine.fieldText : ""
+            if (root.keyMachine && root.keyMachine.mode === "field-command" &&
+                    t.length > 0 && t.charAt(0) === ":")
+                return t.substring(1)
+            return t
+        }
 
         onTextEdited: {
-            if (root.keyMachine)
+            if (!root.keyMachine)
+                return
+            // Keep the ':' sigil on the C++ side so parse order stays K7.
+            if (root.keyMachine.mode === "field-command")
+                root.keyMachine.fieldText = ":" + text
+            else
                 root.keyMachine.fieldText = text
         }
 
@@ -76,7 +87,9 @@ Item {
         anchors.left: input.left
         anchors.right: input.right
         anchors.verticalCenter: parent.verticalCenter
-        text: "filter or command…"
+        text: (root.keyMachine && root.keyMachine.mode === "field-command")
+              ? "command…"
+              : "filter or command…"
         color: Theme.muted
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody
@@ -88,8 +101,13 @@ Item {
         anchors.right: parent.right
         anchors.rightMargin: Theme.space(8)
         anchors.verticalCenter: parent.verticalCenter
-        text: "Ctrl+K"
-        color: Theme.muted
+        text: (root.keyMachine && root.keyMachine.statusMessage.length)
+              ? root.keyMachine.statusMessage
+              : "Ctrl+K"
+        color: (root.keyMachine && root.keyMachine.statusMessage.length)
+               ? Theme.accent
+               : Theme.muted
+        elide: Text.ElideLeft
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody
     }

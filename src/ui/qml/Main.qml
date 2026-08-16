@@ -10,7 +10,7 @@ Window {
     readonly property var listing: filterProxy
     readonly property var history: navStack
     readonly property var keys: keyMachine
-    property bool gridMode: false
+    readonly property bool gridMode: root.keys ? root.keys.gridMode : false
 
     width: 960
     height: 640
@@ -51,7 +51,7 @@ Window {
         filterProxy: root.listing
         navStack: root.history
         keyMachine: root.keys
-        onViewToggleRequested: root.gridMode = true
+        onViewToggleRequested: if (root.keys) root.keys.gridMode = true
     }
 
     FileGrid {
@@ -64,7 +64,7 @@ Window {
         enabled: visible
         fileModel: root.files
         keyMachine: root.keys
-        onViewToggleRequested: root.gridMode = false
+        onViewToggleRequested: if (root.keys) root.keys.gridMode = false
     }
 
     PeekOverlay {
@@ -168,13 +168,50 @@ Window {
                 commandField.focusInput()
             }
         }
+        function onGridModeChanged() {
+            if (root.gridMode)
+                fileGrid.forceActiveFocus()
+            else
+                fileList.forceActiveFocus()
+        }
     }
 
-    onGridModeChanged: {
-        if (root.gridMode)
-            fileGrid.forceActiveFocus()
-        else
-            fileList.forceActiveFocus()
+    Item {
+        id: helpOverlay
+        objectName: "helpOverlay"
+        anchors.fill: parent
+        z: 120
+        visible: root.keys && root.keys.helpOpen
+        focus: false
+
+        Rectangle {
+            anchors.fill: parent
+            color: Theme.background
+            opacity: 0.9
+            MouseArea {
+                anchors.fill: parent
+                onClicked: if (root.keys) root.keys.escape()
+            }
+        }
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: Math.min(parent.width - Theme.space(48), 560)
+            height: Math.min(parent.height - Theme.space(48), 280)
+            color: Theme.background
+            border.color: Theme.normalBorder
+            border.width: 1
+
+            Text {
+                anchors.fill: parent
+                anchors.margins: Theme.space(16)
+                text: root.keys ? root.keys.helpText : ""
+                color: Theme.foreground
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontBody
+                wrapMode: Text.WordWrap
+            }
+        }
     }
 
     Component.onCompleted: fileList.forceActiveFocus()

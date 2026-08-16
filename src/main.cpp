@@ -101,8 +101,21 @@ int main(int argc, char *argv[]) {
   engine.rootContext()->setContextProperty(QStringLiteral("hostApi"),
                                            &hostApi);
 
+  for (const auto &rec : handlerRegistry.handlers()) {
+    if (rec.enabled && rec.manifest.hasKind(QStringLiteral("action")))
+      keyMachine.registerAction(rec.manifest.id, rec.manifest.name);
+  }
+  keyMachine.setActionRunner([&](const QString &id, QString *error) {
+    if (hostApi.runAction(id))
+      return true;
+    if (error)
+      *error = hostApi.lastError();
+    return false;
+  });
+
   // Declared last so it dies first and drops this connection before hostApi.
   RecentStore recents;
+  keyMachine.setRecentStore(&recents);
   QObject::connect(
       &directoryModel, &DirectoryModel::fileActivated, &recents,
       [&](const QString &path, const QString &mime) {

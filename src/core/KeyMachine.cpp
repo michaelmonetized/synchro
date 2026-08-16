@@ -4,6 +4,7 @@
 #include "FilterProxy.h"
 #include "NavStack.h"
 #include "PeekHost.h"
+#include "RecentStore.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -52,6 +53,8 @@ QString KeyMachine::mode() const {
     return QStringLiteral("field-filter");
   case Mode::FieldJump:
     return QStringLiteral("field-jump");
+  case Mode::FieldCommand:
+    return QStringLiteral("field-command");
   case Mode::PeekOpen:
     return QStringLiteral("peek-open");
   }
@@ -95,7 +98,44 @@ void KeyMachine::setFieldText(const QString &text) {
   emit fieldTextChanged();
 }
 
+void KeyMachine::setGridMode(bool on) {
+  if (m_gridMode == on)
+    return;
+  m_gridMode = on;
+  emit gridModeChanged();
+}
+
+void KeyMachine::setStatusMessage(const QString &text) {
+  if (m_status == text)
+    return;
+  m_status = text;
+  emit statusMessageChanged();
+}
+
+void KeyMachine::setHelpOpen(bool on) {
+  if (m_helpOpen == on)
+    return;
+  m_helpOpen = on;
+  emit helpOpenChanged();
+}
+
+void KeyMachine::registerAction(const QString &id, const QString &title) {
+  m_palette.registerAction(id, title);
+}
+
 void KeyMachine::applyFieldText() {
+  // Leading ':' is the palette, never a filter. Builtins win over action :id.
+  if (isCommandText(m_fieldText)) {
+    if (m_proxy)
+      m_proxy->setFilter(QString());
+    if (m_nav)
+      m_nav->setLiveFilter(QString());
+    if (m_mode == Mode::FieldFilter || m_mode == Mode::FieldJump)
+      setMode(Mode::FieldCommand);
+    return;
+  }
+  if (m_mode == Mode::FieldCommand)
+    setMode(Mode::FieldFilter);
   if (!m_proxy)
     return;
   const QString cwd = m_model ? m_model->path() : QString();
@@ -160,12 +200,14 @@ void KeyMachine::closeOverlays() {
 
 void KeyMachine::focusFilter() {
   closeOverlays();
+  setHelpOpen(false);
   setMode(Mode::FieldFilter);
   applyFieldText();
 }
 
 void KeyMachine::focusJump() {
   closeOverlays();
+  setHelpOpen(false);
   const QString path = m_model ? m_model->path() : QString();
   setMode(Mode::FieldJump);
   if (m_fieldText != path) {
@@ -179,12 +221,28 @@ void KeyMachine::focusJump() {
   emit jumpEpochChanged();
 }
 
+void KeyMachine::focusCommand() {
+  closeOverlays();
+  setHelpOpen(false);
+  if (m_fieldText != QLatin1String(":")) {
+    m_fieldText = QStringLiteral(":");
+    emit fieldTextChanged();
+  }
+  applyFieldText();
+  setMode(Mode::FieldCommand);
+}
+
 void KeyMachine::focusList() {
   closeOverlays();
+  setHelpOpen(false);
   setMode(Mode::ListFocused);
 }
 
 void KeyMachine::escape() {
+  if (m_helpOpen) {
+    setHelpOpen(false);
+    return;
+  }
   if (m_host && m_host->actionOpen()) {
     closeAction();
     return;
@@ -206,6 +264,10 @@ void KeyMachine::escape() {
 }
 
 void KeyMachine::acceptField() {
+  if (m_mode == Mode::FieldCommand || isCommandText(m_fieldText)) {
+    runCommand(m_fieldText);
+    return;
+  }
   const QString cwd = m_model ? m_model->path() : QString();
   if (isJumpText(m_fieldText, cwd)) {
     const QString dest = resolveJump(m_fieldText, cwd);
@@ -220,6 +282,121 @@ void KeyMachine::acceptField() {
   }
   applyFieldText();
   setMode(Mode::ListFocused);
+}
+
+bool KeyMachine::isCommandText(const QString &text) {
+  return text.trimmed().startsWith(QLatin1Char(':'));
+}
+
+void KeyMachine::finishCommand() {
+  clearFieldAndFilter();
+  setMode(Mode::ListFocused);
+}
+
+void KeyMachine::runCommand(const QString &text) {
+  CommandSpec spec;
+  QString err;
+  if (!m_palette.resolve(text, &spec, &err)) {
+    setStatusMessage(err);
+    return;
+  }
+  if (spec.builtin) {
+    if (!runBuiltin(spec.id))
+      return;
+    finishCommand();
+    return;
+  }
+  if (!m_actionRunner) {
+    setStatusMessage(QStringLiteral("unknown command"));
+    return;
+  }
+  if (!m_actionRunner(spec.id, &err)) {
+    setStatusMessage(err.isEmpty() ? QStringLiteral("command failed") : err);
+    return;
+  }
+  finishCommand();
+}
+
+bool KeyMachine::runBuiltin(const QString &id) {
+  if (id == QLatin1String("home")) {
+    if (m_nav)
+      m_nav->goHome();
+    else if (m_model)
+      m_model->setPath(QDir::homePath());
+    return true;
+  }
+  if (id == QLatin1String("hidden")) {
+    if (m_model)
+      m_model->setShowHidden(!m_model->showHidden());
+    return true;
+  }
+  if (id == QLatin1String("grid")) {
+    setGridMode(true);
+    return true;
+  }
+  if (id == QLatin1String("list")) {
+    setGridMode(false);
+    return true;
+  }
+  if (id == QLatin1String("help") || id == QLatin1String("?")) {
+    setHelpOpen(true);
+    return true;
+  }
+  if (id == QLatin1String("trash")) {
+    if (!m_trashAvailable) {
+      setStatusMessage(QStringLiteral("trash is not available"));
+      return true;
+    }
+    if (m_nav)
+      m_nav->navigate(QStringLiteral("trash://"));
+    else if (m_model)
+      m_model->setPath(QStringLiteral("trash://"));
+    return true;
+  }
+  if (id == QLatin1String("recent"))
+    return runRecent();
+  if (id == QLatin1String("empty")) {
+    const QString path = m_model ? m_model->path() : QString();
+    if (!path.startsWith(QLatin1String("trash:")))
+      setStatusMessage(QStringLiteral("empty is only available in trash"));
+    else
+      setStatusMessage(QStringLiteral("empty is not available"));
+    return true;
+  }
+  setStatusMessage(QStringLiteral("unknown command"));
+  return false;
+}
+
+bool KeyMachine::runRecent() {
+  if (!m_recents) {
+    setStatusMessage(QStringLiteral("no recents"));
+    return true;
+  }
+  const QVector<RecentStore::Entry> entries = m_recents->entries();
+  QString path;
+  for (int i = entries.size() - 1; i >= 0; --i) {
+    if (!entries.at(i).path.isEmpty()) {
+      path = entries.at(i).path;
+      break;
+    }
+  }
+  if (path.isEmpty()) {
+    setStatusMessage(QStringLiteral("no recents"));
+    return true;
+  }
+  const QFileInfo info(path);
+  if (info.isDir()) {
+    if (m_nav)
+      m_nav->navigate(info.absoluteFilePath());
+    else if (m_model)
+      m_model->setPath(info.absoluteFilePath());
+    return true;
+  }
+  if (m_model)
+    m_model->setPath(info.absolutePath(), info.fileName());
+  else if (m_nav)
+    m_nav->navigate(info.absolutePath());
+  return true;
 }
 
 bool KeyMachine::isJumpText(const QString &text, const QString &cwd) {
@@ -292,6 +469,7 @@ bool KeyMachine::isReservedVerb(int key, int modifiers) {
   case Qt::Key_Slash:
   case Qt::Key_Colon:
   case Qt::Key_Question:
+  case Qt::Key_F1:
   case Qt::Key_Space:
   case Qt::Key_Return:
   case Qt::Key_Enter:
@@ -380,6 +558,14 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
     focusFilter();
     return true;
   }
+  if (key == Qt::Key_V && !alt && !chord && !shift) {
+    setGridMode(!m_gridMode);
+    return true;
+  }
+  if ((key == Qt::Key_Question || key == Qt::Key_F1) && !alt && !chord) {
+    setHelpOpen(!m_helpOpen);
+    return true;
+  }
   if (key == Qt::Key_T && !alt && !chord && !shift) {
     closeOverlays();
     emit terminalRequested();
@@ -455,6 +641,12 @@ bool KeyMachine::handleListKey(int key, int modifiers, const QString &text) {
   }
   if (key == Qt::Key_Escape) {
     escape();
+    return true;
+  }
+  if (!hasChord(modifiers) && !hasAlt(modifiers) &&
+      (key == Qt::Key_Colon || text == QLatin1String(":") ||
+       (key == Qt::Key_Semicolon && hasShift(modifiers)))) {
+    focusCommand();
     return true;
   }
   if (handleListVerbs(key, modifiers))

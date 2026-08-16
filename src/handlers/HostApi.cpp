@@ -357,16 +357,69 @@ bool HostApi::runTrash() {
   return true;
 }
 
+bool HostApi::runAction(const QString &handlerId) {
+  m_error.clear();
+  if (!m_registry) {
+    m_error = QStringLiteral("no registry");
+    return false;
+  }
+  const HandlerRegistry::Record rec = m_registry->handler(handlerId);
+  if (rec.manifest.id.isEmpty() || !rec.enabled) {
+    m_error = QStringLiteral("unknown action '%1'").arg(handlerId);
+    return false;
+  }
+  if (!rec.manifest.hasKind(QStringLiteral("action"))) {
+    m_error = QStringLiteral("handler '%1' is not an action").arg(handlerId);
+    return false;
+  }
+  close();
+  setCurrentFromModel();
+  const QVector<Manifest::Item> items = currentItems();
+  const QString cwd = m_model ? m_model->path() : QString();
+  const HandlerActions::Kind kind =
+      HandlerActions::classify(rec.manifest, QStringLiteral("action"));
+  if (kind == HandlerActions::Kind::Qml)
+    return loadActionSurface(rec);
+  if (!m_actions.runAction(handlerId, items, cwd)) {
+    m_error = m_actions.lastError();
+    std::fprintf(stderr, "synchro: :%s: %s\n", qPrintable(handlerId),
+                 qPrintable(m_error));
+    return false;
+  }
+  return true;
+}
+
+bool HostApi::loadActionSurface(const HandlerRegistry::Record &rec) {
+  refreshOpenCandidates();
+  if (!m_loader) {
+    m_error = QStringLiteral("no registry");
+    return false;
+  }
+  destroyAction();
+  QQuickItem *item = m_loader->create(m_engine, rec, QStringLiteral("action"),
+                                      this, m_file, m_selection);
+  if (!item) {
+    m_error = m_loader->lastError();
+    std::fprintf(stderr, "synchro: action %s: %s\n", qPrintable(rec.manifest.id),
+                 qPrintable(m_error));
+    return false;
+  }
+  m_actionItem = item;
+  m_actionOpen = true;
+  emit actionItemChanged();
+  emit actionOpenChanged();
+  return true;
+}
+
 bool HostApi::openWithPalette() {
   m_error.clear();
   close();
   setCurrentFromModel();
-  refreshOpenCandidates();
   if (m_selection.isEmpty()) {
     m_error = QStringLiteral("nothing selected");
     return false;
   }
-  if (!m_registry || !m_loader) {
+  if (!m_registry) {
     m_error = QStringLiteral("no registry");
     return false;
   }
@@ -376,17 +429,5 @@ bool HostApi::openWithPalette() {
     m_error = QStringLiteral("synchro.action.open-with is not available");
     return false;
   }
-  destroyAction();
-  QQuickItem *item = m_loader->create(m_engine, rec, QStringLiteral("action"),
-                                      this, m_file, m_selection);
-  if (!item) {
-    m_error = m_loader->lastError();
-    std::fprintf(stderr, "synchro: open-with: %s\n", qPrintable(m_error));
-    return false;
-  }
-  m_actionItem = item;
-  m_actionOpen = true;
-  emit actionItemChanged();
-  emit actionOpenChanged();
-  return true;
+  return loadActionSurface(rec);
 }
