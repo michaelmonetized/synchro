@@ -211,12 +211,16 @@ void KeyMachine::clearFieldAndFilter() {
   if (m_nav)
     m_nav->setLiveFilter(QString());
   emit fieldTextChanged();
-  if (!m_status.isEmpty())
+  if (m_promptKind.isEmpty() && !m_status.isEmpty())
     setStatusMessage(QString());
 }
 
 void KeyMachine::onPathChanged() {
   m_seek.clear();
+  if (!m_promptKind.isEmpty()) {
+    clearConfirm();
+    setStatusMessage(QString());
+  }
   // Entering search:// is the field-search destination; keep `?query`.
   if (m_model && DirectoryModel::isSearchPath(m_model->path()))
     return;
@@ -302,7 +306,66 @@ void KeyMachine::focusList() {
   setMode(Mode::ListFocused);
 }
 
+void KeyMachine::clearConfirm() {
+  if (m_promptKind.isEmpty())
+    return;
+  m_promptKind.clear();
+}
+
+void KeyMachine::requestEmptyTrash() {
+  if (!m_model || !m_model->isTrash()) {
+    setStatusMessage(QStringLiteral("empty is only available in trash"));
+    return;
+  }
+  m_promptKind = QStringLiteral("empty-trash");
+  setStatusMessage(QStringLiteral("Empty trash? y/n"));
+}
+
+void KeyMachine::acceptEmptyTrash() {
+  clearConfirm();
+  if (!m_model || !m_model->isTrash()) {
+    setStatusMessage(QStringLiteral("empty is only available in trash"));
+    return;
+  }
+  if (!m_model->emptyTrash()) {
+    setStatusMessage(m_model->errorString().isEmpty()
+                         ? QStringLiteral("empty is not available")
+                         : m_model->errorString());
+    return;
+  }
+  setStatusMessage(QStringLiteral("emptied trash"));
+}
+
+bool KeyMachine::handleConfirmKey(int key, int modifiers, const QString &text) {
+  if (m_promptKind != QLatin1String("empty-trash"))
+    return false;
+  if (hasChord(modifiers) || hasAlt(modifiers))
+    return true;
+  if (key == Qt::Key_Escape) {
+    clearConfirm();
+    setStatusMessage(QString());
+    return true;
+  }
+  const QString t = text.toLower();
+  if (key == Qt::Key_Y || t == QLatin1String("y")) {
+    acceptEmptyTrash();
+    return true;
+  }
+  if (key == Qt::Key_N || t == QLatin1String("n")) {
+    clearConfirm();
+    setStatusMessage(QString());
+    return true;
+  }
+  // y/n/Esc only — do not treat other keys as list verbs while armed.
+  return true;
+}
+
 void KeyMachine::escape() {
+  if (!m_promptKind.isEmpty()) {
+    clearConfirm();
+    setStatusMessage(QString());
+    return;
+  }
   if (m_helpOpen) {
     setHelpOpen(false);
     return;
@@ -463,7 +526,8 @@ void KeyMachine::revealCurrent() {
 
 void KeyMachine::finishCommand() {
   clearFieldAndFilter();
-  setStatusMessage(QString());
+  if (m_promptKind.isEmpty())
+    setStatusMessage(QString());
   setMode(Mode::ListFocused);
 }
 
@@ -539,13 +603,7 @@ bool KeyMachine::runBuiltin(const QString &id, QString *info) {
         *info = QStringLiteral("empty is only available in trash");
       return true;
     }
-    if (!m_model->emptyTrash()) {
-      if (info)
-        *info = m_model->errorString().isEmpty()
-                    ? QStringLiteral("empty is not available")
-                    : m_model->errorString();
-      return true;
-    }
+    requestEmptyTrash();
     return true;
   }
   setStatusMessage(QStringLiteral("unknown command"));
@@ -786,6 +844,8 @@ bool KeyMachine::handlePeekKey(int key, int modifiers) {
 bool KeyMachine::handleListKey(int key, int modifiers, const QString &text) {
   if (m_mode == Mode::PeekOpen)
     return handlePeekKey(key, modifiers);
+  if (!m_promptKind.isEmpty())
+    return handleConfirmKey(key, modifiers, text);
   if (m_mode != Mode::ListFocused)
     return false;
 

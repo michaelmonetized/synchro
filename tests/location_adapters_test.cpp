@@ -66,6 +66,10 @@ private slots:
   void recentListsAndEnterActivates();
   void recentGRevealsParent();
   void trashListsAndEnterRestores();
+  void recentNewestFirstUnderNameSort();
+  void recentDuplicateBasenames();
+  void emptyRequiresConfirm();
+  void sortDescKeepsDirsFirst();
   void sortByNameAndSize();
   void configPersistsHiddenAndSort();
   void configUnknownVersionIsReadOnly();
@@ -233,6 +237,114 @@ void LocationAdaptersTest::trashListsAndEnterRestores() {
   QVERIFY(QFileInfo::exists(src) ||
           QFileInfo::exists(live.filePath(QStringLiteral("gone (1).txt"))));
   QVERIFY(!QFileInfo::exists(trashFile));
+}
+
+void LocationAdaptersTest::recentNewestFirstUnderNameSort() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("z.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("a.txt"))));
+
+  RecentStore recents(tmp.filePath(QStringLiteral("recent.jsonl")), 50, 100);
+  recents.record(tmp.filePath(QStringLiteral("z.txt")),
+                 QStringLiteral("text/plain"));
+  recents.record(tmp.filePath(QStringLiteral("a.txt")),
+                 QStringLiteral("text/plain"));
+
+  DirectoryModel model;
+  model.setRecentStore(&recents);
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  proxy.setSortRoleName(QStringLiteral("name"));
+  proxy.setSortOrder(QStringLiteral("asc"));
+  model.setPath(QStringLiteral("recent://"));
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(proxy.rowCount(), 2);
+  QCOMPARE(nameAt(proxy, 0), QStringLiteral("a.txt"));
+  QCOMPARE(nameAt(proxy, 1), QStringLiteral("z.txt"));
+}
+
+void LocationAdaptersTest::recentDuplicateBasenames() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkpath(QStringLiteral("a")));
+  QVERIFY(QDir(tmp.path()).mkpath(QStringLiteral("b")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("a/README.md"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("b/README.md"))));
+
+  RecentStore recents(tmp.filePath(QStringLiteral("recent.jsonl")), 50, 100);
+  recents.record(tmp.filePath(QStringLiteral("a/README.md")),
+                 QStringLiteral("text/markdown"));
+  recents.record(tmp.filePath(QStringLiteral("b/README.md")),
+                 QStringLiteral("text/markdown"));
+
+  DirectoryModel model;
+  model.setRecentStore(&recents);
+  model.setPath(QStringLiteral("recent://"));
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(model.rowCount(), 2);
+}
+
+void LocationAdaptersTest::emptyRequiresConfirm() {
+  QTemporaryDir live;
+  QVERIFY(live.isValid());
+  const QString src = live.filePath(QStringLiteral("wipe-me.txt"));
+  QVERIFY(writeFile(src));
+  QString err;
+  QString trashFile;
+  QVERIFY2(TrashStore::prepareTrash(src, &trashFile, &err), qPrintable(err));
+  QVERIFY(QFile::rename(src, trashFile));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  model.setPath(QStringLiteral("trash://"));
+  QVERIFY(waitListingDone(model));
+  QVERIFY(model.rowCount() >= 1);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":empty"));
+  keys.acceptField();
+  QCOMPARE(keys.statusMessage(), QStringLiteral("Empty trash? y/n"));
+  QVERIFY(keys.confirmOpen());
+  QVERIFY(QFileInfo::exists(trashFile));
+  QCOMPARE(model.rowCount(), 1);
+
+  QVERIFY(keys.handleListKey(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y")));
+  QVERIFY(!keys.confirmOpen());
+  QVERIFY(waitListingDone(model));
+  QVERIFY(!QFileInfo::exists(trashFile));
+  QCOMPARE(model.rowCount(), 0);
+
+  model.setPath(live.path());
+  QVERIFY(waitListingDone(model));
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":empty"));
+  keys.acceptField();
+  QCOMPARE(keys.statusMessage(),
+           QStringLiteral("empty is only available in trash"));
+}
+
+void LocationAdaptersTest::sortDescKeepsDirsFirst() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("adir")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("b.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("c.txt"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QVERIFY(QTest::qWaitFor([&] { return proxy.rowCount() == 3; }));
+  proxy.setSortRoleName(QStringLiteral("name"));
+  proxy.setSortOrder(QStringLiteral("desc"));
+  QCOMPARE(proxy.data(proxy.index(0, 0), DirectoryModel::IsDirRole).toBool(),
+           true);
+  QCOMPARE(nameAt(proxy, 0), QStringLiteral("adir"));
 }
 
 void LocationAdaptersTest::sortByNameAndSize() {

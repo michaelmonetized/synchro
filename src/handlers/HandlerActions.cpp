@@ -154,8 +154,17 @@ bool HandlerActions::runAction(const QString &id,
   const Kind kind = classify(rec.manifest, QStringLiteral("action"));
   if (kind == Kind::Core)
     return runCore(rec.manifest, items);
-  if (kind == Kind::Exec)
+  if (kind == Kind::Exec) {
+    const QString exec = rec.manifest.execLine(QStringLiteral("action"));
+    const bool terminal = rec.manifest.id ==
+                              QLatin1String("synchro.action.terminal") ||
+                          exec.contains(QLatin1String("xdg-terminal-exec"));
+    if (terminal && isVirtualLocation(cwd)) {
+      m_error = QStringLiteral("terminal is disabled on virtual locations");
+      return false;
+    }
     return runExec(rec.manifest, QStringLiteral("action"), items, cwd);
+  }
   if (kind == Kind::Qml) {
     m_error = QStringLiteral("qml action requires host");
     return false;

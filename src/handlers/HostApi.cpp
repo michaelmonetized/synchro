@@ -373,18 +373,9 @@ bool HostApi::restoreTrash() {
 }
 
 bool HostApi::emptyTrash() {
-  m_error.clear();
-  if (!m_model || !m_model->isTrash()) {
-    m_error = QStringLiteral("empty is only available in trash");
-    return false;
-  }
-  if (!m_model->emptyTrash()) {
-    m_error = m_model->errorString().isEmpty()
-                  ? QStringLiteral("empty failed")
-                  : m_model->errorString();
-    return false;
-  }
-  return true;
+  // Shared XDG trash — never wipe without the KeyMachine y/n confirm.
+  m_error = QStringLiteral("empty requires confirm");
+  return false;
 }
 
 bool HostApi::runAction(const QString &handlerId) {

@@ -86,6 +86,8 @@ public:
   void restoreField(const QString &text);
   Q_INVOKABLE bool handleListKey(int key, int modifiers, const QString &text);
   Q_INVOKABLE bool handleFieldKey(int key, int modifiers);
+  Q_INVOKABLE void requestEmptyTrash();
+  bool confirmOpen() const { return !m_promptKind.isEmpty(); }
 
   // Path-sigil jump only. Bare names (even if they exist as dirs) never jump.
   static bool isJumpText(const QString &text, const QString &cwd);
@@ -128,6 +130,9 @@ private:
   void cancelSearch();
   void revealCurrent();
   QString searchRoot() const;
+  bool handleConfirmKey(int key, int modifiers, const QString &text);
+  void clearConfirm();
+  void acceptEmptyTrash();
 
   static bool isReservedVerb(int key, int modifiers);
 
@@ -149,4 +154,5 @@ private:
   bool m_gridMode = false;
   bool m_helpOpen = false;
   bool m_trashAvailable = true;
+  QString m_promptKind;
 };

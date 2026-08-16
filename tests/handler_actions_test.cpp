@@ -43,6 +43,7 @@ class HandlerActionsTest : public QObject {
 private slots:
   void terminalExecShape();
   void terminalDisabledOnVirtual();
+  void runActionTerminalDisabledOnVirtual();
   void trashMovesToXdgTrash();
   void trashRefusesHome();
   void runActionById();
@@ -95,6 +96,34 @@ void HandlerActionsTest::terminalDisabledOnVirtual() {
   HandlerActions actions(&reg, &exec);
   QVERIFY(!actions.runTerminal({}, QStringLiteral("trash://")));
   QVERIFY(actions.lastError().contains(QStringLiteral("virtual")));
+}
+
+void HandlerActionsTest::runActionTerminalDisabledOnVirtual() {
+  HandlerRegistry reg;
+  reg.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  reg.setUserDir(tmp.filePath(QStringLiteral("none")));
+  reg.setConfigPath(tmp.filePath(QStringLiteral("none.json")));
+  reg.setScanEnv(false);
+  reg.scan();
+
+  HandlerExec exec;
+  bool launched = false;
+  exec.setLaunchHook([&](const QString &, const QStringList &,
+                         const QProcessEnvironment &) {
+    launched = true;
+    return true;
+  });
+  HandlerActions actions(&reg, &exec);
+  QVERIFY(!actions.runAction(QStringLiteral("synchro.action.terminal"), {},
+                             QStringLiteral("trash://")));
+  QVERIFY(actions.lastError().contains(QStringLiteral("virtual")));
+  QVERIFY(!launched);
+  QVERIFY(!actions.runAction(QStringLiteral("synchro.action.terminal"), {},
+                             QStringLiteral("recent://")));
+  QVERIFY(actions.lastError().contains(QStringLiteral("virtual")));
+  QVERIFY(!launched);
 }
 
 void HandlerActionsTest::trashMovesToXdgTrash() {

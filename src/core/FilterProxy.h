@@ -58,6 +58,7 @@ private:
   void snapCursorIfHidden();
 
   void applySort();
+  bool keepSourceOrder() const;
   static int roleFromName(const QString &name);
 
   QString m_filter;

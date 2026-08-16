@@ -45,6 +45,7 @@ void FilterProxy::bindSource(DirectoryModel *model) {
     emit countChanged();
     emit currentIndexChanged();
   });
+  connect(model, &DirectoryModel::pathChanged, this, [this] { applySort(); });
   applySort();
 }
 
@@ -155,7 +156,20 @@ int FilterProxy::roleFromName(const QString &name) {
   return DirectoryModel::NameRole;
 }
 
+bool FilterProxy::keepSourceOrder() const {
+  auto *dm = directoryModel();
+  if (!dm)
+    return false;
+  // Recents is newest-first; search keeps fd order. Do not persist a
+  // different global sort when entering those views.
+  return dm->isRecent() || DirectoryModel::isSearchPath(dm->path());
+}
+
 void FilterProxy::applySort() {
+  if (keepSourceOrder()) {
+    sort(-1);
+    return;
+  }
   setSortRole(roleFromName(m_sortRole));
   sort(0, m_sortOrder == QLatin1String("desc") ? Qt::DescendingOrder
                                                : Qt::AscendingOrder);
@@ -191,8 +205,11 @@ bool FilterProxy::lessThan(const QModelIndex &left,
     return QSortFilterProxyModel::lessThan(left, right);
   const bool ld = src->data(left, DirectoryModel::IsDirRole).toBool();
   const bool rd = src->data(right, DirectoryModel::IsDirRole).toBool();
-  if (ld != rd)
-    return ld;
+  if (ld != rd) {
+    // Invert the dir bias when Qt flips lessThan for DescendingOrder.
+    return QSortFilterProxyModel::sortOrder() == Qt::DescendingOrder ? rd
+                                                                     : ld;
+  }
   const int role = sortRole();
   if (role == DirectoryModel::SizeRole || role == DirectoryModel::MtimeRole) {
     const qint64 a = src->data(left, role).toLongLong();

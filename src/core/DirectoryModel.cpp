@@ -731,9 +731,16 @@ void DirectoryModel::onBatchReady(quint64 generation,
   m_all.reserve(m_all.size() + batch.size());
   for (int i = 0; i < batch.size(); ++i) {
     const DirectoryEntry &e = batch.at(i);
-    if (e.name.isEmpty() || m_indexByName.contains(e.name) ||
-        m_suppressedNames.contains(e.name))
+    if (e.name.isEmpty())
       continue;
+    // recent:// is unique by full path; two README.md must both show.
+    if (e.dirKind == QLatin1String("recent")) {
+      if (e.path.isEmpty() || m_indexByPath.contains(e.path))
+        continue;
+    } else if (m_indexByName.contains(e.name) ||
+               m_suppressedNames.contains(e.name)) {
+      continue;
+    }
     const int allIndex = m_all.size();
     m_all.append(e);
     m_indexByName.insert(e.name, allIndex);
