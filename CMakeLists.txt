@@ -448,8 +448,29 @@ set_target_properties(synchro PROPERTIES
 )
 
 include(GNUInstallDirs)
+
+# Exec is baked at configure time; use -DCMAKE_INSTALL_PREFIX=... (not only
+# cmake --install --prefix) so the D-Bus service points at the installed binary.
+configure_file(
+    packaging/dbus/org.freedesktop.impl.portal.desktop.synchro.service.in
+    ${CMAKE_CURRENT_BINARY_DIR}/org.freedesktop.impl.portal.desktop.synchro.service
+    @ONLY)
+
 install(TARGETS synchro RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES packaging/org.omarchy.synchro.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(DIRECTORY handlers/
         DESTINATION ${CMAKE_INSTALL_DATADIR}/synchro/handlers)
+install(FILES packaging/portals/synchro.portal
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/xdg-desktop-portal/portals)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.freedesktop.impl.portal.desktop.synchro.service
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/services)
+install(FILES packaging/icons/org.omarchy.synchro.svg
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+
+# Launchers go to bindir so `{ omarchy = "synchro" }` works after a prefix
+# install. Hypr overlays stay in-tree — never /usr/share/omarchy/ (K15).
+install(PROGRAMS
+        packaging/omarchy/omarchy-launch-synchro
+        packaging/omarchy/omarchy-launch-synchro-cwd
+        DESTINATION ${CMAKE_INSTALL_BINDIR})

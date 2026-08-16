@@ -2,9 +2,11 @@
 Type=Application
 Name=Synchro
 GenericName=File Manager
-Comment=Omarchy file OS
+Comment=Omarchy-native file OS
 Exec=synchro %U
+Icon=org.omarchy.synchro
 Terminal=false
 Categories=Utility;FileManager;FileTools;
 StartupWMClass=org.omarchy.synchro
+StartupNotify=true
 Keywords=files;browser;manager;

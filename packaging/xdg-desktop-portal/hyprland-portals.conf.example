@@ -1,0 +1,10 @@
+# Replace-not-merge. Copy to:
+#   ~/.config/xdg-desktop-portal/hyprland-portals.conf
+# then: systemctl --user restart xdg-desktop-portal.service
+#
+# gtk stays FileChooser fallback if synchro --portal is down.
+# Do not set default=synchro — Screenshot/ScreenCast stay hyprland.
+
+[preferred]
+default=hyprland;gtk
+org.freedesktop.impl.portal.FileChooser=synchro;gtk
