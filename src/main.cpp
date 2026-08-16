@@ -7,6 +7,7 @@
 #include "MimeMap.h"
 #include "NavStack.h"
 #include "RecentStore.h"
+#include "SearchModel.h"
 #include "XdgOpen.h"
 #include "cli.h"
 
@@ -64,10 +65,13 @@ int main(int argc, char *argv[]) {
     startPath = positional.first();
 
   DirectoryModel directoryModel;
+  SearchModel searchModel;
+  directoryModel.setSearchModel(&searchModel);
   FilterProxy filterProxy;
   filterProxy.setDirectoryModel(&directoryModel);
   NavStack navStack(&directoryModel);
   KeyMachine keyMachine(&directoryModel, &filterProxy, &navStack);
+  keyMachine.setSearchModel(&searchModel);
   MimeMap mimeMap;
   HandlerRegistry handlerRegistry;
   handlerRegistry.scan();

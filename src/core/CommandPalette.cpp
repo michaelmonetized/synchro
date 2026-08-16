@@ -39,9 +39,9 @@ QVector<CommandSpec> CommandPalette::builtins() {
 QString CommandPalette::helpText() {
   return QStringLiteral(
       "j/k  move     h  up        l  open/peek    Enter  activate\n"
-      "/    filter   :  command   Ctrl+L  jump    Ctrl+K  filter\n"
+      "/    filter   :  command   ?name  search   Ctrl+L  jump\n"
       ".    hidden   v  grid      t  terminal     Space  peek\n"
-      "Esc  pop      ? F1  help\n"
+      "Esc  pop      F1  help     g  reveal\n"
       "\n"
       ":trash :recent :home :hidden :grid :list :empty :help :?");
 }

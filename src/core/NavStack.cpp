@@ -95,6 +95,12 @@ void NavStack::goUp() {
   const QString path = m_model->path();
   if (path.isEmpty())
     return;
+  if (DirectoryModel::isVirtualPath(path)) {
+    const QString dest = m_model->returnPath();
+    if (!dest.isEmpty())
+      m_model->setPath(dest);
+    return;
+  }
   QDir dir(path);
   const QString name = QFileInfo(QDir::cleanPath(path)).fileName();
   if (!dir.cdUp())
@@ -119,6 +125,19 @@ QVariantList NavStack::segmentsFor(const QString &path) const {
     m.insert(QStringLiteral("path"), target);
     segs.append(m);
   };
+
+  if (DirectoryModel::isSearchPath(path)) {
+    add(QStringLiteral("search"), path);
+    return segs;
+  }
+  if (path.startsWith(QLatin1String("trash:"))) {
+    add(QStringLiteral("trash"), path);
+    return segs;
+  }
+  if (path.startsWith(QLatin1String("recent:"))) {
+    add(QStringLiteral("recent"), path);
+    return segs;
+  }
 
   const QString home = homePath();
   QString prefix;

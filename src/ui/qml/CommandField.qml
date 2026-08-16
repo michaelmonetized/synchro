@@ -26,7 +26,13 @@ Item {
         anchors.left: parent.left
         anchors.leftMargin: Theme.space(8)
         anchors.verticalCenter: parent.verticalCenter
-        text: (root.keyMachine && root.keyMachine.mode === "field-command") ? ":" : "/"
+        text: {
+            if (root.keyMachine && root.keyMachine.mode === "field-command")
+                return ":"
+            if (root.keyMachine && root.keyMachine.mode === "field-search")
+                return "?"
+            return "/"
+        }
         color: root.fieldActive ? Theme.accent : Theme.muted
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody
@@ -55,15 +61,20 @@ Item {
             if (root.keyMachine && root.keyMachine.mode === "field-command" &&
                     t.length > 0 && t.charAt(0) === ":")
                 return t.substring(1)
+            if (root.keyMachine && root.keyMachine.mode === "field-search" &&
+                    t.length > 0 && t.charAt(0) === "?")
+                return t.substring(1)
             return t
         }
 
         onTextEdited: {
             if (!root.keyMachine)
                 return
-            // Keep the ':' sigil on the C++ side so parse order stays K7.
+            // Keep the ':' / '?' sigil on the C++ side so parse order stays K7.
             if (root.keyMachine.mode === "field-command")
                 root.keyMachine.fieldText = ":" + text
+            else if (root.keyMachine.mode === "field-search")
+                root.keyMachine.fieldText = "?" + text
             else
                 root.keyMachine.fieldText = text
         }
@@ -87,9 +98,13 @@ Item {
         anchors.left: input.left
         anchors.right: input.right
         anchors.verticalCenter: parent.verticalCenter
-        text: (root.keyMachine && root.keyMachine.mode === "field-command")
-              ? "command…"
-              : "filter or command…"
+        text: {
+            if (root.keyMachine && root.keyMachine.mode === "field-command")
+                return "command…"
+            if (root.keyMachine && root.keyMachine.mode === "field-search")
+                return "search names…"
+            return "filter or command…"
+        }
         color: Theme.muted
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody

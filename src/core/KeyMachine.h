@@ -5,6 +5,7 @@
 #include <QElapsedTimer>
 #include <QObject>
 #include <QString>
+#include <QTimer>
 
 #include <functional>
 
@@ -13,6 +14,7 @@ class FilterProxy;
 class NavStack;
 class PeekHost;
 class RecentStore;
+class SearchModel;
 
 // Ranger-with-visible-field keyboard states (K7). The list owns keys on
 // launch; the field is chrome, not an always-focused omnibar.
@@ -32,7 +34,14 @@ class KeyMachine : public QObject {
   Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
 
 public:
-  enum class Mode { ListFocused, FieldFilter, FieldJump, FieldCommand, PeekOpen };
+  enum class Mode {
+    ListFocused,
+    FieldFilter,
+    FieldJump,
+    FieldCommand,
+    FieldSearch,
+    PeekOpen
+  };
   Q_ENUM(Mode)
 
   using ActionRunner =
@@ -47,12 +56,13 @@ public:
   }
   bool fieldFocused() const {
     return m_mode == Mode::FieldFilter || m_mode == Mode::FieldJump ||
-           m_mode == Mode::FieldCommand;
+           m_mode == Mode::FieldCommand || m_mode == Mode::FieldSearch;
   }
   bool peekOpen() const { return m_mode == Mode::PeekOpen; }
   bool actionOpen() const;
   void setPeekHost(PeekHost *host);
   void setRecentStore(RecentStore *store) { m_recents = store; }
+  void setSearchModel(SearchModel *search);
   // trash:// is a later core view; without it :trash only reports status.
   void setTrashAvailable(bool on) { m_trashAvailable = on; }
   void setActionRunner(ActionRunner runner) { m_actionRunner = std::move(runner); }
@@ -82,6 +92,9 @@ public:
   static bool isJumpText(const QString &text, const QString &cwd);
   static QString resolveJump(const QString &text, const QString &cwd);
   static bool isCommandText(const QString &text);
+  // Leading `?` but not `??` (content search is a later PR).
+  static bool isSearchText(const QString &text);
+  static QString searchQuery(const QString &text);
 
 signals:
   void modeChanged();
@@ -111,6 +124,11 @@ private:
   bool runRecent(QString *info);
   void finishCommand();
   bool fieldQueryEmpty() const;
+  void scheduleSearch();
+  void runSearch();
+  void cancelSearch();
+  void revealCurrent();
+  QString searchRoot() const;
 
   static bool isReservedVerb(int key, int modifiers);
 
@@ -119,7 +137,9 @@ private:
   NavStack *m_nav = nullptr;
   PeekHost *m_host = nullptr;
   RecentStore *m_recents = nullptr;
+  SearchModel *m_search = nullptr;
   CommandPalette m_palette;
+  QTimer m_searchDebounce;
   ActionRunner m_actionRunner;
   Mode m_mode = Mode::ListFocused;
   QString m_fieldText;

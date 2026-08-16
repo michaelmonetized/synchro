@@ -5,13 +5,16 @@
 #include "NavStack.h"
 #include "PeekHost.h"
 #include "RecentStore.h"
+#include "SearchModel.h"
 
+#include <QAbstractItemModel>
 #include <QDir>
 #include <QFileInfo>
 
 namespace {
 
 constexpr int kSeekTimeoutMs = 800;
+constexpr int kSearchDebounceMs = 200;
 
 bool hasCtrl(int modifiers) { return modifiers & Qt::ControlModifier; }
 
@@ -38,6 +41,9 @@ QString expandTilde(const QString &text) {
 KeyMachine::KeyMachine(DirectoryModel *model, FilterProxy *proxy, NavStack *nav,
                        QObject *parent)
     : QObject(parent), m_model(model), m_proxy(proxy), m_nav(nav) {
+  m_searchDebounce.setSingleShot(true);
+  m_searchDebounce.setInterval(kSearchDebounceMs);
+  connect(&m_searchDebounce, &QTimer::timeout, this, &KeyMachine::runSearch);
   if (m_model)
     connect(m_model, &DirectoryModel::pathChanged, this,
             &KeyMachine::onPathChanged);
@@ -55,6 +61,8 @@ QString KeyMachine::mode() const {
     return QStringLiteral("field-jump");
   case Mode::FieldCommand:
     return QStringLiteral("field-command");
+  case Mode::FieldSearch:
+    return QStringLiteral("field-search");
   case Mode::PeekOpen:
     return QStringLiteral("peek-open");
   }
@@ -63,6 +71,34 @@ QString KeyMachine::mode() const {
 
 bool KeyMachine::actionOpen() const {
   return m_host && m_host->actionOpen();
+}
+
+void KeyMachine::setSearchModel(SearchModel *search) {
+  if (m_search == search)
+    return;
+  if (m_search)
+    disconnect(m_search, nullptr, this, nullptr);
+  m_search = search;
+  if (!m_search)
+    return;
+  connect(m_search, &SearchModel::errorStringChanged, this, [this] {
+    if (!m_search)
+      return;
+    const QString err = m_search->errorString();
+    if (!err.isEmpty())
+      setStatusMessage(err);
+  });
+  connect(m_search, &SearchModel::listingChanged, this, [this] {
+    if (!m_search || m_search->listing())
+      return;
+    if (!m_search->errorString().isEmpty())
+      return;
+    const int n = m_search->count();
+    if (n <= 0 && !m_search->query().isEmpty())
+      setStatusMessage(QStringLiteral("no matches"));
+    else if (n > 0)
+      setStatusMessage(QStringLiteral("%1 matches").arg(n));
+  });
 }
 
 void KeyMachine::setPeekHost(PeekHost *host) {
@@ -129,15 +165,31 @@ void KeyMachine::registerAction(const QString &id, const QString &title) {
 void KeyMachine::applyFieldText() {
   // Leading ':' is the palette, never a filter. Builtins win over action :id.
   if (isCommandText(m_fieldText)) {
+    m_searchDebounce.stop();
     if (m_proxy)
       m_proxy->setFilter(QString());
     if (m_nav)
       m_nav->setLiveFilter(QString());
-    if (m_mode == Mode::FieldFilter || m_mode == Mode::FieldJump)
+    if (m_mode == Mode::FieldFilter || m_mode == Mode::FieldJump ||
+        m_mode == Mode::FieldSearch)
       setMode(Mode::FieldCommand);
     return;
   }
-  if (m_mode == Mode::FieldCommand)
+  // `??` is content search (later). Do not treat it as `?` name search.
+  if (isSearchText(m_fieldText)) {
+    if (m_proxy)
+      m_proxy->setFilter(QString());
+    if (m_nav)
+      m_nav->setLiveFilter(QString());
+    if (m_mode == Mode::FieldFilter || m_mode == Mode::FieldJump ||
+        m_mode == Mode::FieldCommand)
+      setMode(Mode::FieldSearch);
+    if (m_mode == Mode::FieldSearch)
+      scheduleSearch();
+    return;
+  }
+  m_searchDebounce.stop();
+  if (m_mode == Mode::FieldCommand || m_mode == Mode::FieldSearch)
     setMode(Mode::FieldFilter);
   if (!m_proxy)
     return;
@@ -152,6 +204,7 @@ void KeyMachine::applyFieldText() {
 }
 
 void KeyMachine::clearFieldAndFilter() {
+  m_searchDebounce.stop();
   m_fieldText.clear();
   if (m_proxy)
     m_proxy->setFilter(QString());
@@ -164,6 +217,9 @@ void KeyMachine::clearFieldAndFilter() {
 
 void KeyMachine::onPathChanged() {
   m_seek.clear();
+  // Entering search:// is the field-search destination; keep `?query`.
+  if (m_model && DirectoryModel::isSearchPath(m_model->path()))
+    return;
   if (m_nav && m_nav->restoring()) {
     setMode(Mode::ListFocused);
     return;
@@ -258,7 +314,9 @@ void KeyMachine::escape() {
     return;
   }
   if (m_mode != Mode::ListFocused) {
-    // ':' is chrome (same as an empty filter). Only a real query is step 4.
+    if (m_mode == Mode::FieldSearch || isSearchText(m_fieldText))
+      cancelSearch();
+    // ':' / '?' are chrome (same as an empty filter). Only a real query is step 4.
     if (!fieldQueryEmpty()) {
       clearFieldAndFilter();
       return;
@@ -267,13 +325,22 @@ void KeyMachine::escape() {
     setMode(Mode::ListFocused);
     return;
   }
-  if (!m_fieldText.isEmpty() || (m_proxy && !m_proxy->filter().isEmpty()))
+  if (!m_fieldText.isEmpty() || (m_proxy && !m_proxy->filter().isEmpty())) {
+    if (isSearchText(m_fieldText))
+      cancelSearch();
     clearFieldAndFilter();
+  }
 }
 
 void KeyMachine::acceptField() {
   if (m_mode == Mode::FieldCommand || isCommandText(m_fieldText)) {
     runCommand(m_fieldText);
+    return;
+  }
+  if (m_mode == Mode::FieldSearch || isSearchText(m_fieldText)) {
+    m_searchDebounce.stop();
+    runSearch();
+    setMode(Mode::ListFocused);
     return;
   }
   const QString cwd = m_model ? m_model->path() : QString();
@@ -296,10 +363,93 @@ bool KeyMachine::isCommandText(const QString &text) {
   return text.trimmed().startsWith(QLatin1Char(':'));
 }
 
+bool KeyMachine::isSearchText(const QString &text) {
+  return text.startsWith(QLatin1Char('?')) &&
+         !text.startsWith(QLatin1String("??"));
+}
+
+QString KeyMachine::searchQuery(const QString &text) {
+  if (!isSearchText(text))
+    return {};
+  return text.mid(1);
+}
+
 bool KeyMachine::fieldQueryEmpty() const {
   if (m_mode == Mode::FieldCommand || isCommandText(m_fieldText))
     return CommandPalette::stripSigil(m_fieldText).isEmpty();
+  if (m_mode == Mode::FieldSearch || isSearchText(m_fieldText))
+    return searchQuery(m_fieldText).isEmpty();
   return m_fieldText.isEmpty();
+}
+
+void KeyMachine::scheduleSearch() { m_searchDebounce.start(); }
+
+QString KeyMachine::searchRoot() const {
+  if (!m_model)
+    return QDir::homePath();
+  const QString loc = m_model->path();
+  if (DirectoryModel::isSearchPath(loc)) {
+    if (m_search && !m_search->root().isEmpty())
+      return m_search->root();
+    if (!m_model->returnPath().isEmpty())
+      return m_model->returnPath();
+  }
+  if (!DirectoryModel::isVirtualPath(loc) && !loc.isEmpty())
+    return loc;
+  return QDir::homePath();
+}
+
+void KeyMachine::cancelSearch() {
+  m_searchDebounce.stop();
+  if (m_search)
+    m_search->cancel();
+}
+
+void KeyMachine::runSearch() {
+  const QString query = searchQuery(m_fieldText);
+  if (query.isEmpty()) {
+    cancelSearch();
+    return;
+  }
+  const QString loc = m_model ? m_model->path() : QString();
+  if (DirectoryModel::isVirtualPath(loc) && !DirectoryModel::isSearchPath(loc)) {
+    setStatusMessage(QStringLiteral("search is not available"));
+    return;
+  }
+  if (!m_search) {
+    setStatusMessage(QStringLiteral("search is not available"));
+    return;
+  }
+  const QString root = searchRoot();
+  if (m_model && !DirectoryModel::isSearchPath(m_model->path())) {
+    if (m_nav)
+      m_nav->navigate(QStringLiteral("search://"));
+    else
+      m_model->setPath(QStringLiteral("search://"));
+  }
+  m_search->start(query, root, m_model && m_model->showHidden());
+}
+
+void KeyMachine::revealCurrent() {
+  if (!m_model)
+    return;
+  QString path;
+  const QAbstractItemModel *src =
+      m_proxy ? static_cast<const QAbstractItemModel *>(m_proxy)
+              : static_cast<const QAbstractItemModel *>(m_model);
+  const int row = m_proxy ? m_proxy->currentIndex() : m_model->currentIndex();
+  if (src && row >= 0)
+    path = src->data(src->index(row, 0), DirectoryModel::PathRole).toString();
+  if (path.isEmpty())
+    return;
+  const QFileInfo fi(path);
+  QDir dir(fi.isDir() ? fi.absoluteFilePath() : fi.absolutePath());
+  if (fi.isDir() && !dir.cdUp())
+    return;
+  const QString dest = dir.absolutePath();
+  if (dest.isEmpty() || dest == m_model->path())
+    return;
+  m_model->setPath(dest, fi.fileName());
 }
 
 void KeyMachine::finishCommand() {
@@ -591,6 +741,10 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
   if (key == Qt::Key_T && !alt && !chord && !shift) {
     closeOverlays();
     emit terminalRequested();
+    return true;
+  }
+  if (key == Qt::Key_G && !alt && !chord && !shift) {
+    revealCurrent();
     return true;
   }
   return false;

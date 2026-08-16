@@ -149,6 +149,8 @@ private slots:
   void successfulCommandClearsStatus();
   void mainQmlColonEntersCommand();
   void mainQmlGridClickAfterColonPops();
+  void leadingQuestionPromotesToFieldSearch();
+  void questionQuestionDoesNotSearch();
 };
 
 void CommandFieldTest::launchIsListFocused() {
@@ -1280,6 +1282,42 @@ void CommandFieldTest::mainQmlGridClickAfterColonPops() {
 
   QTest::keyClick(window, Qt::Key_Escape);
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+}
+
+void CommandFieldTest::leadingQuestionPromotesToFieldSearch() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("README.md"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  keys.focusFilter();
+  keys.setFieldText(QStringLiteral("?foo.bar"));
+  QCOMPARE(keys.mode(), QStringLiteral("field-search"));
+  QVERIFY(proxy.filter().isEmpty());
+  QVERIFY(findProxy(proxy, QStringLiteral("README.md")) >= 0);
+  QCOMPARE(KeyMachine::searchQuery(QStringLiteral("?foo.bar")),
+           QStringLiteral("foo.bar"));
+}
+
+void CommandFieldTest::questionQuestionDoesNotSearch() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  keys.focusFilter();
+  keys.setFieldText(QStringLiteral("??todo"));
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+  QCOMPARE(proxy.filter(), QStringLiteral("??todo"));
+  QVERIFY(!KeyMachine::isSearchText(QStringLiteral("??todo")));
 }
 
 int main(int argc, char **argv) {

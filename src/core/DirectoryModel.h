@@ -15,6 +15,7 @@
 #include <QVector>
 
 class DirectoryModelTest;
+class SearchModel;
 
 class DirectoryModel : public QAbstractListModel {
   Q_OBJECT
@@ -53,16 +54,22 @@ public:
 
   QString path() const { return m_path; }
   bool showHidden() const { return m_showHidden; }
-  int currentIndex() const { return m_currentIndex; }
-  int count() const { return m_visible.size(); }
+  int currentIndex() const;
+  int count() const;
   bool listing() const { return m_listing; }
   QString errorString() const { return m_error; }
+  QString returnPath() const { return m_returnPath; }
+  SearchModel *searchModel() const { return m_search; }
+
+  static bool isVirtualPath(const QString &path);
+  static bool isSearchPath(const QString &path);
 
   qint64 lastFirstRowsMs() const { return m_lastFirstRowsMs; }
 
   Q_INVOKABLE void setPath(const QString &path,
                            const QString &selectName = QString(),
                            bool force = false);
+  void setSearchModel(SearchModel *model);
   Q_INVOKABLE void setShowHidden(bool show);
   Q_INVOKABLE void setCurrentIndex(int index);
   Q_INVOKABLE void moveCursor(int delta);
@@ -98,6 +105,10 @@ private slots:
 
 private:
   static QString normalizePath(const QString &path);
+  void bindSearch();
+  void unbindSearch();
+  void adoptSearchRows();
+  bool searching() const { return m_searching && m_search; }
   void resetListing();
   void rebuildVisible();
   void applyEntry(const DirectoryEntry &entry);
@@ -120,10 +131,12 @@ private:
   DirectoryLister *m_lister = nullptr;
   DirectoryWatcher m_watcher;
   ThumbnailService *m_thumbs = nullptr;
+  SearchModel *m_search = nullptr;
   quint64 m_gen = 0;
   quint64 m_watchSerial = 0;
 
   QString m_path;
+  QString m_returnPath;
   QString m_error;
   QString m_pendingActivate;
   QString m_pendingSelect;
@@ -140,6 +153,7 @@ private:
   int m_currentIndex = -1;
   bool m_showHidden = false;
   bool m_listing = false;
+  bool m_searching = false;
   bool m_loggedFirst = false;
   qint64 m_lastFirstRowsMs = -1;
   QElapsedTimer m_listTimer;

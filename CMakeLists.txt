@@ -24,6 +24,8 @@ qt_add_executable(synchro
     src/core/MimeMap.cpp
     src/core/RecentStore.cpp
     src/core/ThumbnailService.cpp
+    src/core/SearchService.cpp
+    src/core/SearchModel.cpp
     src/handlers/HandlerExec.cpp
     src/handlers/XdgOpen.cpp
     src/handlers/Manifest.cpp
@@ -114,6 +116,8 @@ if(BUILD_TESTING)
         src/core/DirectoryWatcher.cpp
         src/core/NavStack.cpp
         src/core/ThumbnailService.cpp
+        src/core/SearchService.cpp
+        src/core/SearchModel.cpp
     )
     target_include_directories(directory_model_test PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core
@@ -143,6 +147,8 @@ if(BUILD_TESTING)
         src/core/PeekHost.cpp
         src/core/RecentStore.cpp
         src/core/ThumbnailService.cpp
+        src/core/SearchService.cpp
+        src/core/SearchModel.cpp
     )
     target_include_directories(command_field_test PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core
@@ -178,6 +184,8 @@ if(BUILD_TESTING)
         src/core/MimeMap.cpp
         src/core/RecentStore.cpp
         src/core/ThumbnailService.cpp
+        src/core/SearchService.cpp
+        src/core/SearchModel.cpp
         src/handlers/HandlerExec.cpp
         src/handlers/XdgOpen.cpp
     )
@@ -271,6 +279,8 @@ if(BUILD_TESTING)
         src/core/PeekHost.cpp
         src/core/RecentStore.cpp
         src/core/ThumbnailService.cpp
+        src/core/SearchService.cpp
+        src/core/SearchModel.cpp
         src/core/MimeMap.cpp
         src/handlers/Manifest.cpp
         src/handlers/HandlerRegistry.cpp
@@ -349,6 +359,37 @@ if(BUILD_TESTING)
         target_compile_options(handler_actions_test PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME handler_actions_test COMMAND handler_actions_test)
+
+    qt_add_executable(search_service_test
+        tests/search_service_test.cpp
+        src/core/SearchService.cpp
+        src/core/SearchModel.cpp
+        src/core/DirectoryModel.cpp
+        src/core/DirectoryLister.cpp
+        src/core/DirectoryWatcher.cpp
+        src/core/NavStack.cpp
+        src/core/FilterProxy.cpp
+        src/core/KeyMachine.cpp
+        src/core/CommandPalette.cpp
+        src/core/PeekHost.cpp
+        src/core/RecentStore.cpp
+        src/core/ThumbnailService.cpp
+    )
+    target_include_directories(search_service_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core
+    )
+    target_link_libraries(search_service_test PRIVATE
+        Qt6::Test
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Core
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(search_service_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME search_service_test COMMAND search_service_test)
+    set_tests_properties(search_service_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 endif()
 
 set_target_properties(synchro PROPERTIES

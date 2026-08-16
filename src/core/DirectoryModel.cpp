@@ -1,5 +1,7 @@
 #include "DirectoryModel.h"
 
+#include "SearchModel.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QUrl>
@@ -54,9 +56,33 @@ DirectoryModel::~DirectoryModel() {
   m_lister = nullptr;
 }
 
+bool DirectoryModel::isVirtualPath(const QString &path) {
+  return path.startsWith(QLatin1String("search:")) ||
+         path.startsWith(QLatin1String("trash:")) ||
+         path.startsWith(QLatin1String("recent:"));
+}
+
+bool DirectoryModel::isSearchPath(const QString &path) {
+  return path.startsWith(QLatin1String("search:"));
+}
+
+int DirectoryModel::currentIndex() const {
+  if (searching())
+    return m_search->currentIndex();
+  return m_currentIndex;
+}
+
+int DirectoryModel::count() const {
+  if (searching())
+    return m_search->rowCount();
+  return m_visible.size();
+}
+
 int DirectoryModel::rowCount(const QModelIndex &parent) const {
   if (parent.isValid())
     return 0;
+  if (searching())
+    return m_search->rowCount();
   return m_visible.size();
 }
 
@@ -78,6 +104,8 @@ QHash<int, QByteArray> DirectoryModel::roleNames() const {
 }
 
 QVariant DirectoryModel::data(const QModelIndex &index, int role) const {
+  if (searching())
+    return m_search->data(m_search->index(index.row(), 0), role);
   const DirectoryEntry *e = entryAt(index.row());
   if (!index.isValid() || !e)
     return {};
@@ -113,6 +141,8 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const {
 }
 
 const DirectoryEntry *DirectoryModel::entryAt(int visibleRow) const {
+  if (searching())
+    return m_search->entryAt(visibleRow);
   if (visibleRow < 0 || visibleRow >= m_visible.size())
     return nullptr;
   const int all = m_visible.at(visibleRow);
@@ -122,6 +152,8 @@ const DirectoryEntry *DirectoryModel::entryAt(int visibleRow) const {
 }
 
 QString DirectoryModel::normalizePath(const QString &path) {
+  if (isVirtualPath(path))
+    return path;
   const QString expanded = expandUser(path);
   QFileInfo info(expanded);
   if (info.isDir()) {
@@ -150,6 +182,95 @@ void DirectoryModel::resetListing() {
   emit currentIndexChanged();
 }
 
+void DirectoryModel::setSearchModel(SearchModel *model) {
+  if (m_search == model)
+    return;
+  unbindSearch();
+  m_search = model;
+  bindSearch();
+  if (searching())
+    adoptSearchRows();
+}
+
+void DirectoryModel::bindSearch() {
+  if (!m_search)
+    return;
+  connect(m_search, &QAbstractItemModel::modelAboutToBeReset, this, [this] {
+    if (m_searching)
+      beginResetModel();
+  });
+  connect(m_search, &QAbstractItemModel::modelReset, this, [this] {
+    if (!m_searching)
+      return;
+    endResetModel();
+    emit countChanged();
+    emit currentIndexChanged();
+  });
+  connect(m_search, &QAbstractItemModel::rowsAboutToBeInserted, this,
+          [this](const QModelIndex &, int first, int last) {
+            if (m_searching)
+              beginInsertRows(QModelIndex(), first, last);
+          });
+  connect(m_search, &QAbstractItemModel::rowsInserted, this, [this] {
+    if (!m_searching)
+      return;
+    endInsertRows();
+    emit countChanged();
+  });
+  connect(m_search, &QAbstractItemModel::dataChanged, this,
+          [this](const QModelIndex &tl, const QModelIndex &br,
+                 const QList<int> &roles) {
+            if (!m_searching)
+              return;
+            emit dataChanged(index(tl.row()), index(br.row()), roles);
+          });
+  connect(m_search, &SearchModel::currentIndexChanged, this, [this] {
+    if (m_searching)
+      emit currentIndexChanged();
+  });
+  connect(m_search, &SearchModel::listingChanged, this, [this] {
+    if (!m_searching)
+      return;
+    const bool on = m_search->listing();
+    if (m_listing == on)
+      return;
+    m_listing = on;
+    emit listingChanged();
+  });
+  connect(m_search, &SearchModel::errorStringChanged, this, [this] {
+    if (!m_searching)
+      return;
+    m_error = m_search->errorString();
+    emit errorStringChanged();
+  });
+  connect(m_search, &SearchModel::fileActivated, this,
+          &DirectoryModel::fileActivated);
+  connect(m_search, &SearchModel::navigateRequested, this,
+          [this](const QString &path) { setPath(path); });
+  connect(m_search, &SearchModel::firstRowsInserted, this,
+          [this](qint64 ms, int rows) {
+            if (!m_searching)
+              return;
+            m_lastFirstRowsMs = ms;
+            emit firstRowsInserted(ms, rows);
+          });
+}
+
+void DirectoryModel::unbindSearch() {
+  if (m_search)
+    disconnect(m_search, nullptr, this, nullptr);
+}
+
+void DirectoryModel::adoptSearchRows() {
+  const int n = m_search ? m_search->rowCount() : 0;
+  if (n <= 0)
+    return;
+  beginInsertRows(QModelIndex(), 0, n - 1);
+  endInsertRows();
+  emit countChanged();
+  emit currentIndexChanged();
+}
+
 void DirectoryModel::setPath(const QString &path, const QString &selectName,
                              bool force) {
   const QString resolved = normalizePath(path);
@@ -172,15 +293,35 @@ void DirectoryModel::setPath(const QString &path, const QString &selectName,
   m_thumbFirst = -1;
   m_thumbLast = -1;
 
+  if (!isSearchPath(resolved) && m_search)
+    m_search->cancel();
+
+  m_searching = false;
   resetListing();
+  if (!isVirtualPath(m_path) && !m_path.isEmpty() && isVirtualPath(resolved))
+    m_returnPath = m_path;
   m_path = resolved;
   m_error.clear();
   m_pendingActivate.clear();
   m_pendingSelect = selectName;
-  m_listing = true;
   m_loggedFirst = false;
   m_lastFirstRowsMs = -1;
   m_listTimer.start();
+
+  if (isVirtualPath(resolved)) {
+    m_searching = isSearchPath(resolved) && m_search;
+    m_listing = m_searching && m_search->listing();
+    m_watcher.setPath(QString());
+    m_watchSerial = m_watcher.serial();
+    emit pathChanged();
+    emit errorStringChanged();
+    emit listingChanged();
+    if (m_searching)
+      adoptSearchRows();
+    return;
+  }
+
+  m_listing = true;
   m_watcher.setPath(m_path);
   m_watchSerial = m_watcher.serial();
   emit pathChanged();
@@ -190,12 +331,12 @@ void DirectoryModel::setPath(const QString &path, const QString &selectName,
 }
 
 QString DirectoryModel::currentName() const {
-  const DirectoryEntry *e = entryAt(m_currentIndex);
+  const DirectoryEntry *e = entryAt(currentIndex());
   return e ? e->name : QString();
 }
 
 bool DirectoryModel::currentIsDir() const {
-  const DirectoryEntry *e = entryAt(m_currentIndex);
+  const DirectoryEntry *e = entryAt(currentIndex());
   return e && e->isDir;
 }
 
@@ -213,6 +354,8 @@ QVariantMap DirectoryModel::entryToMap(const DirectoryEntry &e) const {
 }
 
 QVariantMap DirectoryModel::cachedStat(const QString &path) const {
+  if (searching())
+    return m_search->cachedStat(path);
   if (path.isEmpty())
     return {};
   auto it = m_indexByPath.constFind(path);
@@ -227,6 +370,8 @@ QVariantMap DirectoryModel::cachedStat(const QString &path) const {
 }
 
 void DirectoryModel::requestStatPath(const QString &path) {
+  if (searching())
+    return;
   if (path.isEmpty() || m_path.isEmpty())
     return;
   const QFileInfo fi(path);
@@ -240,8 +385,12 @@ void DirectoryModel::setShowHidden(bool show) {
   if (m_showHidden == show)
     return;
   m_showHidden = show;
-  rebuildVisible();
   emit showHiddenChanged();
+  if (searching()) {
+    m_search->setShowHidden(show);
+    return;
+  }
+  rebuildVisible();
 }
 
 void DirectoryModel::rebuildVisible() {
@@ -278,6 +427,10 @@ void DirectoryModel::rebuildVisible() {
 }
 
 void DirectoryModel::setCurrentIndex(int index) {
+  if (searching()) {
+    m_search->setCurrentIndex(index);
+    return;
+  }
   int next = index;
   if (m_visible.isEmpty())
     next = -1;
@@ -290,6 +443,10 @@ void DirectoryModel::setCurrentIndex(int index) {
 }
 
 void DirectoryModel::moveCursor(int delta) {
+  if (searching()) {
+    m_search->moveCursor(delta);
+    return;
+  }
   if (m_visible.isEmpty())
     return;
   if (m_currentIndex < 0)
@@ -299,6 +456,10 @@ void DirectoryModel::moveCursor(int delta) {
 }
 
 void DirectoryModel::activateCurrent() {
+  if (searching()) {
+    m_search->activateCurrent();
+    return;
+  }
   const DirectoryEntry *e = entryAt(m_currentIndex);
   if (!e)
     return;
@@ -676,6 +837,10 @@ void DirectoryModel::requestVisibleThumbs(int first, int last, int sizePx) {
 }
 
 void DirectoryModel::onThumbnailReady(const QString &path, const QString &url) {
+  if (searching()) {
+    m_search->setThumbnail(path, url);
+    return;
+  }
   if (url.isEmpty() || path.isEmpty())
     return;
   const auto it = m_indexByPath.constFind(path);
