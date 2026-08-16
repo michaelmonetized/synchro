@@ -811,9 +811,10 @@ void DirectoryModel::requestVisibleThumbs(int first, int last, int sizePx) {
   if (!m_thumbs)
     return;
   QVector<ThumbnailJob> jobs;
-  if (!m_visible.isEmpty() && last >= 0) {
-    first = qBound(0, first, m_visible.size() - 1);
-    last = qBound(0, last, m_visible.size() - 1);
+  const int rows = rowCount();
+  if (rows > 0 && last >= 0) {
+    first = qBound(0, first, rows - 1);
+    last = qBound(0, last, rows - 1);
     if (last < first)
       qSwap(first, last);
     const int center = first + (last - first) / 2;

@@ -4,6 +4,7 @@
 #include "NavStack.h"
 #include "SearchModel.h"
 #include "SearchService.h"
+#include "ThumbnailService.h"
 
 #include <QAbstractItemModel>
 #include <QDir>
@@ -13,6 +14,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QVector>
 
 namespace {
 
@@ -63,6 +65,9 @@ private slots:
   void contentPrefixIsNotNameSearch();
   void virtualLocationDisabled();
   void revealLeavesSearch();
+  void retypeCancelsRunningFd();
+  void colonAfterSearchCancels();
+  void searchThumbsUseHits();
 };
 
 void SearchServiceTest::argvFixedStringOneQuery() {
@@ -78,8 +83,22 @@ void SearchServiceTest::argvFixedStringOneQuery() {
   QVERIFY(!args.contains(QStringLiteral("--hidden")));
   const int q = args.indexOf(QStringLiteral("foo.bar"));
   QVERIFY(q >= 0);
+  QCOMPARE(args.at(q - 1), QStringLiteral("--"));
   QCOMPARE(args.at(q + 1), QStringLiteral("/tmp"));
   QCOMPARE(args.filter(QStringLiteral("foo.bar")).size(), 1);
+
+  const QStringList dash = SearchService::arguments(
+      QStringLiteral("-x"), QStringLiteral("/tmp"), false);
+  const int dx = dash.indexOf(QStringLiteral("-x"));
+  QVERIFY(dx >= 0);
+  QCOMPARE(dash.at(dx - 1), QStringLiteral("--"));
+  QVERIFY(dash.indexOf(QStringLiteral("-x")) == dash.lastIndexOf(QStringLiteral("-x")));
+
+  const QStringList exec = SearchService::arguments(
+      QStringLiteral("--exec"), QStringLiteral("/tmp"), false);
+  const int ex = exec.indexOf(QStringLiteral("--exec"));
+  QVERIFY(ex >= 0);
+  QCOMPARE(exec.at(ex - 1), QStringLiteral("--"));
 }
 
 void SearchServiceTest::argvHiddenOnlyWhenOn() {
@@ -335,6 +354,84 @@ void SearchServiceTest::revealLeavesSearch() {
   QVERIFY(waitListing(dir));
   QCOMPARE(canon(dir.path()), canon(tmp.filePath(QStringLiteral("sub"))));
   QCOMPARE(dir.currentName(), QStringLiteral("synchro_reveal.txt"));
+}
+
+void SearchServiceTest::retypeCancelsRunningFd() {
+  if (SearchService::executable().isEmpty())
+    QSKIP("fd is not available");
+
+  DirectoryModel dir;
+  SearchModel search;
+  dir.setSearchModel(&search);
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&dir);
+  NavStack nav(&dir);
+  KeyMachine keys(&dir, &proxy, &nav);
+  keys.setSearchModel(&search);
+
+  dir.setPath(QStringLiteral("/usr"));
+  keys.focusFilter();
+  keys.setFieldText(QStringLiteral("?a"));
+  keys.acceptField();
+  QVERIFY(QTest::qWaitFor([&] { return search.running(); }, 1000));
+  QSignalSpy hits(&search.service(), &SearchService::hit);
+  keys.focusFilter();
+  keys.setFieldText(QStringLiteral("?zzzz_synchro_unlikely"));
+  QVERIFY(!search.running());
+  const int after = hits.count();
+  QTest::qWait(80);
+  QCOMPARE(hits.count(), after);
+}
+
+void SearchServiceTest::colonAfterSearchCancels() {
+  if (SearchService::executable().isEmpty())
+    QSKIP("fd is not available");
+
+  DirectoryModel dir;
+  SearchModel search;
+  dir.setSearchModel(&search);
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&dir);
+  NavStack nav(&dir);
+  KeyMachine keys(&dir, &proxy, &nav);
+  keys.setSearchModel(&search);
+
+  dir.setPath(QStringLiteral("/usr"));
+  keys.focusFilter();
+  keys.setFieldText(QStringLiteral("?a"));
+  keys.acceptField();
+  QVERIFY(QTest::qWaitFor([&] { return search.running(); }, 1000));
+  keys.focusCommand();
+  QVERIFY(!search.running());
+}
+
+void SearchServiceTest::searchThumbsUseHits() {
+  if (SearchService::executable().isEmpty())
+    QSKIP("fd is not available");
+
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("synchro_thumb_hit.txt"))));
+
+  DirectoryModel dir;
+  SearchModel search;
+  dir.setSearchModel(&search);
+  dir.setPath(tmp.path());
+  QVERIFY(waitListing(dir));
+
+  search.start(QStringLiteral("synchro_thumb_hit"), tmp.path(), false);
+  QVERIFY(waitSearch(search));
+  dir.setPath(QStringLiteral("search://"));
+  QCOMPARE(dir.rowCount(), 1);
+
+  auto *thumbs = dir.findChild<ThumbnailService *>();
+  QVERIFY(thumbs);
+  QSignalSpy submitted(thumbs, &ThumbnailService::submitted);
+  dir.requestVisibleThumbs(0, 0, 128);
+  QVERIFY(submitted.count() >= 1);
+  const auto jobs = submitted.at(0).at(0).value<QVector<ThumbnailJob>>();
+  QCOMPARE(jobs.size(), 1);
+  QVERIFY(jobs.at(0).path.endsWith(QStringLiteral("synchro_thumb_hit.txt")));
 }
 
 int main(int argc, char **argv) {

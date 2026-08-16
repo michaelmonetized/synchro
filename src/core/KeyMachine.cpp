@@ -165,7 +165,7 @@ void KeyMachine::registerAction(const QString &id, const QString &title) {
 void KeyMachine::applyFieldText() {
   // Leading ':' is the palette, never a filter. Builtins win over action :id.
   if (isCommandText(m_fieldText)) {
-    m_searchDebounce.stop();
+    cancelSearch();
     if (m_proxy)
       m_proxy->setFilter(QString());
     if (m_nav)
@@ -188,7 +188,7 @@ void KeyMachine::applyFieldText() {
       scheduleSearch();
     return;
   }
-  m_searchDebounce.stop();
+  cancelSearch();
   if (m_mode == Mode::FieldCommand || m_mode == Mode::FieldSearch)
     setMode(Mode::FieldFilter);
   if (!m_proxy)
@@ -297,6 +297,8 @@ void KeyMachine::focusCommand() {
 void KeyMachine::focusList() {
   closeOverlays();
   setHelpOpen(false);
+  if (m_mode == Mode::FieldSearch)
+    cancelSearch();
   setMode(Mode::ListFocused);
 }
 
@@ -382,7 +384,12 @@ bool KeyMachine::fieldQueryEmpty() const {
   return m_fieldText.isEmpty();
 }
 
-void KeyMachine::scheduleSearch() { m_searchDebounce.start(); }
+void KeyMachine::scheduleSearch() {
+  // Kill the previous walk immediately; debounce only starts the next one.
+  if (m_search)
+    m_search->cancel();
+  m_searchDebounce.start();
+}
 
 QString KeyMachine::searchRoot() const {
   if (!m_model)
