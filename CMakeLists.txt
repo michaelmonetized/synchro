@@ -23,6 +23,9 @@ qt_add_executable(synchro
     src/core/PeekHost.cpp
     src/core/MimeMap.cpp
     src/core/RecentStore.cpp
+    src/core/TrashStore.cpp
+    src/core/Config.cpp
+    src/core/LocationChips.cpp
     src/core/ThumbnailService.cpp
     src/core/SearchService.cpp
     src/core/SearchModel.cpp
@@ -59,6 +62,7 @@ qt_add_qml_module(synchro
         src/ui/qml/PathBar.qml
         src/ui/qml/CommandField.qml
         src/ui/qml/PeekOverlay.qml
+        src/ui/qml/StatusLine.qml
 )
 
 set_source_files_properties(src/ui/qml/Synchro/Theme/Theme.qml
@@ -115,6 +119,8 @@ if(BUILD_TESTING)
         src/core/DirectoryLister.cpp
         src/core/DirectoryWatcher.cpp
         src/core/NavStack.cpp
+        src/core/RecentStore.cpp
+        src/core/TrashStore.cpp
         src/core/ThumbnailService.cpp
         src/core/SearchService.cpp
         src/core/SearchModel.cpp
@@ -146,6 +152,7 @@ if(BUILD_TESTING)
         src/core/CommandPalette.cpp
         src/core/PeekHost.cpp
         src/core/RecentStore.cpp
+        src/core/TrashStore.cpp
         src/core/ThumbnailService.cpp
         src/core/SearchService.cpp
         src/core/SearchModel.cpp
@@ -183,6 +190,7 @@ if(BUILD_TESTING)
         src/core/NavStack.cpp
         src/core/MimeMap.cpp
         src/core/RecentStore.cpp
+        src/core/TrashStore.cpp
         src/core/ThumbnailService.cpp
         src/core/SearchService.cpp
         src/core/SearchModel.cpp
@@ -278,6 +286,7 @@ if(BUILD_TESTING)
         src/core/CommandPalette.cpp
         src/core/PeekHost.cpp
         src/core/RecentStore.cpp
+        src/core/TrashStore.cpp
         src/core/ThumbnailService.cpp
         src/core/SearchService.cpp
         src/core/SearchModel.cpp
@@ -373,6 +382,7 @@ if(BUILD_TESTING)
         src/core/CommandPalette.cpp
         src/core/PeekHost.cpp
         src/core/RecentStore.cpp
+        src/core/TrashStore.cpp
         src/core/ThumbnailService.cpp
     )
     target_include_directories(search_service_test PRIVATE
@@ -389,6 +399,46 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME search_service_test COMMAND search_service_test)
     set_tests_properties(search_service_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
+    qt_add_executable(location_adapters_test
+        tests/location_adapters_test.cpp
+        src/core/Config.cpp
+        src/core/LocationChips.cpp
+        src/core/DirectoryModel.cpp
+        src/core/DirectoryLister.cpp
+        src/core/DirectoryWatcher.cpp
+        src/core/NavStack.cpp
+        src/core/FilterProxy.cpp
+        src/core/KeyMachine.cpp
+        src/core/CommandPalette.cpp
+        src/core/PeekHost.cpp
+        src/core/RecentStore.cpp
+        src/core/TrashStore.cpp
+        src/core/ThumbnailService.cpp
+        src/core/SearchService.cpp
+        src/core/SearchModel.cpp
+        src/handlers/Manifest.cpp
+        src/handlers/HandlerRegistry.cpp
+    )
+    target_include_directories(location_adapters_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core
+        ${CMAKE_SOURCE_DIR}/src/handlers
+    )
+    target_compile_definitions(location_adapters_test PRIVATE
+        SYNCHRO_FIRST_PARTY_HANDLER_DIR="${CMAKE_SOURCE_DIR}/handlers"
+    )
+    target_link_libraries(location_adapters_test PRIVATE
+        Qt6::Test
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Core
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(location_adapters_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME location_adapters_test COMMAND location_adapters_test)
+    set_tests_properties(location_adapters_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 endif()
 

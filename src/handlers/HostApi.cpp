@@ -357,6 +357,36 @@ bool HostApi::runTrash() {
   return true;
 }
 
+bool HostApi::restoreTrash() {
+  m_error.clear();
+  if (!m_model || !m_model->isTrash()) {
+    m_error = QStringLiteral("restore is only available in trash");
+    return false;
+  }
+  if (!m_model->restoreCurrent()) {
+    m_error = m_model->errorString().isEmpty()
+                  ? QStringLiteral("restore failed")
+                  : m_model->errorString();
+    return false;
+  }
+  return true;
+}
+
+bool HostApi::emptyTrash() {
+  m_error.clear();
+  if (!m_model || !m_model->isTrash()) {
+    m_error = QStringLiteral("empty is only available in trash");
+    return false;
+  }
+  if (!m_model->emptyTrash()) {
+    m_error = m_model->errorString().isEmpty()
+                  ? QStringLiteral("empty failed")
+                  : m_model->errorString();
+    return false;
+  }
+  return true;
+}
+
 bool HostApi::runAction(const QString &handlerId) {
   m_error.clear();
   if (!m_registry) {

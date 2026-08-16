@@ -23,8 +23,13 @@ public:
   QString filePath() const { return m_path; }
   void record(const QString &path, const QString &mime = QString());
   QVector<Entry> entries() const;
+  // Newest-first unique paths (what recent:// shows).
+  QVector<Entry> uniqueNewest() const;
 
   static QString defaultPath();
+
+signals:
+  void entriesChanged();
 
 private:
   void compact();

@@ -10,6 +10,7 @@ Window {
     readonly property var listing: filterProxy
     readonly property var history: navStack
     readonly property var keys: keyMachine
+    readonly property var chips: typeof locationChips !== "undefined" ? locationChips : null
     readonly property bool gridMode: root.keys ? root.keys.gridMode : false
 
     width: 960
@@ -27,6 +28,7 @@ Window {
         anchors.right: parent.right
         fileModel: root.files
         navStack: root.history
+        locationChips: root.chips
     }
 
     CommandField {
@@ -44,7 +46,7 @@ Window {
         anchors.top: commandField.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: parent.bottom
+        anchors.bottom: statusLine.top
         visible: !root.gridMode
         enabled: visible
         fileModel: root.files
@@ -60,12 +62,23 @@ Window {
         anchors.top: commandField.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: parent.bottom
+        anchors.bottom: statusLine.top
         visible: root.gridMode
         enabled: visible
         fileModel: root.files
+        filterProxy: root.listing
         keyMachine: root.keys
         onViewToggleRequested: if (root.keys) root.keys.gridMode = false
+    }
+
+    StatusLine {
+        id: statusLine
+        objectName: "statusLine"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        fileModel: root.files
+        keyMachine: root.keys
     }
 
     PeekOverlay {

@@ -15,6 +15,7 @@
 #include <QVector>
 
 class DirectoryModelTest;
+class RecentStore;
 class SearchModel;
 
 class DirectoryModel : public QAbstractListModel {
@@ -27,6 +28,9 @@ class DirectoryModel : public QAbstractListModel {
   Q_PROPERTY(int count READ count NOTIFY countChanged)
   Q_PROPERTY(bool listing READ listing NOTIFY listingChanged)
   Q_PROPERTY(QString errorString READ errorString NOTIFY errorStringChanged)
+  Q_PROPERTY(bool isTrash READ isTrash NOTIFY pathChanged)
+  Q_PROPERTY(bool isRecent READ isRecent NOTIFY pathChanged)
+  Q_PROPERTY(QVariantMap currentStat READ currentStat NOTIFY currentStatChanged)
 
 public:
   enum Role {
@@ -42,6 +46,8 @@ public:
     IsHiddenRole,
     IsSymlinkRole,
     DirKindRole,
+    OrigPathRole,
+    PermRole,
   };
   Q_ENUM(Role)
 
@@ -60,9 +66,14 @@ public:
   QString errorString() const { return m_error; }
   QString returnPath() const { return m_returnPath; }
   SearchModel *searchModel() const { return m_search; }
+  bool isTrash() const;
+  bool isRecent() const;
+  QVariantMap currentStat() const;
 
   static bool isVirtualPath(const QString &path);
   static bool isSearchPath(const QString &path);
+  static bool isTrashPath(const QString &path);
+  static bool isRecentPath(const QString &path);
 
   qint64 lastFirstRowsMs() const { return m_lastFirstRowsMs; }
 
@@ -70,12 +81,16 @@ public:
                            const QString &selectName = QString(),
                            bool force = false);
   void setSearchModel(SearchModel *model);
+  void setRecentStore(RecentStore *store);
   Q_INVOKABLE void setShowHidden(bool show);
   Q_INVOKABLE void setCurrentIndex(int index);
   Q_INVOKABLE void moveCursor(int delta);
   Q_INVOKABLE void activateCurrent();
   Q_INVOKABLE QString currentName() const;
   Q_INVOKABLE bool currentIsDir() const;
+  Q_INVOKABLE QString currentOrigPath() const;
+  Q_INVOKABLE bool restoreCurrent();
+  Q_INVOKABLE bool emptyTrash();
   Q_INVOKABLE void requestVisibleThumbs(int first, int last, int sizePx);
   QVariantMap cachedStat(const QString &path) const;
   void requestStatPath(const QString &path);
@@ -94,6 +109,7 @@ signals:
   void statRequested(quint64 generation, const QString &path,
                      const QStringList &names);
   void firstRowsInserted(qint64 elapsedMs, int rows);
+  void currentStatChanged();
 
 private slots:
   void onBatchReady(quint64 generation, const QVector<DirectoryEntry> &batch);
@@ -120,10 +136,16 @@ private:
   void insertVisible(int allIndex);
   void removeVisible(int allIndex);
   DirectoryEntry makePlaceholder(const QString &name, bool isDir) const;
+  DirectoryEntry makeTrashEntry(const QString &name) const;
+  DirectoryEntry makeRecentEntry(const QString &path, const QString &mime,
+                                 const QString &ts) const;
+  void loadTrashListing();
+  void loadRecentListing();
   void navigateToExistingParent();
   void reload();
   const DirectoryEntry *entryAt(int visibleRow) const;
   QVariantMap entryToMap(const DirectoryEntry &e) const;
+  void emitCurrentStat();
 
   friend class DirectoryModelTest;
 
@@ -132,6 +154,7 @@ private:
   DirectoryWatcher m_watcher;
   ThumbnailService *m_thumbs = nullptr;
   SearchModel *m_search = nullptr;
+  RecentStore *m_recents = nullptr;
   quint64 m_gen = 0;
   quint64 m_watchSerial = 0;
 

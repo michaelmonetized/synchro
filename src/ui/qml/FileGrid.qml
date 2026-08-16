@@ -5,20 +5,22 @@ GridView {
     id: grid
 
     required property var fileModel
+    property var filterProxy
     property var keyMachine
+    readonly property var rows: filterProxy ? filterProxy : fileModel
     readonly property int thumbSizePx: 256
     readonly property int cellInner: 96
 
     signal viewToggleRequested()
 
-    model: fileModel
+    model: grid.rows
     clip: true
     reuseItems: true
     boundsBehavior: Flickable.StopAtBounds
     keyNavigationEnabled: false
     highlightFollowsCurrentItem: true
     highlightMoveDuration: 0
-    currentIndex: fileModel ? fileModel.currentIndex : -1
+    currentIndex: grid.rows ? grid.rows.currentIndex : -1
     focus: true
     activeFocusOnTab: true
     cellWidth: cellInner + Theme.space(16)
@@ -151,9 +153,17 @@ GridView {
             acceptedButtons: Qt.LeftButton
             onClicked: {
                 grid.forceActiveFocus()
-                grid.fileModel.currentIndex = cell.index
+                if (grid.filterProxy)
+                    grid.filterProxy.selectRow(cell.index)
+                else
+                    grid.fileModel.currentIndex = cell.index
             }
-            onDoubleClicked: grid.fileModel.activateCurrent()
+            onDoubleClicked: {
+                if (grid.filterProxy)
+                    grid.filterProxy.activateCurrent()
+                else
+                    grid.fileModel.activateCurrent()
+            }
         }
     }
 
@@ -171,13 +181,22 @@ GridView {
         if (!grid.fileModel)
             return
         if (event.key === Qt.Key_J || event.key === Qt.Key_Down) {
-            grid.fileModel.moveCursor(1)
+            if (grid.filterProxy)
+                grid.filterProxy.moveCursor(1)
+            else
+                grid.fileModel.moveCursor(1)
             event.accepted = true
         } else if (event.key === Qt.Key_K || event.key === Qt.Key_Up) {
-            grid.fileModel.moveCursor(-1)
+            if (grid.filterProxy)
+                grid.filterProxy.moveCursor(-1)
+            else
+                grid.fileModel.moveCursor(-1)
             event.accepted = true
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            grid.fileModel.activateCurrent()
+            if (grid.filterProxy)
+                grid.filterProxy.activateCurrent()
+            else
+                grid.fileModel.activateCurrent()
             event.accepted = true
         } else if (event.key === Qt.Key_V && event.modifiers === Qt.NoModifier) {
             grid.viewToggleRequested()
@@ -186,10 +205,10 @@ GridView {
     }
 
     Connections {
-        target: grid.fileModel
+        target: grid.rows
         function onCurrentIndexChanged() {
-            if (grid.fileModel.currentIndex >= 0)
-                grid.positionViewAtIndex(grid.fileModel.currentIndex, GridView.Contain)
+            if (grid.rows && grid.rows.currentIndex >= 0)
+                grid.positionViewAtIndex(grid.rows.currentIndex, GridView.Contain)
         }
     }
 }

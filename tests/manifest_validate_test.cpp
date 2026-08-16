@@ -115,6 +115,30 @@ void ManifestValidateTest::firstPartyActionHandlersValid() {
   QVERIFY2(openWith.ok, qPrintable(openWith.errors.join(QLatin1Char(';'))));
   QCOMPARE(openWith.manifest.entryPoints.value(QStringLiteral("action")),
            QStringLiteral("Palette.qml"));
+
+  const auto home = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.location.home")), true);
+  QVERIFY2(home.ok, qPrintable(home.errors.join(QLatin1Char(';'))));
+  QCOMPARE(home.manifest.runtime(QStringLiteral("location")),
+           QStringLiteral("path"));
+  QCOMPARE(home.manifest.location.value(QStringLiteral("path")).toString(),
+           QStringLiteral("$HOME"));
+
+  const auto recent = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.location.recent")), true);
+  QVERIFY2(recent.ok, qPrintable(recent.errors.join(QLatin1Char(';'))));
+  QCOMPARE(recent.manifest.runtime(QStringLiteral("location")),
+           QStringLiteral("core"));
+  QCOMPARE(recent.manifest.coreVerb(QStringLiteral("location")),
+           QStringLiteral("recent"));
+
+  const auto trashLoc = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.location.trash")), true);
+  QVERIFY2(trashLoc.ok, qPrintable(trashLoc.errors.join(QLatin1Char(';'))));
+  QCOMPARE(trashLoc.manifest.runtime(QStringLiteral("location")),
+           QStringLiteral("core"));
+  QCOMPARE(trashLoc.manifest.coreVerb(QStringLiteral("location")),
+           QStringLiteral("trash"));
 }
 
 void ManifestValidateTest::actionCoreRequiresVerb() {

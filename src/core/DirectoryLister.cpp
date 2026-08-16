@@ -128,6 +128,7 @@ DirectoryEntry enrich(int dirfd, const QString &dirPath, const RawEntry &raw,
 
   e.isDir = S_ISDIR(st.st_mode);
   e.mtime = mtimeMs(st);
+  e.perm = static_cast<int>(lst.st_mode & 07777);
   if (e.isDir)
     e.size = -1;
   else

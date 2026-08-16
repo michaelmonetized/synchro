@@ -1,13 +1,20 @@
 #include "DirectoryModel.h"
 
+#include "RecentStore.h"
 #include "SearchModel.h"
+#include "TrashStore.h"
 
+#include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QMimeDatabase>
+#include <QMimeType>
 #include <QUrl>
 #include <QVariantMap>
 
 #include <cstdio>
+#include <sys/stat.h>
 
 namespace {
 
@@ -18,6 +25,37 @@ QString expandUser(QString path) {
   if (path.startsWith(QLatin1String("~/")))
     return QDir::homePath() + path.mid(1);
   return path;
+}
+
+int fileMode(const QString &path) {
+  if (path.isEmpty())
+    return 0;
+#ifdef Q_OS_UNIX
+  struct stat st {};
+  if (::lstat(QFile::encodeName(path).constData(), &st) != 0)
+    return 0;
+  return static_cast<int>(st.st_mode & 07777);
+#else
+  Q_UNUSED(path);
+  return 0;
+#endif
+}
+
+QString formatPerm(int mode, bool isDir, bool isSymlink) {
+  QString s;
+  s.reserve(10);
+  if (isDir)
+    s += QLatin1Char('d');
+  else if (isSymlink)
+    s += QLatin1Char('l');
+  else
+    s += QLatin1Char('-');
+  const int bits[] = {S_IRUSR, S_IWUSR, S_IXUSR, S_IRGRP, S_IWGRP,
+                      S_IXGRP, S_IROTH, S_IWOTH, S_IXOTH};
+  const char letters[] = {'r', 'w', 'x', 'r', 'w', 'x', 'r', 'w', 'x'};
+  for (int i = 0; i < 9; ++i)
+    s += (mode & bits[i]) ? QLatin1Char(letters[i]) : QLatin1Char('-');
+  return s;
 }
 
 } // namespace
@@ -66,6 +104,18 @@ bool DirectoryModel::isSearchPath(const QString &path) {
   return path.startsWith(QLatin1String("search:"));
 }
 
+bool DirectoryModel::isTrashPath(const QString &path) {
+  return TrashStore::isTrashUrl(path);
+}
+
+bool DirectoryModel::isRecentPath(const QString &path) {
+  return path.startsWith(QLatin1String("recent:"));
+}
+
+bool DirectoryModel::isTrash() const { return isTrashPath(m_path); }
+
+bool DirectoryModel::isRecent() const { return isRecentPath(m_path); }
+
 int DirectoryModel::currentIndex() const {
   if (searching())
     return m_search->currentIndex();
@@ -100,6 +150,8 @@ QHash<int, QByteArray> DirectoryModel::roleNames() const {
       {IsHiddenRole, "isHidden"},
       {IsSymlinkRole, "isSymlink"},
       {DirKindRole, "dirKind"},
+      {OrigPathRole, "origPath"},
+      {PermRole, "perm"},
   };
 }
 
@@ -135,6 +187,10 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const {
     return e->isSymlink;
   case DirKindRole:
     return e->dirKind;
+  case OrigPathRole:
+    return e->origPath;
+  case PermRole:
+    return formatPerm(e->perm, e->isDir, e->isSymlink);
   default:
     return {};
   }
@@ -152,9 +208,16 @@ const DirectoryEntry *DirectoryModel::entryAt(int visibleRow) const {
 }
 
 QString DirectoryModel::normalizePath(const QString &path) {
-  if (isVirtualPath(path))
+  if (isSearchPath(path))
     return path;
+  if (isRecentPath(path))
+    return QStringLiteral("recent://");
+  if (TrashStore::isTrashUrl(path))
+    return TrashStore::normalizeUrl(path);
   const QString expanded = expandUser(path);
+  const QString abs = QDir::cleanPath(QFileInfo(expanded).absoluteFilePath());
+  if (TrashStore::mapsToTrashView(abs) || TrashStore::mapsToTrashView(expanded))
+    return QString::fromUtf8(TrashStore::kUrl);
   QFileInfo info(expanded);
   if (info.isDir()) {
     const QString canon = info.canonicalFilePath();
@@ -192,6 +255,21 @@ void DirectoryModel::setSearchModel(SearchModel *model) {
     adoptSearchRows();
 }
 
+void DirectoryModel::setRecentStore(RecentStore *store) {
+  if (m_recents == store)
+    return;
+  if (m_recents)
+    disconnect(m_recents, nullptr, this, nullptr);
+  m_recents = store;
+  if (m_recents)
+    connect(m_recents, &RecentStore::entriesChanged, this, [this] {
+      if (isRecent())
+        reload();
+    });
+  if (isRecent())
+    reload();
+}
+
 void DirectoryModel::bindSearch() {
   if (!m_search)
     return;
@@ -225,8 +303,10 @@ void DirectoryModel::bindSearch() {
             emit dataChanged(index(tl.row()), index(br.row()), roles);
           });
   connect(m_search, &SearchModel::currentIndexChanged, this, [this] {
-    if (m_searching)
+    if (m_searching) {
       emit currentIndexChanged();
+      emitCurrentStat();
+    }
   });
   connect(m_search, &SearchModel::listingChanged, this, [this] {
     if (!m_searching)
@@ -311,11 +391,27 @@ void DirectoryModel::setPath(const QString &path, const QString &selectName,
   if (isVirtualPath(resolved)) {
     m_searching = isSearchPath(resolved) && m_search;
     m_listing = m_searching && m_search->listing();
-    m_watcher.setPath(QString());
-    m_watchSerial = m_watcher.serial();
     emit pathChanged();
     emit errorStringChanged();
     emit listingChanged();
+    emitCurrentStat();
+    if (isTrashPath(resolved)) {
+      QString err;
+      if (!TrashStore::ensureDirs(&err)) {
+        m_error = err;
+        emit errorStringChanged();
+      }
+      loadTrashListing();
+      m_watcher.setPath(TrashStore::filesDir());
+      m_watchSerial = m_watcher.serial();
+      return;
+    }
+    m_watcher.setPath(QString());
+    m_watchSerial = m_watcher.serial();
+    if (isRecentPath(resolved)) {
+      loadRecentListing();
+      return;
+    }
     if (m_searching)
       adoptSearchRows();
     return;
@@ -327,6 +423,7 @@ void DirectoryModel::setPath(const QString &path, const QString &selectName,
   emit pathChanged();
   emit errorStringChanged();
   emit listingChanged();
+  emitCurrentStat();
   emit listRequested(m_gen, m_path);
 }
 
@@ -340,6 +437,20 @@ bool DirectoryModel::currentIsDir() const {
   return e && e->isDir;
 }
 
+QString DirectoryModel::currentOrigPath() const {
+  const DirectoryEntry *e = entryAt(currentIndex());
+  if (!e)
+    return {};
+  return e->origPath.isEmpty() ? e->path : e->origPath;
+}
+
+QVariantMap DirectoryModel::currentStat() const {
+  const DirectoryEntry *e = entryAt(currentIndex());
+  return e ? entryToMap(*e) : QVariantMap{};
+}
+
+void DirectoryModel::emitCurrentStat() { emit currentStatChanged(); }
+
 QVariantMap DirectoryModel::entryToMap(const DirectoryEntry &e) const {
   QVariantMap m;
   m.insert(QStringLiteral("name"), e.name);
@@ -350,6 +461,9 @@ QVariantMap DirectoryModel::entryToMap(const DirectoryEntry &e) const {
   m.insert(QStringLiteral("mtime"), e.mtime);
   m.insert(QStringLiteral("mime"), e.mime);
   m.insert(QStringLiteral("isSymlink"), e.isSymlink);
+  m.insert(QStringLiteral("origPath"), e.origPath);
+  m.insert(QStringLiteral("perm"), formatPerm(e.perm, e.isDir, e.isSymlink));
+  m.insert(QStringLiteral("mode"), e.perm);
   return m;
 }
 
@@ -423,6 +537,7 @@ void DirectoryModel::rebuildVisible() {
   m_currentIndex = next;
   emit countChanged();
   emit currentIndexChanged();
+  emitCurrentStat();
   maybeSelectPending();
 }
 
@@ -440,6 +555,7 @@ void DirectoryModel::setCurrentIndex(int index) {
     return;
   m_currentIndex = next;
   emit currentIndexChanged();
+  emitCurrentStat();
 }
 
 void DirectoryModel::moveCursor(int delta) {
@@ -463,6 +579,10 @@ void DirectoryModel::activateCurrent() {
   const DirectoryEntry *e = entryAt(m_currentIndex);
   if (!e)
     return;
+  if (e->dirKind == QLatin1String("trash") || isTrash()) {
+    restoreCurrent();
+    return;
+  }
   if (e->dirKind == QLatin1String("pending")) {
     m_pendingActivate = e->name;
     return;
@@ -471,6 +591,134 @@ void DirectoryModel::activateCurrent() {
     setPath(e->path);
   else
     emit fileActivated(e->path, e->mime);
+}
+
+bool DirectoryModel::restoreCurrent() {
+  const DirectoryEntry *e = entryAt(currentIndex());
+  if (!e || e->path.isEmpty())
+    return false;
+  QString dest;
+  QString err;
+  if (!TrashStore::restore(e->path, &dest, &err)) {
+    m_error = err;
+    emit errorStringChanged();
+    return false;
+  }
+  const QFileInfo fi(dest);
+  setPath(fi.absolutePath(), fi.fileName());
+  return true;
+}
+
+bool DirectoryModel::emptyTrash() {
+  if (!isTrash())
+    return false;
+  QString err;
+  if (!TrashStore::empty(&err)) {
+    m_error = err;
+    emit errorStringChanged();
+    return false;
+  }
+  reload();
+  return true;
+}
+
+DirectoryEntry DirectoryModel::makeTrashEntry(const QString &name) const {
+  DirectoryEntry e;
+  e.name = name;
+  e.dirKind = QStringLiteral("trash");
+  e.isHidden = false;
+  e.size = -1;
+  e.mtime = 0;
+  e.iconName = QStringLiteral("text-x-generic");
+  TrashStore::Item item;
+  if (TrashStore::itemForName(name, &item)) {
+    e.path = item.trashFile;
+    e.origPath = item.origPath;
+    e.isDir = item.isDir;
+    e.isSymlink = item.isSymlink;
+    e.size = item.size;
+    if (item.deletedAt.isValid())
+      e.mtime = item.deletedAt.toMSecsSinceEpoch();
+    e.perm = fileMode(item.trashFile);
+  } else {
+    e.path = QDir(TrashStore::filesDir()).filePath(name);
+  }
+  e.uri = QUrl(QStringLiteral("trash:///") +
+               QString::fromUtf8(QUrl::toPercentEncoding(name)));
+  if (e.isDir) {
+    e.iconName = QStringLiteral("folder");
+    e.mime = QStringLiteral("inode/directory");
+  } else if (!e.path.isEmpty()) {
+    const QMimeDatabase db;
+    const QMimeType mime =
+        db.mimeTypeForFile(e.path, QMimeDatabase::MatchExtension);
+    e.mime = mime.name();
+    e.iconName = mime.genericIconName();
+    if (e.iconName.isEmpty())
+      e.iconName = mime.iconName();
+    if (e.iconName.isEmpty())
+      e.iconName = e.isSymlink ? QStringLiteral("emblem-symbolic-link")
+                               : QStringLiteral("text-x-generic");
+  }
+  return e;
+}
+
+void DirectoryModel::loadTrashListing() {
+  const QVector<TrashStore::Item> items = TrashStore::list();
+  QVector<DirectoryEntry> batch;
+  batch.reserve(items.size());
+  for (const TrashStore::Item &item : items)
+    batch.append(makeTrashEntry(item.name));
+  onBatchReady(m_gen, batch);
+  onFinished(m_gen, true, QString());
+}
+
+DirectoryEntry DirectoryModel::makeRecentEntry(const QString &path,
+                                               const QString &mime,
+                                               const QString &ts) const {
+  DirectoryEntry e;
+  const QFileInfo fi(path);
+  e.name = fi.fileName();
+  if (e.name.isEmpty())
+    e.name = path;
+  e.path = fi.exists() ? fi.absoluteFilePath() : path;
+  e.origPath = e.path;
+  e.uri = QUrl::fromLocalFile(e.path);
+  e.isDir = fi.isDir();
+  e.isSymlink = fi.isSymLink();
+  e.isHidden = !e.name.isEmpty() && e.name[0] == QLatin1Char('.');
+  e.size = e.isDir ? -1 : (fi.exists() ? fi.size() : -1);
+  const QDateTime when = QDateTime::fromString(ts, Qt::ISODate);
+  e.mtime = when.isValid() ? when.toMSecsSinceEpoch()
+                           : (fi.exists() ? fi.lastModified().toMSecsSinceEpoch()
+                                          : 0);
+  e.dirKind = QStringLiteral("recent");
+  if (fi.exists())
+    e.perm = fileMode(e.path);
+  if (e.isDir) {
+    e.mime = QStringLiteral("inode/directory");
+    e.iconName = QStringLiteral("folder");
+    return e;
+  }
+  e.mime = mime;
+  if (e.mime.isEmpty() && !e.path.isEmpty()) {
+    QMimeDatabase db;
+    e.mime = db.mimeTypeForFile(e.path, QMimeDatabase::MatchExtension).name();
+  }
+  e.iconName = QStringLiteral("text-x-generic");
+  return e;
+}
+
+void DirectoryModel::loadRecentListing() {
+  QVector<DirectoryEntry> batch;
+  if (m_recents) {
+    const auto entries = m_recents->uniqueNewest();
+    batch.reserve(entries.size());
+    for (const RecentStore::Entry &item : entries)
+      batch.append(makeRecentEntry(item.path, item.mime, item.ts));
+  }
+  onBatchReady(m_gen, batch);
+  onFinished(m_gen, true, QString());
 }
 
 void DirectoryModel::onBatchReady(quint64 generation,
@@ -517,6 +765,7 @@ void DirectoryModel::onBatchReady(quint64 generation,
                  m_lastFirstRowsMs > 80 ? " SLOW" : "");
     emit firstRowsInserted(m_lastFirstRowsMs, m_visible.size());
   }
+  emitCurrentStat();
 }
 
 void DirectoryModel::applyEntry(const DirectoryEntry &entry) {
@@ -543,6 +792,8 @@ void DirectoryModel::applyEntry(const DirectoryEntry &entry) {
     return;
   const QModelIndex idx = index(vis.value());
   emit dataChanged(idx, idx);
+  if (vis.value() == m_currentIndex)
+    emitCurrentStat();
 }
 
 void DirectoryModel::onStatsReady(quint64 generation,
@@ -721,6 +972,12 @@ void DirectoryModel::renameEntry(const QString &from, const QString &to) {
 }
 
 void DirectoryModel::navigateToExistingParent() {
+  if (isTrash() || isRecent() || isSearchPath(m_path)) {
+    const QString dest =
+        m_returnPath.isEmpty() ? QDir::homePath() : m_returnPath;
+    setPath(dest, QString(), true);
+    return;
+  }
   QString p = m_path;
   const QString vanished = QFileInfo(QDir::cleanPath(p)).fileName();
   for (int i = 0; i < 64; ++i) {
@@ -797,6 +1054,10 @@ void DirectoryModel::onWatchEvents(const QVector<DirectoryWatchEvent> &events) {
   for (const QString &name : needStat) {
     if (m_indexByName.contains(name))
       live.append(name);
+  }
+  if (isTrash()) {
+    reload();
+    return;
   }
   if (!live.isEmpty())
     emit statRequested(m_gen, m_path, live);

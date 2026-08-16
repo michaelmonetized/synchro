@@ -5,6 +5,8 @@
 FilterProxy::FilterProxy(QObject *parent) : QSortFilterProxyModel(parent) {
   setDynamicSortFilter(true);
   setFilterCaseSensitivity(Qt::CaseInsensitive);
+  setSortCaseSensitivity(Qt::CaseInsensitive);
+  applySort();
 }
 
 void FilterProxy::setDirectoryModel(DirectoryModel *model) {
@@ -43,6 +45,7 @@ void FilterProxy::bindSource(DirectoryModel *model) {
     emit countChanged();
     emit currentIndexChanged();
   });
+  applySort();
 }
 
 void FilterProxy::setFilter(const QString &filter) {
@@ -140,6 +143,72 @@ int FilterProxy::seekPrefix(const QString &prefix) {
     }
   }
   return -1;
+}
+
+int FilterProxy::roleFromName(const QString &name) {
+  if (name == QLatin1String("size"))
+    return DirectoryModel::SizeRole;
+  if (name == QLatin1String("mtime"))
+    return DirectoryModel::MtimeRole;
+  if (name == QLatin1String("type"))
+    return DirectoryModel::MimeRole;
+  return DirectoryModel::NameRole;
+}
+
+void FilterProxy::applySort() {
+  setSortRole(roleFromName(m_sortRole));
+  sort(0, m_sortOrder == QLatin1String("desc") ? Qt::DescendingOrder
+                                               : Qt::AscendingOrder);
+}
+
+void FilterProxy::setSortRoleName(const QString &role) {
+  QString next = QStringLiteral("name");
+  if (role == QLatin1String("size") || role == QLatin1String("mtime") ||
+      role == QLatin1String("type"))
+    next = role;
+  if (m_sortRole == next)
+    return;
+  m_sortRole = next;
+  applySort();
+  emit sortChanged();
+}
+
+void FilterProxy::setSortOrder(const QString &order) {
+  const QString next =
+      order == QLatin1String("desc") ? QStringLiteral("desc")
+                                     : QStringLiteral("asc");
+  if (m_sortOrder == next)
+    return;
+  m_sortOrder = next;
+  applySort();
+  emit sortChanged();
+}
+
+bool FilterProxy::lessThan(const QModelIndex &left,
+                           const QModelIndex &right) const {
+  const QAbstractItemModel *src = sourceModel();
+  if (!src)
+    return QSortFilterProxyModel::lessThan(left, right);
+  const bool ld = src->data(left, DirectoryModel::IsDirRole).toBool();
+  const bool rd = src->data(right, DirectoryModel::IsDirRole).toBool();
+  if (ld != rd)
+    return ld;
+  const int role = sortRole();
+  if (role == DirectoryModel::SizeRole || role == DirectoryModel::MtimeRole) {
+    const qint64 a = src->data(left, role).toLongLong();
+    const qint64 b = src->data(right, role).toLongLong();
+    if (a != b)
+      return a < b;
+  } else if (role == DirectoryModel::MimeRole) {
+    const QString a = src->data(left, DirectoryModel::MimeRole).toString();
+    const QString b = src->data(right, DirectoryModel::MimeRole).toString();
+    const int cmp = QString::compare(a, b, Qt::CaseInsensitive);
+    if (cmp != 0)
+      return cmp < 0;
+  }
+  const QString an = src->data(left, DirectoryModel::NameRole).toString();
+  const QString bn = src->data(right, DirectoryModel::NameRole).toString();
+  return QString::localeAwareCompare(an.toLower(), bn.toLower()) < 0;
 }
 
 bool FilterProxy::filterAcceptsRow(int sourceRow,

@@ -62,6 +62,8 @@ public:
   Q_INVOKABLE bool runOpen(const QString &handlerId);
   Q_INVOKABLE bool runTerminal();
   Q_INVOKABLE bool runTrash();
+  Q_INVOKABLE bool restoreTrash();
+  Q_INVOKABLE bool emptyTrash();
   Q_INVOKABLE bool runAction(const QString &handlerId);
   Q_INVOKABLE bool openWithPalette();
   Q_INVOKABLE void closeAction() override;

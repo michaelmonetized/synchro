@@ -21,6 +21,8 @@ struct DirectoryEntry {
   bool isHidden = false;
   bool isSymlink = false;
   QString dirKind;
+  QString origPath;
+  int perm = 0;
 };
 
 class DirectoryLister : public QObject {

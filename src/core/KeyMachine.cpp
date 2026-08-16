@@ -440,13 +440,15 @@ void KeyMachine::runSearch() {
 void KeyMachine::revealCurrent() {
   if (!m_model)
     return;
-  QString path;
-  const QAbstractItemModel *src =
-      m_proxy ? static_cast<const QAbstractItemModel *>(m_proxy)
-              : static_cast<const QAbstractItemModel *>(m_model);
-  const int row = m_proxy ? m_proxy->currentIndex() : m_model->currentIndex();
-  if (src && row >= 0)
-    path = src->data(src->index(row, 0), DirectoryModel::PathRole).toString();
+  QString path = m_model->currentOrigPath();
+  if (path.isEmpty()) {
+    const QAbstractItemModel *src =
+        m_proxy ? static_cast<const QAbstractItemModel *>(m_proxy)
+                : static_cast<const QAbstractItemModel *>(m_model);
+    const int row = m_proxy ? m_proxy->currentIndex() : m_model->currentIndex();
+    if (src && row >= 0)
+      path = src->data(src->index(row, 0), DirectoryModel::PathRole).toString();
+  }
   if (path.isEmpty())
     return;
   const QFileInfo fi(path);
@@ -532,11 +534,17 @@ bool KeyMachine::runBuiltin(const QString &id, QString *info) {
   if (id == QLatin1String("recent"))
     return runRecent(info);
   if (id == QLatin1String("empty")) {
-    const QString path = m_model ? m_model->path() : QString();
-    if (info) {
-      *info = path.startsWith(QLatin1String("trash:"))
-                  ? QStringLiteral("empty is not available")
-                  : QStringLiteral("empty is only available in trash");
+    if (!m_model || !m_model->isTrash()) {
+      if (info)
+        *info = QStringLiteral("empty is only available in trash");
+      return true;
+    }
+    if (!m_model->emptyTrash()) {
+      if (info)
+        *info = m_model->errorString().isEmpty()
+                    ? QStringLiteral("empty is not available")
+                    : m_model->errorString();
+      return true;
     }
     return true;
   }
@@ -545,36 +553,11 @@ bool KeyMachine::runBuiltin(const QString &id, QString *info) {
 }
 
 bool KeyMachine::runRecent(QString *info) {
-  if (!m_recents) {
-    if (info)
-      *info = QStringLiteral("no recents");
-    return true;
-  }
-  const QVector<RecentStore::Entry> entries = m_recents->entries();
-  QString path;
-  for (int i = entries.size() - 1; i >= 0; --i) {
-    if (!entries.at(i).path.isEmpty()) {
-      path = entries.at(i).path;
-      break;
-    }
-  }
-  if (path.isEmpty()) {
-    if (info)
-      *info = QStringLiteral("no recents");
-    return true;
-  }
-  const QFileInfo fi(path);
-  if (fi.isDir()) {
-    if (m_nav)
-      m_nav->navigate(fi.absoluteFilePath());
-    else if (m_model)
-      m_model->setPath(fi.absoluteFilePath());
-    return true;
-  }
-  if (m_model)
-    m_model->setPath(fi.absolutePath(), fi.fileName());
-  else if (m_nav)
-    m_nav->navigate(fi.absolutePath());
+  Q_UNUSED(info);
+  if (m_nav)
+    m_nav->navigate(QStringLiteral("recent://"));
+  else if (m_model)
+    m_model->setPath(QStringLiteral("recent://"));
   return true;
 }
 

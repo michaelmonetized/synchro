@@ -63,7 +63,6 @@ public:
   void setPeekHost(PeekHost *host);
   void setRecentStore(RecentStore *store) { m_recents = store; }
   void setSearchModel(SearchModel *search);
-  // trash:// is a later core view; without it :trash only reports status.
   void setTrashAvailable(bool on) { m_trashAvailable = on; }
   void setActionRunner(ActionRunner runner) { m_actionRunner = std::move(runner); }
   void registerAction(const QString &id, const QString &title);
@@ -149,5 +148,5 @@ private:
   int m_jumpEpoch = 0;
   bool m_gridMode = false;
   bool m_helpOpen = false;
-  bool m_trashAvailable = false;
+  bool m_trashAvailable = true;
 };

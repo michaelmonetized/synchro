@@ -123,6 +123,7 @@ void RecentStore::record(const QString &path, const QString &mime) {
   m_counted = true;
   if (m_lines >= m_compactAt)
     compact();
+  emit entriesChanged();
 }
 
 QVector<RecentStore::Entry> RecentStore::entries() const {
@@ -130,6 +131,23 @@ QVector<RecentStore::Entry> RecentStore::entries() const {
   if (!lock.ok())
     return {};
   return parseEntries(m_path);
+}
+
+QVector<RecentStore::Entry> RecentStore::uniqueNewest() const {
+  const QVector<Entry> all = entries();
+  QVector<Entry> kept;
+  QSet<QString> seen;
+  kept.reserve(qMin(all.size(), m_keep));
+  for (int i = all.size() - 1; i >= 0; --i) {
+    const Entry &e = all.at(i);
+    if (e.path.isEmpty() || seen.contains(e.path))
+      continue;
+    seen.insert(e.path);
+    kept.append(e);
+    if (kept.size() >= m_keep)
+      break;
+  }
+  return kept;
 }
 
 void RecentStore::compact() {

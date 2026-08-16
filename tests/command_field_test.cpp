@@ -137,6 +137,7 @@ private slots:
   void enterHiddenToggles();
   void enterGridListTogglesView();
   void enterTrashNoopsWithStatus();
+  void enterTrashOpensTrashUrl();
   void enterEmptyNoopsWithStatus();
   void enterRecentEmptyStatus();
   void enterRecentJumpsToLast();
@@ -920,6 +921,7 @@ void CommandFieldTest::enterTrashNoopsWithStatus() {
   proxy.setDirectoryModel(&model);
   NavStack nav(&model);
   KeyMachine keys(&model, &proxy, &nav);
+  keys.setTrashAvailable(false);
   const QString before = model.path();
 
   keys.focusCommand();
@@ -927,6 +929,20 @@ void CommandFieldTest::enterTrashNoopsWithStatus() {
   keys.acceptField();
   QCOMPARE(model.path(), before);
   QCOMPARE(keys.statusMessage(), QStringLiteral("trash is not available"));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+}
+
+void CommandFieldTest::enterTrashOpensTrashUrl() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":trash"));
+  keys.acceptField();
+  QCOMPARE(model.path(), QStringLiteral("trash://"));
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
 }
 
@@ -956,11 +972,13 @@ void CommandFieldTest::enterRecentEmptyStatus() {
   NavStack nav(&model);
   KeyMachine keys(&model, &proxy, &nav);
   keys.setRecentStore(&recents);
+  model.setRecentStore(&recents);
 
   keys.focusCommand();
   keys.setFieldText(QStringLiteral(":recent"));
   keys.acceptField();
-  QCOMPARE(keys.statusMessage(), QStringLiteral("no recents"));
+  QCOMPARE(model.path(), QStringLiteral("recent://"));
+  QCOMPARE(model.count(), 0);
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
 }
 
@@ -979,6 +997,7 @@ void CommandFieldTest::enterRecentJumpsToLast() {
   NavStack nav(&model);
   KeyMachine keys(&model, &proxy, &nav);
   keys.setRecentStore(&recents);
+  model.setRecentStore(&recents);
 
   model.setPath(tmp.filePath(QStringLiteral("other")));
   QVERIFY(waitListingDone(model));
@@ -986,7 +1005,8 @@ void CommandFieldTest::enterRecentJumpsToLast() {
   keys.setFieldText(QStringLiteral(":recent"));
   keys.acceptField();
   QVERIFY(waitListingDone(model));
-  QCOMPARE(canon(model.path()), canon(tmp.path()));
+  QCOMPARE(model.path(), QStringLiteral("recent://"));
+  QCOMPARE(model.currentName(), QStringLiteral("foo.txt"));
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
 }
 
@@ -1122,7 +1142,7 @@ void CommandFieldTest::actionHandlerByIdAndTitle() {
   keys.setFieldText(QStringLiteral(":trash"));
   keys.acceptField();
   QVERIFY(ran.isEmpty());
-  QCOMPARE(keys.statusMessage(), QStringLiteral("trash is not available"));
+  QCOMPARE(model.path(), QStringLiteral("trash://"));
 }
 
 void CommandFieldTest::vTogglesGridFromList() {
@@ -1161,7 +1181,7 @@ void CommandFieldTest::successfulCommandClearsStatus() {
   keys.focusCommand();
   keys.setFieldText(QStringLiteral(":trash"));
   keys.acceptField();
-  QCOMPARE(keys.statusMessage(), QStringLiteral("trash is not available"));
+  QCOMPARE(model.path(), QStringLiteral("trash://"));
   keys.focusCommand();
   keys.setFieldText(QStringLiteral(":hidden"));
   keys.acceptField();

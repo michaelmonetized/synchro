@@ -1,9 +1,11 @@
+#include "Config.h"
 #include "DirectoryModel.h"
 #include "FilterProxy.h"
 #include "HandlerLoader.h"
 #include "HandlerRegistry.h"
 #include "HostApi.h"
 #include "KeyMachine.h"
+#include "LocationChips.h"
 #include "MimeMap.h"
 #include "NavStack.h"
 #include "RecentStore.h"
@@ -17,6 +19,7 @@
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QTimer>
 #include <QtQml/QQmlExtensionPlugin>
 
 #include <cstdio>
@@ -59,22 +62,34 @@ int main(int argc, char *argv[]) {
   parser.process(app);
   Q_UNUSED(parser.isSet(newWindowOption));
 
+  Config config;
   QString startPath = QDir::homePath();
   const QStringList positional = parser.positionalArguments();
   if (!positional.isEmpty())
     startPath = positional.first();
+  else if (!config.lastPath().isEmpty())
+    startPath = config.lastPath();
 
   DirectoryModel directoryModel;
   SearchModel searchModel;
   directoryModel.setSearchModel(&searchModel);
+  directoryModel.setShowHidden(config.showHidden());
   FilterProxy filterProxy;
   filterProxy.setDirectoryModel(&directoryModel);
+  filterProxy.setSortRoleName(config.sortRole());
+  filterProxy.setSortOrder(config.sortOrder());
   NavStack navStack(&directoryModel);
   KeyMachine keyMachine(&directoryModel, &filterProxy, &navStack);
   keyMachine.setSearchModel(&searchModel);
+  keyMachine.setGridMode(config.view() == QLatin1String("grid"));
   MimeMap mimeMap;
   HandlerRegistry handlerRegistry;
   handlerRegistry.scan();
+  LocationChips locationChips;
+  locationChips.setRegistry(&handlerRegistry);
+  locationChips.setConfig(&config);
+  locationChips.setNav(&navStack);
+  locationChips.setDirectoryModel(&directoryModel);
   HandlerLoader handlerLoader;
   XdgOpen xdgOpen;
   if (!xdgOpen.load()) {
@@ -94,6 +109,10 @@ int main(int argc, char *argv[]) {
                                            &navStack);
   engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"),
                                            &keyMachine);
+  engine.rootContext()->setContextProperty(QStringLiteral("locationChips"),
+                                           &locationChips);
+  engine.rootContext()->setContextProperty(QStringLiteral("appConfig"),
+                                           &config);
 
   HostApi hostApi(&directoryModel, &filterProxy, &navStack, &handlerRegistry,
                   &handlerLoader, &xdgOpen, &mimeMap, &engine);
@@ -117,9 +136,38 @@ int main(int argc, char *argv[]) {
     return false;
   });
 
+  QTimer persistTimer;
+  persistTimer.setSingleShot(true);
+  persistTimer.setInterval(200);
+  QObject::connect(&persistTimer, &QTimer::timeout, &config, [&] {
+    if (config.writable())
+      config.save();
+  });
+  auto schedulePersist = [&] { persistTimer.start(); };
+  QObject::connect(&directoryModel, &DirectoryModel::showHiddenChanged, &config,
+                   [&] {
+                     config.setShowHidden(directoryModel.showHidden());
+                     schedulePersist();
+                   });
+  QObject::connect(&directoryModel, &DirectoryModel::pathChanged, &config, [&] {
+    config.setLastPath(directoryModel.path());
+    schedulePersist();
+  });
+  QObject::connect(&keyMachine, &KeyMachine::gridModeChanged, &config, [&] {
+    config.setView(keyMachine.gridMode() ? QStringLiteral("grid")
+                                         : QStringLiteral("list"));
+    schedulePersist();
+  });
+  QObject::connect(&filterProxy, &FilterProxy::sortChanged, &config, [&] {
+    config.setSortRole(filterProxy.sortRoleName());
+    config.setSortOrder(filterProxy.sortOrder());
+    schedulePersist();
+  });
+
   // Declared last so it dies first and drops this connection before hostApi.
   RecentStore recents;
   keyMachine.setRecentStore(&recents);
+  directoryModel.setRecentStore(&recents);
   QObject::connect(
       &directoryModel, &DirectoryModel::fileActivated, &recents,
       [&](const QString &path, const QString &mime) {

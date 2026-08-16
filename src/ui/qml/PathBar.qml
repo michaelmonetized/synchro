@@ -6,10 +6,12 @@ Item {
 
     required property var fileModel
     required property var navStack
+    property var locationChips
 
     readonly property string path: fileModel ? fileModel.path : ""
     readonly property var segments: navStack ? navStack.segmentsFor(root.path) : []
     readonly property bool atHome: navStack && root.path === navStack.homePath
+    readonly property var chipsModel: root.locationChips ? root.locationChips.chips : []
 
     implicitHeight: Math.max(Theme.fontBody + Theme.space(10), 28)
 
@@ -104,8 +106,49 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         spacing: Theme.space(8)
 
+        Repeater {
+            model: root.chipsModel
+
+            Rectangle {
+                id: chip
+                required property var modelData
+                objectName: modelData && modelData.id ? modelData.id : "locationChip"
+                implicitWidth: chipLabel.implicitWidth + Theme.space(12)
+                implicitHeight: chipLabel.implicitHeight + Theme.space(6)
+                color: modelData && modelData.active ? Theme.selectedFill
+                       : (chipHover.hovered ? Theme.hoverFill : "transparent")
+                border.width: 1
+                border.color: Theme.normalBorder
+                radius: Theme.radius
+
+                Text {
+                    id: chipLabel
+                    anchors.centerIn: parent
+                    text: chip.modelData && chip.modelData.label ? chip.modelData.label : ""
+                    color: Theme.foreground
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontBody
+                }
+
+                HoverHandler {
+                    id: chipHover
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        if (root.locationChips)
+                            root.locationChips.activate(chip.modelData.id)
+                    }
+                }
+            }
+        }
+
         Rectangle {
             id: homeChip
+            objectName: "homeChip"
+            visible: !root.locationChips
             implicitWidth: homeLabel.implicitWidth + Theme.space(12)
             implicitHeight: homeLabel.implicitHeight + Theme.space(6)
             color: root.atHome ? Theme.selectedFill : (homeHover.hovered ? Theme.hoverFill : "transparent")

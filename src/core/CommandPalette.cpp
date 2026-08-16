@@ -25,7 +25,7 @@ bool prefixHit(const CommandSpec &c, const QString &q) {
 QVector<CommandSpec> CommandPalette::builtins() {
   return {
       {QStringLiteral("trash"), QStringLiteral("Open trash"), true},
-      {QStringLiteral("recent"), QStringLiteral("Open last recent"), true},
+      {QStringLiteral("recent"), QStringLiteral("Open recents"), true},
       {QStringLiteral("home"), QStringLiteral("Go home"), true},
       {QStringLiteral("hidden"), QStringLiteral("Toggle hidden files"), true},
       {QStringLiteral("grid"), QStringLiteral("Grid view"), true},

@@ -1,0 +1,54 @@
+#pragma once
+
+#include <QObject>
+#include <QString>
+#include <QVariantList>
+#include <QVariantMap>
+
+class Config;
+class DirectoryModel;
+class HandlerRegistry;
+class NavStack;
+
+// Location chips from first-party manifests + config.locationChips.
+// path runtime jumps; core adapters bind trash:// / recent://.
+class LocationChips : public QObject {
+  Q_OBJECT
+  Q_PROPERTY(QVariantList chips READ chips NOTIFY chipsChanged)
+  Q_PROPERTY(bool chooserMode READ chooserMode WRITE setChooserMode NOTIFY
+                 chooserModeChanged)
+
+public:
+  explicit LocationChips(QObject *parent = nullptr);
+
+  void setRegistry(HandlerRegistry *registry);
+  void setConfig(Config *config);
+  void setNav(NavStack *nav);
+  void setDirectoryModel(DirectoryModel *model);
+
+  QVariantList chips() const { return m_chips; }
+  bool chooserMode() const { return m_chooserMode; }
+  Q_INVOKABLE void setChooserMode(bool on);
+
+  Q_INVOKABLE void activate(const QString &id);
+  Q_INVOKABLE void refresh();
+
+  static QString expandPath(const QString &path);
+  static bool allowedInChooser(const QString &adapter, const QString &runtime);
+
+signals:
+  void chipsChanged();
+  void chooserModeChanged();
+
+private:
+  QVariantMap chipMap(const QString &id) const;
+  bool chipActive(const QVariantMap &chip) const;
+  void rebuild();
+
+  HandlerRegistry *m_registry = nullptr;
+  Config *m_config = nullptr;
+  NavStack *m_nav = nullptr;
+  DirectoryModel *m_model = nullptr;
+  QVariantList m_chips;
+  bool m_chooserMode = false;
+};

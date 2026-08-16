@@ -110,6 +110,10 @@ void NavStack::goUp() {
 
 void NavStack::goHome() { navigate(homePath()); }
 
+void NavStack::goTrash() { navigate(QStringLiteral("trash://")); }
+
+void NavStack::goRecent() { navigate(QStringLiteral("recent://")); }
+
 QVariantList NavStack::pathSegments() const {
   return segmentsFor(m_model ? m_model->path() : QString());
 }
