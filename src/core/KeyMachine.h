@@ -107,9 +107,10 @@ private:
   bool handlePeekKey(int key, int modifiers);
   void seek(const QString &chunk);
   void runCommand(const QString &text);
-  bool runBuiltin(const QString &id);
-  bool runRecent();
+  bool runBuiltin(const QString &id, QString *info);
+  bool runRecent(QString *info);
   void finishCommand();
+  bool fieldQueryEmpty() const;
 
   static bool isReservedVerb(int key, int modifiers);
 

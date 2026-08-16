@@ -56,6 +56,7 @@ Window {
 
     FileGrid {
         id: fileGrid
+        objectName: "fileGrid"
         anchors.top: commandField.bottom
         anchors.left: parent.left
         anchors.right: parent.right

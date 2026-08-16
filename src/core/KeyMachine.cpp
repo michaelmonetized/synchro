@@ -96,6 +96,9 @@ void KeyMachine::setFieldText(const QString &text) {
   m_fieldText = text;
   applyFieldText();
   emit fieldTextChanged();
+  // Stale hint only belongs to the failed query still in the field.
+  if (!m_status.isEmpty())
+    setStatusMessage(QString());
 }
 
 void KeyMachine::setGridMode(bool on) {
@@ -155,6 +158,8 @@ void KeyMachine::clearFieldAndFilter() {
   if (m_nav)
     m_nav->setLiveFilter(QString());
   emit fieldTextChanged();
+  if (!m_status.isEmpty())
+    setStatusMessage(QString());
 }
 
 void KeyMachine::onPathChanged() {
@@ -224,6 +229,7 @@ void KeyMachine::focusJump() {
 void KeyMachine::focusCommand() {
   closeOverlays();
   setHelpOpen(false);
+  setStatusMessage(QString());
   if (m_fieldText != QLatin1String(":")) {
     m_fieldText = QStringLiteral(":");
     emit fieldTextChanged();
@@ -252,10 +258,12 @@ void KeyMachine::escape() {
     return;
   }
   if (m_mode != Mode::ListFocused) {
-    if (!m_fieldText.isEmpty()) {
+    // ':' is chrome (same as an empty filter). Only a real query is step 4.
+    if (!fieldQueryEmpty()) {
       clearFieldAndFilter();
       return;
     }
+    clearFieldAndFilter();
     setMode(Mode::ListFocused);
     return;
   }
@@ -288,8 +296,15 @@ bool KeyMachine::isCommandText(const QString &text) {
   return text.trimmed().startsWith(QLatin1Char(':'));
 }
 
+bool KeyMachine::fieldQueryEmpty() const {
+  if (m_mode == Mode::FieldCommand || isCommandText(m_fieldText))
+    return CommandPalette::stripSigil(m_fieldText).isEmpty();
+  return m_fieldText.isEmpty();
+}
+
 void KeyMachine::finishCommand() {
   clearFieldAndFilter();
+  setStatusMessage(QString());
   setMode(Mode::ListFocused);
 }
 
@@ -301,9 +316,12 @@ void KeyMachine::runCommand(const QString &text) {
     return;
   }
   if (spec.builtin) {
-    if (!runBuiltin(spec.id))
+    QString info;
+    if (!runBuiltin(spec.id, &info))
       return;
     finishCommand();
+    if (!info.isEmpty())
+      setStatusMessage(info);
     return;
   }
   if (!m_actionRunner) {
@@ -317,7 +335,7 @@ void KeyMachine::runCommand(const QString &text) {
   finishCommand();
 }
 
-bool KeyMachine::runBuiltin(const QString &id) {
+bool KeyMachine::runBuiltin(const QString &id, QString *info) {
   if (id == QLatin1String("home")) {
     if (m_nav)
       m_nav->goHome();
@@ -344,7 +362,8 @@ bool KeyMachine::runBuiltin(const QString &id) {
   }
   if (id == QLatin1String("trash")) {
     if (!m_trashAvailable) {
-      setStatusMessage(QStringLiteral("trash is not available"));
+      if (info)
+        *info = QStringLiteral("trash is not available");
       return true;
     }
     if (m_nav)
@@ -354,22 +373,24 @@ bool KeyMachine::runBuiltin(const QString &id) {
     return true;
   }
   if (id == QLatin1String("recent"))
-    return runRecent();
+    return runRecent(info);
   if (id == QLatin1String("empty")) {
     const QString path = m_model ? m_model->path() : QString();
-    if (!path.startsWith(QLatin1String("trash:")))
-      setStatusMessage(QStringLiteral("empty is only available in trash"));
-    else
-      setStatusMessage(QStringLiteral("empty is not available"));
+    if (info) {
+      *info = path.startsWith(QLatin1String("trash:"))
+                  ? QStringLiteral("empty is not available")
+                  : QStringLiteral("empty is only available in trash");
+    }
     return true;
   }
   setStatusMessage(QStringLiteral("unknown command"));
   return false;
 }
 
-bool KeyMachine::runRecent() {
+bool KeyMachine::runRecent(QString *info) {
   if (!m_recents) {
-    setStatusMessage(QStringLiteral("no recents"));
+    if (info)
+      *info = QStringLiteral("no recents");
     return true;
   }
   const QVector<RecentStore::Entry> entries = m_recents->entries();
@@ -381,21 +402,22 @@ bool KeyMachine::runRecent() {
     }
   }
   if (path.isEmpty()) {
-    setStatusMessage(QStringLiteral("no recents"));
+    if (info)
+      *info = QStringLiteral("no recents");
     return true;
   }
-  const QFileInfo info(path);
-  if (info.isDir()) {
+  const QFileInfo fi(path);
+  if (fi.isDir()) {
     if (m_nav)
-      m_nav->navigate(info.absoluteFilePath());
+      m_nav->navigate(fi.absoluteFilePath());
     else if (m_model)
-      m_model->setPath(info.absoluteFilePath());
+      m_model->setPath(fi.absoluteFilePath());
     return true;
   }
   if (m_model)
-    m_model->setPath(info.absolutePath(), info.fileName());
+    m_model->setPath(fi.absolutePath(), fi.fileName());
   else if (m_nav)
-    m_nav->navigate(info.absolutePath());
+    m_nav->navigate(fi.absolutePath());
   return true;
 }
 

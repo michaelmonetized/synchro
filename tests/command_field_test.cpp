@@ -14,6 +14,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickItem>
+#include <QPoint>
 #include <QQuickWindow>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -145,7 +146,9 @@ private slots:
   void unknownAndAmbiguousStayInField();
   void actionHandlerByIdAndTitle();
   void vTogglesGridFromList();
+  void successfulCommandClearsStatus();
   void mainQmlColonEntersCommand();
+  void mainQmlGridClickAfterColonPops();
 };
 
 void CommandFieldTest::launchIsListFocused() {
@@ -1016,6 +1019,12 @@ void CommandFieldTest::escCommandSingleStep() {
   KeyMachine keys(&model, &proxy, &nav);
 
   keys.focusCommand();
+  QCOMPARE(keys.fieldText(), QStringLiteral(":"));
+  QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(keys.fieldText().isEmpty());
+
+  keys.focusCommand();
   keys.setFieldText(QStringLiteral(":home"));
   QCOMPARE(keys.mode(), QStringLiteral("field-command"));
   QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
@@ -1129,6 +1138,34 @@ void CommandFieldTest::vTogglesGridFromList() {
   QVERIFY(!keys.gridMode());
 }
 
+void CommandFieldTest::successfulCommandClearsStatus() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":nope"));
+  keys.acceptField();
+  QCOMPARE(keys.statusMessage(), QStringLiteral("unknown command"));
+  QCOMPARE(keys.mode(), QStringLiteral("field-command"));
+
+  keys.setFieldText(QStringLiteral(":list"));
+  keys.acceptField();
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(keys.statusMessage().isEmpty());
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":trash"));
+  keys.acceptField();
+  QCOMPARE(keys.statusMessage(), QStringLiteral("trash is not available"));
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":hidden"));
+  keys.acceptField();
+  QVERIFY(keys.statusMessage().isEmpty());
+}
+
 void CommandFieldTest::mainQmlColonEntersCommand() {
   DirectoryModel model;
   FilterProxy proxy;
@@ -1175,6 +1212,74 @@ void CommandFieldTest::mainQmlColonEntersCommand() {
   auto *input = window->findChild<QQuickItem *>(QStringLiteral("commandInput"));
   QVERIFY(input);
   QVERIFY(QTest::qWaitFor([&] { return input->hasActiveFocus(); }, 1000));
+}
+
+void CommandFieldTest::mainQmlGridClickAfterColonPops() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("aaa.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("bbb.txt"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
+
+  QString errors;
+  QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
+                   &engine,
+                   [&]() { errors = QStringLiteral("create failed"); });
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY2(!engine.rootObjects().isEmpty(),
+           qPrintable(errors.isEmpty() ? QStringLiteral("Main.qml produced no "
+                                                        "root object")
+                                       : errors));
+
+  auto *window =
+      qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+  QVERIFY(window);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  keys.setGridMode(true);
+  auto *grid = window->findChild<QQuickItem *>(QStringLiteral("fileGrid"));
+  QVERIFY2(grid, "FileGrid objectName fileGrid");
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return grid->isVisible() && grid->width() > 0 && grid->height() > 0;
+      },
+      1000));
+  grid->forceActiveFocus();
+  QVERIFY(QTest::qWaitFor([&] { return grid->hasActiveFocus(); }, 1000));
+
+  QTest::keyClick(window, Qt::Key_Colon, Qt::ShiftModifier);
+  QVERIFY(QTest::qWaitFor(
+      [&] { return keys.mode() == QStringLiteral("field-command"); }, 1000));
+
+  const QPoint pos = grid->mapToScene(QPointF(24, 24)).toPoint();
+  QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, pos);
+  if (keys.fieldFocused())
+    grid->forceActiveFocus();
+  QVERIFY(QTest::qWaitFor(
+      [&] { return keys.mode() == QStringLiteral("list-focused"); }, 1000));
+
+  QTest::keyClick(window, Qt::Key_Escape);
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
 }
 
 int main(int argc, char **argv) {

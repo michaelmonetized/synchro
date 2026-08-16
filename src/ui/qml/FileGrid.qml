@@ -149,9 +149,17 @@ GridView {
         MouseArea {
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton
-            onClicked: grid.fileModel.currentIndex = cell.index
+            onClicked: {
+                grid.forceActiveFocus()
+                grid.fileModel.currentIndex = cell.index
+            }
             onDoubleClicked: grid.fileModel.activateCurrent()
         }
+    }
+
+    onActiveFocusChanged: {
+        if (activeFocus && grid.keyMachine && grid.keyMachine.fieldFocused)
+            grid.keyMachine.focusList()
     }
 
     Keys.onPressed: function (event) {
