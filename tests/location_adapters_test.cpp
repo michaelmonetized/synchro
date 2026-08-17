@@ -68,10 +68,14 @@ private slots:
   void trashListsAndEnterRestores();
   void recentNewestFirstUnderNameSort();
   void recentDuplicateBasenames();
+  void recordWhileViewingRecentDoesNotDeadlock();
   void emptyRequiresConfirm();
   void sortDescKeepsDirsFirst();
   void sortByNameAndSize();
   void configPersistsHiddenAndSort();
+  void pinChipAfterHomeAndActivate();
+  void pinPersistsInConfig();
+  void colonPinAndShiftPToggle();
   void configUnknownVersionIsReadOnly();
   void currentStatHasSizeMtimePerm();
 
@@ -285,6 +289,30 @@ void LocationAdaptersTest::recentDuplicateBasenames() {
   QCOMPARE(model.rowCount(), 2);
 }
 
+void LocationAdaptersTest::recordWhileViewingRecentDoesNotDeadlock() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString first = tmp.filePath(QStringLiteral("one.jpg"));
+  const QString second = tmp.filePath(QStringLiteral("two.jpg"));
+  QVERIFY(writeFile(first));
+  QVERIFY(writeFile(second));
+
+  RecentStore recents(tmp.filePath(QStringLiteral("recent.jsonl")), 50, 100);
+  recents.record(first, QStringLiteral("image/jpeg"));
+
+  DirectoryModel model;
+  model.setRecentStore(&recents);
+  model.setPath(QStringLiteral("recent://"));
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(model.rowCount(), 1);
+
+  // Same path as Enter on Recents: record() used to emit entriesChanged
+  // while still holding LOCK_EX; reload() then flock(LOCK_SH) deadlocked.
+  recents.record(second, QStringLiteral("image/jpeg"));
+  QVERIFY(QTest::qWaitFor([&] { return model.rowCount() == 2; }, 2000));
+  QCOMPARE(model.rowCount(), 2);
+}
+
 void LocationAdaptersTest::emptyRequiresConfirm() {
   QTemporaryDir live;
   QVERIFY(live.isValid());
@@ -307,7 +335,8 @@ void LocationAdaptersTest::emptyRequiresConfirm() {
   keys.focusCommand();
   keys.setFieldText(QStringLiteral(":empty"));
   keys.acceptField();
-  QCOMPARE(keys.statusMessage(), QStringLiteral("Empty trash? y/n"));
+  QCOMPARE(keys.mode(), QStringLiteral("confirm-dialog"));
+  QCOMPARE(keys.promptKind(), QStringLiteral("empty-trash"));
   QVERIFY(keys.confirmOpen());
   QVERIFY(QFileInfo::exists(trashFile));
   QCOMPARE(model.rowCount(), 1);
@@ -396,6 +425,99 @@ void LocationAdaptersTest::configPersistsHiddenAndSort() {
   QCOMPARE(loaded.sortOrder(), QStringLiteral("desc"));
   QCOMPARE(loaded.view(), QStringLiteral("grid"));
   QCOMPARE(loaded.lastPath(), QStringLiteral("/tmp"));
+}
+
+void LocationAdaptersTest::pinChipAfterHomeAndActivate() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("Work")));
+  const QString work = QFileInfo(tmp.filePath(QStringLiteral("Work"))).absoluteFilePath();
+
+  HandlerRegistry reg;
+  reg.setScanEnv(false);
+  reg.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  reg.setUserDir(QStringLiteral("/tmp/synchro-no-user-handlers"));
+  reg.scan();
+
+  Config cfg(tmp.filePath(QStringLiteral("config.json")));
+  DirectoryModel model;
+  NavStack nav(&model);
+  LocationChips chips;
+  chips.setRegistry(&reg);
+  chips.setConfig(&cfg);
+  chips.setNav(&nav);
+  chips.setDirectoryModel(&model);
+
+  QVERIFY(chips.pin(work));
+  QVERIFY(chips.isPinned(work));
+  QStringList ids;
+  QStringList labels;
+  for (const QVariant &v : chips.chips()) {
+    ids.append(v.toMap().value(QStringLiteral("id")).toString());
+    labels.append(v.toMap().value(QStringLiteral("label")).toString());
+  }
+  QVERIFY(ids.contains(QStringLiteral("synchro.location.home")));
+  QVERIFY(ids.contains(LocationChips::pinId(work)));
+  QVERIFY(labels.contains(QStringLiteral("Work")));
+  QCOMPARE(ids.indexOf(LocationChips::pinId(work)),
+           ids.indexOf(QStringLiteral("synchro.location.home")) + 1);
+
+  chips.activate(LocationChips::pinId(work));
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(canon(model.path()), canon(work));
+
+  QVERIFY(chips.unpin(work));
+  QVERIFY(!chips.isPinned(work));
+  for (const QVariant &v : chips.chips())
+    QVERIFY(v.toMap().value(QStringLiteral("id")).toString() !=
+            LocationChips::pinId(work));
+}
+
+void LocationAdaptersTest::pinPersistsInConfig() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("Pinned")));
+  const QString pinned =
+      QFileInfo(tmp.filePath(QStringLiteral("Pinned"))).absoluteFilePath();
+  const QString path = tmp.filePath(QStringLiteral("config.json"));
+  {
+    Config cfg(path);
+    LocationChips chips;
+    chips.setConfig(&cfg);
+    QVERIFY(chips.pin(pinned));
+  }
+  Config loaded(path);
+  QCOMPARE(loaded.pins().size(), 1);
+  QCOMPARE(loaded.pins().first(), Config::normalizePin(pinned));
+}
+
+void LocationAdaptersTest::colonPinAndShiftPToggle() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("proj")));
+  const QString proj =
+      QFileInfo(tmp.filePath(QStringLiteral("proj"))).absoluteFilePath();
+
+  Config cfg(tmp.filePath(QStringLiteral("config.json")));
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  LocationChips chips;
+  chips.setConfig(&cfg);
+  KeyMachine keys(&model, &proxy, &nav);
+  keys.setLocationChips(&chips);
+
+  model.setPath(proj);
+  QVERIFY(waitListingDone(model));
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":pin"));
+  keys.acceptField();
+  QVERIFY(chips.isPinned(proj));
+  QCOMPARE(keys.statusMessage(), QStringLiteral("pinned proj"));
+
+  QVERIFY(keys.handleListKey(Qt::Key_P, Qt::ShiftModifier, QStringLiteral("P")));
+  QVERIFY(!chips.isPinned(proj));
 }
 
 void LocationAdaptersTest::configUnknownVersionIsReadOnly() {

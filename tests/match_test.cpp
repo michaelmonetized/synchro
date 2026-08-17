@@ -72,6 +72,7 @@ private slots:
   void mimeModeDefaultAll();
   void mimeModeAny();
   void suffixAndHost();
+  void matchModeAnyORsClauses();
   void minMaxItems();
   void resolveOrder();
   void scanFirstPartyAndUser();
@@ -79,6 +80,7 @@ private slots:
   void thirdPartyDisabledByDefault();
   void folderContains();
   void omawriteBeatsXdgWhenPresent();
+  void omacutBeatsXdgWhenPresent();
   void enableDisablePersist();
 };
 
@@ -169,6 +171,42 @@ void MatchTest::suffixAndHost() {
   QVERIFY(!manifestMatches(m, QStringLiteral("open"),
                            {item(QStringLiteral("/tmp/README.md"),
                                  QStringLiteral("text/plain"))}));
+}
+
+void MatchTest::matchModeAnyORsClauses() {
+  Manifest m;
+  m.kinds = {QStringLiteral("preview")};
+  m.match.matchMode = QStringLiteral("any");
+  m.match.mime = {QStringLiteral("text/*")};
+  m.match.suffix = {QStringLiteral(".sql"), QStringLiteral(".yaml"),
+                    QStringLiteral(".ts")};
+  m.match.pathGlob = {QStringLiteral("Dockerfile"),
+                      QStringLiteral("Dockerfile.*")};
+
+  QVERIFY(manifestMatches(
+      m, QStringLiteral("preview"),
+      {item(QStringLiteral("/tmp/schema.sql"),
+            QStringLiteral("application/sql"))}));
+  QVERIFY(manifestMatches(
+      m, QStringLiteral("preview"),
+      {item(QStringLiteral("/tmp/app.yaml"),
+            QStringLiteral("application/yaml"))}));
+  QVERIFY(manifestMatches(
+      m, QStringLiteral("preview"),
+      {item(QStringLiteral("/tmp/Dockerfile"),
+            QStringLiteral("application/octet-stream"))}));
+  QVERIFY(manifestMatches(
+      m, QStringLiteral("preview"),
+      {item(QStringLiteral("/tmp/Dockerfile.dev"),
+            QStringLiteral("application/octet-stream"))}));
+  QVERIFY(manifestMatches(
+      m, QStringLiteral("preview"),
+      {item(QStringLiteral("/tmp/notes.ts"),
+            QStringLiteral("video/mp2t"))}));
+  QVERIFY(!manifestMatches(
+      m, QStringLiteral("preview"),
+      {item(QStringLiteral("/tmp/photo.png"),
+            QStringLiteral("image/png"))}));
 }
 
 void MatchTest::minMaxItems() {
@@ -290,6 +328,35 @@ void MatchTest::omawriteBeatsXdgWhenPresent() {
     QCOMPARE(matches.constFirst().id, QStringLiteral("synchro.open.omawrite"));
   } else {
     QVERIFY(!ids.contains(QStringLiteral("synchro.open.omawrite")));
+    QVERIFY(ids.contains(QStringLiteral("synchro.open.xdg")));
+  }
+}
+
+void MatchTest::omacutBeatsXdgWhenPresent() {
+  HandlerRegistry reg;
+  reg.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  reg.setUserDir(tmp.path());
+  reg.setScanEnv(false);
+  reg.setConfigPath(tmp.filePath(QStringLiteral("none.json")));
+  reg.scan();
+  QVERIFY(reg.contains(QStringLiteral("synchro.open.omacut")));
+  QVERIFY(reg.contains(QStringLiteral("synchro.action.agent")));
+
+  const auto matches = reg.resolve(
+      QStringLiteral("open"),
+      {item(QStringLiteral("/tmp/clip.mp4"), QStringLiteral("video/mp4"))});
+  QVERIFY(!matches.isEmpty());
+  const bool hasCut =
+      !QStandardPaths::findExecutable(QStringLiteral("omacut")).isEmpty();
+  QStringList ids;
+  for (const auto &m : matches)
+    ids.append(m.id);
+  if (hasCut) {
+    QCOMPARE(matches.constFirst().id, QStringLiteral("synchro.open.omacut"));
+  } else {
+    QVERIFY(!ids.contains(QStringLiteral("synchro.open.omacut")));
     QVERIFY(ids.contains(QStringLiteral("synchro.open.xdg")));
   }
 }

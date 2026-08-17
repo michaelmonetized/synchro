@@ -5,15 +5,12 @@ import Synchro.Theme 1.0
 HandlerSurface {
     id: root
 
-    // Modal picker: this overlay owns j/k/Enter/Esc while open.
-    focus: true
-
     ListView {
         id: choices
         objectName: "openWithList"
         anchors.fill: parent
         clip: true
-        focus: true
+        focus: false
         keyNavigationEnabled: false
         boundsBehavior: Flickable.StopAtBounds
         highlightFollowsCurrentItem: true
@@ -47,34 +44,15 @@ HandlerSurface {
                 anchors.fill: parent
                 onClicked: {
                     choices.currentIndex = row.index
-                    if (root.host && row.modelData && row.modelData.id)
-                        root.host.runOpen(row.modelData.id)
+                    if (root.host)
+                        root.host.doParamsFocused = true
+                }
+                onDoubleClicked: {
+                    choices.currentIndex = row.index
+                    root.commit()
                 }
             }
         }
-
-        Keys.onPressed: function (event) {
-            if (event.key === Qt.Key_J || event.key === Qt.Key_Down) {
-                if (count > 0)
-                    currentIndex = Math.min(currentIndex + 1, count - 1)
-                event.accepted = true
-            } else if (event.key === Qt.Key_K || event.key === Qt.Key_Up) {
-                if (count > 0)
-                    currentIndex = Math.max(currentIndex - 1, 0)
-                event.accepted = true
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                if (currentIndex >= 0 && currentIndex < model.length &&
-                        root.host && model[currentIndex] && model[currentIndex].id)
-                    root.host.runOpen(model[currentIndex].id)
-                event.accepted = true
-            } else if (event.key === Qt.Key_Escape) {
-                if (root.host)
-                    root.host.closeAction()
-                event.accepted = true
-            }
-        }
-
-        Component.onCompleted: forceActiveFocus()
     }
 
     Text {
@@ -86,10 +64,30 @@ HandlerSurface {
         font.pixelSize: Theme.fontBody
     }
 
-    Keys.onPressed: function (event) {
-        if (event.key === Qt.Key_Escape && root.host) {
-            root.host.closeAction()
-            event.accepted = true
+    function commit() {
+        if (!root.host || choices.currentIndex < 0 ||
+                choices.currentIndex >= choices.count)
+            return false
+        var row = choices.model[choices.currentIndex]
+        if (!row || !row.id)
+            return false
+        return root.host.runOpen(row.id)
+    }
+
+    function actionKey(key, modifiers) {
+        if (key === Qt.Key_J || key === Qt.Key_Down || key === Qt.Key_S) {
+            if (choices.count > 0)
+                choices.currentIndex = Math.min(choices.currentIndex + 1,
+                                                choices.count - 1)
+            return true
         }
+        if (key === Qt.Key_K || key === Qt.Key_Up || key === Qt.Key_W) {
+            if (choices.count > 0)
+                choices.currentIndex = Math.max(choices.currentIndex - 1, 0)
+            return true
+        }
+        if (key === Qt.Key_Return || key === Qt.Key_Enter)
+            return root.commit()
+        return false
     }
 }

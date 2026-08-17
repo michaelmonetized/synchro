@@ -159,8 +159,12 @@ bool HandlerActions::runAction(const QString &id,
     const bool terminal = rec.manifest.id ==
                               QLatin1String("synchro.action.terminal") ||
                           exec.contains(QLatin1String("xdg-terminal-exec"));
-    if (terminal && isVirtualLocation(cwd)) {
-      m_error = QStringLiteral("terminal is disabled on virtual locations");
+    const bool agent =
+        rec.manifest.id == QLatin1String("synchro.action.agent");
+    if ((terminal || agent) && isVirtualLocation(cwd)) {
+      m_error = terminal
+                    ? QStringLiteral("terminal is disabled on virtual locations")
+                    : QStringLiteral("agent is disabled on virtual locations");
       return false;
     }
     return runExec(rec.manifest, QStringLiteral("action"), items, cwd);
@@ -205,4 +209,11 @@ HandlerActions::openCandidates(const QVector<Manifest::Item> &items) const {
     out.append(row);
   }
   return out;
+}
+
+QVector<HandlerRegistry::Match>
+HandlerActions::actionMatches(const QVector<Manifest::Item> &items) const {
+  if (!m_reg)
+    return {};
+  return m_reg->resolve(QStringLiteral("action"), items);
 }

@@ -105,7 +105,6 @@ QVariantMap SearchModel::cachedStat(const QString &path) const {
 void SearchModel::start(const QString &query, const QString &root,
                         bool hidden) {
   m_service.cancel();
-  resetEntries();
   if (m_query != query) {
     m_query = query;
     emit queryChanged();
@@ -122,9 +121,12 @@ void SearchModel::start(const QString &query, const QString &root,
   m_loggedFirst = false;
   m_lastFirstRowsMs = -1;
   if (query.isEmpty() || root.isEmpty()) {
+    m_replaceOnNextHit = false;
+    resetEntries();
     setListing(false);
     return;
   }
+  m_replaceOnNextHit = true;
   setListing(true);
   emit pathChanged();
   m_service.start(query, root, hidden);
@@ -137,6 +139,7 @@ void SearchModel::cancel() {
 
 void SearchModel::clear() {
   m_service.cancel();
+  m_replaceOnNextHit = false;
   resetEntries();
   if (!m_query.isEmpty()) {
     m_query.clear();
@@ -211,6 +214,10 @@ void SearchModel::setThumbnail(const QString &path, const QString &url) {
 }
 
 void SearchModel::onHit(const QString &path) {
+  if (m_replaceOnNextHit) {
+    resetEntries();
+    m_replaceOnNextHit = false;
+  }
   if (m_entries.size() >= SearchService::kMaxResults)
     return;
   DirectoryEntry e = makeEntry(path);
@@ -236,6 +243,10 @@ void SearchModel::onHit(const QString &path) {
 }
 
 void SearchModel::onFinished(bool ok, const QString &error) {
+  if (m_replaceOnNextHit) {
+    resetEntries();
+    m_replaceOnNextHit = false;
+  }
   setListing(false);
   if (!ok)
     setError(error);

@@ -8,8 +8,8 @@
 
 class QProcess;
 
-// Name search via `fd` argv (no shell). Query is one argument so ?foo.bar
-// stays a literal substring, not a regex or glob.
+// Name search via `fd` argv (no shell). Spaces become .* so "bax jpg"
+// hits Baxter.jpg; metacharacters in each token stay literal.
 class SearchService : public QObject {
   Q_OBJECT
 
@@ -20,6 +20,7 @@ public:
   ~SearchService() override;
 
   static QString executable();
+  static QString fuzzyPattern(const QString &query);
   static QStringList arguments(const QString &query, const QString &root,
                               bool hidden);
 

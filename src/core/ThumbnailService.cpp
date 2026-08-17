@@ -1,13 +1,26 @@
 #include "ThumbnailService.h"
+#include "ArchiveMeta.h"
+#include "MimeMap.h"
+#include "ParquetMeta.h"
+#include "ThumbCache.h"
+#include "ThumbTheme.h"
 
+#include <QBuffer>
 #include <QByteArray>
+#include <QColor>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
+#include <QImage>
+#include <QImageReader>
 #include <QMetaObject>
 #include <QMimeDatabase>
 #include <QMimeType>
+#include <QPainter>
+#include <QPolygon>
 #include <QProcess>
 #include <QSet>
 #include <QStandardPaths>
@@ -15,12 +28,24 @@
 #include <QUrl>
 #include <QtEndian>
 
+#ifdef SYNCHRO_HAVE_WEBP
+#include <webp/decode.h>
+#endif
+
 #include <algorithm>
 #include <cstdarg>
 #include <cstring>
+#include <dirent.h>
 #include <functional>
 #include <limits>
 #include <utility>
+
+#ifndef DT_DIR
+#define DT_UNKNOWN 0
+#define DT_DIR 4
+#define DT_REG 8
+#define DT_LNK 10
+#endif
 
 namespace {
 
@@ -106,9 +131,25 @@ QString jobKey(const QString &path, qint64 mtime, int sizePx) {
 
 bool isThumbCachePath(const QString &path) {
   const QString cache = ThumbnailService::xdgCacheHome();
+  const QString home = ThumbCache::homeDir();
   return path.startsWith(cache + QStringLiteral("/thumbnails/")) ||
-         path.startsWith(cache + QStringLiteral("/synchro/thumbs/"));
+         path.startsWith(cache + QStringLiteral("/synchro/thumbs/")) ||
+         path.startsWith(home + QLatin1Char('/'));
 }
+
+QByteArray pngBytes(const QImage &img) {
+  if (img.isNull())
+    return {};
+  QByteArray out;
+  QBuffer buf(&out);
+  if (!buf.open(QIODevice::WriteOnly))
+    return {};
+  if (!img.save(&buf, "PNG"))
+    return {};
+  return out;
+}
+
+QString cachePathFor(const QString &path);
 
 struct Thumbnailer {
   QString fileName;
@@ -182,6 +223,585 @@ QVector<Thumbnailer> loadThumbnailers(const QStringList &dirs) {
   return out;
 }
 
+bool looksLikeText(const QString &path, const QString &mimeHint) {
+  return MimeMap::isProbablyText(path, mimeHint);
+}
+
+bool looksLikeParquet(const QString &path, const QString &mimeHint) {
+  return ParquetMeta::looksLike(path, mimeHint);
+}
+
+bool looksLikeArchive(const QString &path, const QString &mimeHint) {
+  return ArchiveMeta::looksLike(path, mimeHint);
+}
+
+bool renderParquetCard(const QString &src, const QString &dest, int sizePx) {
+  const ParquetInfo info = ParquetMeta::parse(src);
+  const int px = qBound(64, sizePx, 512);
+  QImage img(px, px, QImage::Format_ARGB32_Premultiplied);
+  const ThumbTheme th = ThumbTheme::current();
+  img.fill(th.background);
+  QPainter p(&img);
+  p.setRenderHint(QPainter::TextAntialiasing);
+  p.setPen(th.border);
+  p.drawRect(0, 0, px - 1, px - 1);
+  QFont head(th.fontFamily, qMax(8, px / 14));
+  head.setBold(true);
+  p.setFont(head);
+  p.setPen(th.foreground);
+  const QRect headRect(5, 3, px - 10, qMax(16, px / 6));
+  p.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine,
+             QStringLiteral("parquet"));
+  if (px >= 72) {
+    QFont body(th.fontFamily, qMax(6, px / 22));
+    p.setFont(body);
+    p.setPen(th.muted);
+    QString text = QFileInfo(src).fileName();
+    if (info.ok) {
+      text += QLatin1Char('\n');
+      text += QString::number(info.columns.size()) + QStringLiteral(" cols");
+      text += QLatin1Char('\n');
+      text += QString::number(info.numRows) + QStringLiteral(" rows");
+      if (!info.codec.isEmpty())
+        text += QLatin1Char('\n') + info.codec;
+    }
+    p.drawText(QRect(5, headRect.bottom() + 3, px - 10,
+                     px - headRect.bottom() - 8),
+               Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, text);
+  }
+  p.end();
+  QDir().mkpath(QFileInfo(dest).absolutePath());
+  return img.save(dest, "PNG");
+}
+
+bool renderArchiveCard(const QString &src, const QString &dest, int sizePx) {
+  const ArchiveInfo info = ArchiveMeta::inspect(src, 8);
+  const int px = qBound(64, sizePx, 512);
+  QImage img(px, px, QImage::Format_ARGB32_Premultiplied);
+  const ThumbTheme th = ThumbTheme::current();
+  img.fill(th.background);
+  QPainter p(&img);
+  p.setRenderHint(QPainter::TextAntialiasing);
+  p.setPen(th.border);
+  p.drawRect(0, 0, px - 1, px - 1);
+  QFont head(th.fontFamily, qMax(8, px / 14));
+  head.setBold(true);
+  p.setFont(head);
+  p.setPen(th.foreground);
+  const QRect headRect(5, 3, px - 10, qMax(16, px / 6));
+  const QString kind = info.format.isEmpty() ? QStringLiteral("archive")
+                                             : info.format;
+  p.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine,
+             kind);
+  if (px >= 72) {
+    QFont body(th.fontFamily, qMax(6, px / 22));
+    p.setFont(body);
+    p.setPen(th.muted);
+    QString text = QFileInfo(src).fileName();
+    if (info.ok) {
+      text += QLatin1Char('\n');
+      if (info.files)
+        text += QString::number(info.files) + QStringLiteral(" files");
+      if (info.dirs)
+        text += QLatin1Char('\n') + QString::number(info.dirs) +
+                QStringLiteral(" dirs");
+      if (info.uncompressed > 0)
+        text += QLatin1Char('\n') + QString::number(info.uncompressed) +
+                QStringLiteral(" B");
+    }
+    p.drawText(QRect(5, headRect.bottom() + 3, px - 10,
+                     px - headRect.bottom() - 8),
+               Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, text);
+  }
+  p.end();
+  QDir().mkpath(QFileInfo(dest).absolutePath());
+  return img.save(dest, "PNG");
+}
+
+bool renderTextCard(const QString &src, const QString &dest, int sizePx);
+
+enum class SniffKind { None, Image, WebP, Video };
+
+SniffKind sniffKind(const QString &path) {
+  QFile f(path);
+  if (!f.open(QIODevice::ReadOnly))
+    return SniffKind::None;
+  const QByteArray h = f.read(16);
+  if (h.size() >= 3 && uchar(h.at(0)) == 0xff && uchar(h.at(1)) == 0xd8 &&
+      uchar(h.at(2)) == 0xff)
+    return SniffKind::Image;
+  static const char kTiffLe[] = {'I', 'I', '*', '\0'};
+  static const char kTiffBe[] = {'M', 'M', '\0', '*'};
+  if (h.startsWith("\x89PNG") || h.startsWith("GIF8") || h.startsWith("BM") ||
+      h.startsWith(QByteArray::fromRawData(kTiffLe, 4)) ||
+      h.startsWith(QByteArray::fromRawData(kTiffBe, 4)) ||
+      h.startsWith("qoif"))
+    return SniffKind::Image;
+  if (h.size() >= 12 && h.startsWith("RIFF") && h.mid(8, 4) == "WEBP")
+    return SniffKind::WebP;
+  if (h.size() >= 12 && h.mid(4, 4) == "ftyp") {
+    const QByteArray brand = h.mid(8, 4);
+    if (brand.startsWith("heic") || brand.startsWith("heif") ||
+        brand.startsWith("mif1") || brand.startsWith("avif") ||
+        brand.startsWith("msf1"))
+      return SniffKind::Image;
+    return SniffKind::Video;
+  }
+  return SniffKind::None;
+}
+
+bool looksLikeImage(const QString &path, const QString &mimeHint) {
+  const QString mime = mimeHint.toLower();
+  if (mime.startsWith(QLatin1String("image/")))
+    return true;
+  static const char *const kSuf[] = {
+      ".jpg", ".jpeg", ".jpe",  ".jfif", ".png",  ".gif",  ".webp",
+      ".bmp", ".tif",  ".tiff", ".svg",  ".jxl",  ".heic", ".heif",
+      ".avif", ".ico", ".qoi",  ".pbm",  ".pgm",  ".ppm",  ".pnm"};
+  for (const char *s : kSuf) {
+    if (path.endsWith(QLatin1String(s), Qt::CaseInsensitive))
+      return true;
+  }
+  const SniffKind sniff = sniffKind(path);
+  return sniff == SniffKind::Image || sniff == SniffKind::WebP;
+}
+
+bool looksLikeVideo(const QString &path, const QString &mimeHint) {
+  const QString mime = mimeHint.toLower();
+  if (mime.startsWith(QLatin1String("video/")))
+    return true;
+  static const char *const kSuf[] = {".mp4",  ".m4v", ".mkv", ".mov",
+                                     ".webm", ".avi", ".mpeg", ".mpg",
+                                     ".ogv",  ".wmv", ".3gp"};
+  for (const char *s : kSuf) {
+    if (path.endsWith(QLatin1String(s), Qt::CaseInsensitive))
+      return true;
+  }
+  return false;
+}
+
+QString cachePathFor(const QString &path) {
+  const QString theme = ThumbTheme::current().cacheId();
+  if (QFileInfo(path).isDir())
+    return path + QLatin1String("#mosaic-v5-") + theme;
+  if (looksLikeImage(path, QString()) || looksLikeVideo(path, QString()))
+    return path;
+  return path + QLatin1String("#card-v1-") + theme;
+}
+
+bool looksLikeWebP(const QString &path, const QString &mimeHint) {
+  const QString mime = mimeHint.toLower();
+  if (mime == QLatin1String("image/webp") ||
+      mime == QLatin1String("image/x-webp"))
+    return true;
+  return path.endsWith(QLatin1String(".webp"), Qt::CaseInsensitive);
+}
+
+QImage scaleToFit(const QImage &src, int maxEdge) {
+  if (src.isNull() || maxEdge <= 0)
+    return src;
+  if (src.width() <= maxEdge && src.height() <= maxEdge)
+    return src;
+  return src.scaled(maxEdge, maxEdge, Qt::KeepAspectRatio,
+                    Qt::SmoothTransformation);
+}
+
+QImage cropToSquare(const QImage &src, int edge) {
+  if (src.isNull() || edge <= 0)
+    return {};
+  QImage s = src;
+  if (s.width() != edge || s.height() != edge)
+    s = s.scaled(edge, edge, Qt::KeepAspectRatioByExpanding,
+                 Qt::SmoothTransformation);
+  if (s.width() == edge && s.height() == edge)
+    return s;
+  const int x = qMax(0, (s.width() - edge) / 2);
+  const int y = qMax(0, (s.height() - edge) / 2);
+  return s.copy(x, y, edge, edge);
+}
+
+#ifdef SYNCHRO_HAVE_WEBP
+QImage decodeWebPBytes(const QByteArray &bytes, int maxEdge) {
+  if (bytes.isEmpty())
+    return {};
+  const auto *data = reinterpret_cast<const uint8_t *>(bytes.constData());
+  WebPDecoderConfig cfg;
+  if (!WebPInitDecoderConfig(&cfg))
+    return {};
+  if (WebPGetFeatures(data, size_t(bytes.size()), &cfg.input) != VP8_STATUS_OK)
+    return {};
+  const int w = cfg.input.width;
+  const int h = cfg.input.height;
+  if (w <= 0 || h <= 0)
+    return {};
+  if (maxEdge > 0 && (w > maxEdge || h > maxEdge)) {
+    const double s = double(maxEdge) / double(qMax(w, h));
+    cfg.options.use_scaling = 1;
+    cfg.options.scaled_width = qMax(1, int(w * s));
+    cfg.options.scaled_height = qMax(1, int(h * s));
+  }
+  cfg.output.colorspace = MODE_RGBA;
+  if (WebPDecode(data, size_t(bytes.size()), &cfg) != VP8_STATUS_OK)
+    return {};
+  QImage img(cfg.output.u.RGBA.rgba, cfg.output.width, cfg.output.height,
+             cfg.output.u.RGBA.stride, QImage::Format_RGBA8888);
+  const QImage copy = img.copy();
+  WebPFreeDecBuffer(&cfg.output);
+  return copy;
+}
+#endif
+
+QImage decodeViaFfmpeg(const QString &path, int maxEdge) {
+  const QString ffmpeg = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+  if (ffmpeg.isEmpty())
+    return {};
+  QDir().mkpath(ThumbnailService::synchroThumbsDir());
+  const QString tmp =
+      ThumbnailService::synchroThumbsDir() + QLatin1Char('/') +
+      QStringLiteral("ff-") +
+      QString::number(qHash(path), 16) + QStringLiteral(".png");
+  QFile::remove(tmp);
+  QProcess proc;
+  proc.setProcessChannelMode(QProcess::SeparateChannels);
+  proc.setStandardOutputFile(QProcess::nullDevice());
+  proc.setStandardErrorFile(QProcess::nullDevice());
+  proc.start(ffmpeg, {QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"),
+                      QStringLiteral("error"), QStringLiteral("-y"),
+                      QStringLiteral("-i"), path, QStringLiteral("-frames:v"),
+                      QStringLiteral("1"), tmp});
+  if (!proc.waitForFinished(kTimeoutMs) ||
+      proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
+    if (proc.state() != QProcess::NotRunning)
+      proc.kill();
+    QFile::remove(tmp);
+    return {};
+  }
+  const QImage img(tmp);
+  QFile::remove(tmp);
+  return scaleToFit(img, maxEdge);
+}
+
+QImage decodeChildCached(const QString &path, qint64 mtimeMs, int tilePx) {
+  QImage packed = ThumbCache::instance().getImage(path, mtimeMs, tilePx);
+  if (!packed.isNull())
+    return packed;
+  const QString uri = ThumbnailService::canonicalFileUri(path);
+  const qint64 mtimeSec = mtimeMs / 1000;
+  const int sizes[] = {tilePx, 128, 256, 512};
+  for (int px : sizes) {
+    const QString xdg = ThumbnailService::xdgThumbPath(path, px);
+    if (ThumbnailService::isValidXdgThumbnail(xdg, uri, mtimeSec)) {
+      QImage img(xdg);
+      if (!img.isNull()) {
+        ThumbCache::instance().ingestFile(path, mtimeMs, tilePx, xdg);
+        return img;
+      }
+    }
+  }
+  const QString syn =
+      ThumbnailService::synchroThumbPath(path, mtimeMs, tilePx);
+  if (QFileInfo::exists(syn)) {
+    QImage img(syn);
+    if (!img.isNull()) {
+      ThumbCache::instance().ingestFile(path, mtimeMs, tilePx, syn);
+      return img;
+    }
+  }
+  return {};
+}
+
+QImage decodeVideoFrame(const QString &path, int tilePx, const QString &scratch) {
+  const QString bin =
+      QStandardPaths::findExecutable(QStringLiteral("ffmpegthumbnailer"));
+  if (bin.isEmpty())
+    return decodeViaFfmpeg(path, tilePx);
+  QFile::remove(scratch);
+  QProcess proc;
+  proc.setProcessChannelMode(QProcess::SeparateChannels);
+  proc.setStandardOutputFile(QProcess::nullDevice());
+  proc.setStandardErrorFile(QProcess::nullDevice());
+  proc.start(bin, {QStringLiteral("-i"), path, QStringLiteral("-o"), scratch,
+                   QStringLiteral("-s"), QString::number(qMax(64, tilePx)),
+                   QStringLiteral("-f")});
+  if (!proc.waitForFinished(kTimeoutMs) ||
+      proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0 ||
+      !QFileInfo::exists(scratch)) {
+    if (proc.state() != QProcess::NotRunning)
+      proc.kill();
+    QFile::remove(scratch);
+    return decodeViaFfmpeg(path, tilePx);
+  }
+  const QImage img(scratch);
+  QFile::remove(scratch);
+  return img;
+}
+
+struct MosaicPick {
+  QString path;
+  QString name;
+  QString mime;
+  bool isDir = false;
+};
+
+bool mosaicFileOk(const QString &path, const QString &mime) {
+  if (looksLikeImage(path, mime))
+    return QFileInfo(path).size() <= 16ll * 1024 * 1024;
+  return looksLikeVideo(path, mime) || looksLikeText(path, mime) ||
+         looksLikeParquet(path, mime) || looksLikeArchive(path, mime);
+}
+
+void sortMosaicPicks(QVector<MosaicPick> &picks) {
+  std::sort(picks.begin(), picks.end(),
+            [](const MosaicPick &a, const MosaicPick &b) {
+              return QString::localeAwareCompare(a.name.toLower(),
+                                                 b.name.toLower()) < 0;
+            });
+}
+
+QVector<MosaicPick> scanMosaicEntries(const QString &dirPath, int cap,
+                                      bool includeDirs) {
+  QVector<MosaicPick> picks;
+  QMimeDatabase db;
+  DIR *d = opendir(QFile::encodeName(dirPath).constData());
+  if (!d)
+    return {};
+  int scanned = 0;
+  while (scanned < cap) {
+    const struct dirent *ent = readdir(d);
+    if (!ent)
+      break;
+    if (ent->d_name[0] == '.')
+      continue;
+    const QString name = QFile::decodeName(ent->d_name);
+    const QString path = QDir(dirPath).filePath(name);
+    const QFileInfo fi(path);
+    const bool listedDir = ent->d_type == DT_DIR;
+    const bool maybeLink =
+        ent->d_type == DT_LNK || ent->d_type == DT_UNKNOWN || fi.isSymLink();
+    if (listedDir || (maybeLink && fi.isDir())) {
+      if (!includeDirs || !fi.isDir() || !fi.isReadable())
+        continue;
+      ++scanned;
+      MosaicPick pick;
+      pick.path = path;
+      pick.name = name;
+      pick.mime = QStringLiteral("inode/directory");
+      pick.isDir = true;
+      picks.append(pick);
+      continue;
+    }
+    QString resolved = path;
+    if (maybeLink) {
+      const QString canon = fi.canonicalFilePath();
+      const QFileInfo tgt(canon);
+      if (canon.isEmpty() || !tgt.isFile() || !tgt.isReadable() || tgt.isDir())
+        continue;
+      resolved = tgt.absoluteFilePath();
+    } else if (ent->d_type == DT_UNKNOWN || ent->d_type == DT_REG) {
+      if (!fi.isFile() || !fi.isReadable())
+        continue;
+    } else if (ent->d_type != DT_REG) {
+      continue;
+    }
+    ++scanned;
+    const QString mime =
+        db.mimeTypeForFile(resolved, QMimeDatabase::MatchExtension).name();
+    if (!mosaicFileOk(resolved, mime))
+      continue;
+    MosaicPick pick;
+    pick.path = resolved;
+    pick.mime = mime;
+    pick.name = name;
+    picks.append(pick);
+  }
+  closedir(d);
+  return picks;
+}
+
+QVector<MosaicPick> pickMosaicChildren(const QString &dirPath) {
+  QVector<MosaicPick> picks = scanMosaicEntries(dirPath, 512, true);
+  sortMosaicPicks(picks);
+  if (picks.size() > 4)
+    picks.resize(4);
+  return picks;
+}
+
+MosaicPick firstVisualInDir(const QString &dirPath) {
+  QVector<MosaicPick> files = scanMosaicEntries(dirPath, 96, false);
+  sortMosaicPicks(files);
+  MosaicPick best;
+  for (const MosaicPick &p : files) {
+    if (looksLikeImage(p.path, p.mime))
+      return p;
+    if (best.path.isEmpty())
+      best = p;
+  }
+  return best;
+}
+
+QImage renderFolderCard(const QString &name, const QImage &face, int px) {
+  const ThumbTheme th = ThumbTheme::current();
+  QImage img(px, px, QImage::Format_ARGB32_Premultiplied);
+  img.fill(Qt::transparent);
+  QPainter p(&img);
+  p.setRenderHint(QPainter::Antialiasing, false);
+  p.setRenderHint(QPainter::TextAntialiasing);
+  p.setRenderHint(QPainter::SmoothPixmapTransform);
+  const int tabH = qMax(3, px / 8);
+  const int tabW = qBound(8, px / 2, px - 2);
+  if (!face.isNull()) {
+    p.drawImage(QRect(0, 0, px, px), cropToSquare(face, px));
+    p.fillRect(0, 0, tabW, tabH, th.accent);
+    const int barH = qMax(12, px / 3);
+    QColor bar = th.background;
+    bar.setAlpha(200);
+    p.fillRect(0, px - barH, px, barH, bar);
+    QFont f(th.fontFamily, qMax(6, px / 9));
+    p.setFont(f);
+    p.setPen(th.foreground);
+    p.drawText(QRect(3, px - barH, px - 6, barH),
+               Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, name);
+  } else {
+    p.fillRect(1, tabH, px - 2, px - tabH - 1, th.background);
+    p.fillRect(1, 1, tabW, tabH + 1, th.accent);
+    p.setPen(th.border);
+    p.drawRect(0, tabH, px - 1, px - tabH - 1);
+    QFont f(th.fontFamily, qMax(6, px / 8));
+    f.setBold(true);
+    p.setFont(f);
+    p.setPen(th.foreground);
+    p.drawText(QRect(3, tabH + px / 3, px - 6, px - tabH - px / 3 - 3),
+               Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap, name);
+  }
+  p.end();
+  return img;
+}
+
+QImage renderUnknownFileImage(const QString &path, int px) {
+  const ThumbTheme th = ThumbTheme::current();
+  QImage img(px, px, QImage::Format_ARGB32_Premultiplied);
+  img.fill(Qt::transparent);
+  QPainter p(&img);
+  p.setRenderHint(QPainter::Antialiasing, false);
+  p.setRenderHint(QPainter::TextAntialiasing);
+  const int m = qMax(2, px / 14);
+  const int fold = qBound(6, px / 5, px / 3);
+  const QRect page(m, m, px - 2 * m, px - 2 * m);
+  QPolygon body;
+  body << QPoint(page.left(), page.top())
+       << QPoint(page.right() - fold, page.top())
+       << QPoint(page.right(), page.top() + fold)
+       << QPoint(page.right(), page.bottom())
+       << QPoint(page.left(), page.bottom());
+  p.setPen(th.border);
+  p.setBrush(th.background);
+  p.drawPolygon(body);
+  QPolygon ear;
+  ear << QPoint(page.right() - fold, page.top())
+      << QPoint(page.right(), page.top() + fold)
+      << QPoint(page.right() - fold, page.top() + fold);
+  QColor earFill = th.muted;
+  earFill.setAlpha(80);
+  p.setBrush(earFill);
+  p.drawPolygon(ear);
+  QString ext = QFileInfo(path).suffix().toUpper();
+  if (ext.size() > 4)
+    ext = ext.left(4);
+  if (!ext.isEmpty() && px >= 28) {
+    QFont f(th.fontFamily, qMax(6, px / 6));
+    f.setBold(true);
+    p.setFont(f);
+    p.setPen(th.muted);
+    p.drawText(page.adjusted(2, fold, -2, -2),
+               Qt::AlignCenter | Qt::TextSingleLine, ext);
+  }
+  p.end();
+  return img;
+}
+
+bool renderUnknownCard(const QString &src, const QString &dest, int sizePx) {
+  const int px = qBound(64, sizePx, 512);
+  const QImage img = renderUnknownFileImage(src, px);
+  if (img.isNull())
+    return false;
+  QDir().mkpath(QFileInfo(dest).absolutePath());
+  return img.save(dest, "PNG");
+}
+
+QImage fileTileImage(const MosaicPick &pick, int tilePx,
+                     const QString &scratch) {
+  const QFileInfo fi(pick.path);
+  const qint64 mtime = fi.lastModified().toMSecsSinceEpoch();
+  QImage img = decodeChildCached(pick.path, mtime, tilePx);
+  if (img.isNull())
+    img = ThumbnailService::decodeRaster(pick.path, tilePx * 2);
+  if (img.isNull() && looksLikeVideo(pick.path, pick.mime))
+    img = decodeVideoFrame(pick.path, tilePx, scratch);
+  if (img.isNull() && looksLikeText(pick.path, pick.mime) &&
+      renderTextCard(pick.path, scratch, tilePx)) {
+    img = QImage(scratch);
+    QFile::remove(scratch);
+  }
+  if (img.isNull() && looksLikeArchive(pick.path, pick.mime) &&
+      renderArchiveCard(pick.path, scratch, tilePx)) {
+    img = QImage(scratch);
+    QFile::remove(scratch);
+  }
+  if (img.isNull() && renderUnknownCard(pick.path, scratch, tilePx)) {
+    img = QImage(scratch);
+    QFile::remove(scratch);
+  }
+  return img;
+}
+
+QImage tileForChild(const MosaicPick &pick, int tilePx, const QString &scratch) {
+  if (pick.isDir) {
+    QImage face;
+    const MosaicPick nested = firstVisualInDir(pick.path);
+    if (!nested.path.isEmpty())
+      face = fileTileImage(nested, tilePx, scratch);
+    return renderFolderCard(pick.name, face, tilePx);
+  }
+  return cropToSquare(fileTileImage(pick, tilePx, scratch), tilePx);
+}
+
+bool renderTextCard(const QString &src, const QString &dest, int sizePx) {
+  QFile f(src);
+  if (!f.open(QIODevice::ReadOnly))
+    return false;
+  QByteArray raw = f.read(1200);
+  if (raw.left(qMin(raw.size(), 256)).contains('\0'))
+    return false;
+  const QString text = QString::fromUtf8(raw);
+  const int px = qBound(64, sizePx, 512);
+  const ThumbTheme th = ThumbTheme::current();
+  QImage img(px, px, QImage::Format_ARGB32_Premultiplied);
+  img.fill(th.background);
+  QPainter p(&img);
+  p.setRenderHint(QPainter::TextAntialiasing);
+  p.setPen(th.border);
+  p.drawRect(0, 0, px - 1, px - 1);
+  const QFileInfo fi(src);
+  QFont head(th.fontFamily, qMax(8, px / 14));
+  head.setBold(true);
+  p.setFont(head);
+  p.setPen(th.foreground);
+  const QRect headRect(5, 3, px - 10, qMax(16, px / 6));
+  p.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine,
+             fi.fileName());
+  if (px >= 72) {
+    QFont body(th.fontFamily, qMax(6, px / 22));
+    p.setFont(body);
+    p.setPen(th.muted);
+    p.drawText(QRect(5, headRect.bottom() + 3, px - 10,
+                     px - headRect.bottom() - 8),
+               Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, text);
+  }
+  p.end();
+  QDir().mkpath(QFileInfo(dest).absolutePath());
+  return img.save(dest, "PNG");
+}
+
 const Thumbnailer *matchThumbnailer(const QVector<Thumbnailer> &list,
                                     const QString &path,
                                     const QString &mimeHint,
@@ -189,6 +809,9 @@ const Thumbnailer *matchThumbnailer(const QVector<Thumbnailer> &list,
   QStringList candidates;
   if (!mimeHint.isEmpty())
     candidates.append(mimeHint);
+  if (mimeHint == QLatin1String("image/heic") ||
+      path.endsWith(QLatin1String(".heic"), Qt::CaseInsensitive))
+    candidates.append(QStringLiteral("image/heif"));
   const QMimeType mt = db.mimeTypeForFile(path);
   if (!mt.isDefault() && !candidates.contains(mt.name()))
     candidates.append(mt.name());
@@ -219,6 +842,12 @@ public:
     m_thumbnailerDirs = dirs;
     m_thumbnailers.clear();
     m_loaded = false;
+  }
+
+  void setHandlerThumbnailers(const QVector<ExecThumbnailer> &list) {
+    m_handlerSpecs = list;
+    m_handlers.clear();
+    m_handlersLoaded = false;
   }
 
   void cancelAll() {
@@ -303,6 +932,8 @@ private:
     QString path;
     QString dest;
     QString temp;
+    qint64 mtime = 0;
+    int sizePx = 128;
     QProcess *proc = nullptr;
   };
 
@@ -314,7 +945,27 @@ private:
     return false;
   }
 
+  QString cachePath(const Job &job) const { return cachePathFor(job.path); }
+
+  QString packedUrl(const Job &job) const {
+    return ThumbCache::imageUrl(cachePath(job), job.mtime, job.sizePx);
+  }
+
+  bool storePacked(const Job &job, const QByteArray &png) {
+    if (png.isEmpty())
+      return false;
+    ThumbCache::instance().putPng(cachePath(job), job.mtime, job.sizePx, png);
+    return true;
+  }
+
+  bool storePackedImage(const Job &job, const QImage &img) {
+    return storePacked(job, pngBytes(img));
+  }
+
   QString lookupCache(const Job &job) const {
+    const QString packed = cachePath(job);
+    if (ThumbCache::instance().contains(packed, job.mtime, job.sizePx))
+      return ThumbCache::imageUrl(packed, job.mtime, job.sizePx);
     const QString uri = ThumbnailService::canonicalFileUri(job.path);
     const qint64 mtimeSec = job.mtime / 1000;
     const QString preferred = ThumbnailService::xdgSizeDir(job.sizePx);
@@ -331,21 +982,50 @@ private:
     for (const QString &dir : dirs) {
       const QString png =
           root + dir + QLatin1Char('/') + hash + QStringLiteral(".png");
-      if (ThumbnailService::isValidXdgThumbnail(png, uri, mtimeSec))
-        return ThumbnailService::fileUrl(png);
+      if (ThumbnailService::isValidXdgThumbnail(png, uri, mtimeSec)) {
+        ThumbCache::instance().ingestFile(packed, job.mtime, job.sizePx, png);
+        return ThumbCache::imageUrl(packed, job.mtime, job.sizePx);
+      }
     }
-    const QString syn =
-        ThumbnailService::synchroThumbPath(job.path, job.mtime, job.sizePx);
-    if (QFileInfo::exists(syn))
-      return ThumbnailService::fileUrl(syn);
+    const QString syn = destFor(job);
+    if (QFileInfo::exists(syn)) {
+      ThumbCache::instance().ingestFile(packed, job.mtime, job.sizePx, syn);
+      return ThumbCache::imageUrl(packed, job.mtime, job.sizePx);
+    }
     return {};
   }
 
+  QString destFor(const Job &job) const {
+    return ThumbnailService::synchroThumbPath(cachePath(job), job.mtime,
+                                              job.sizePx);
+  }
+
+  QString scratchPath(const Job &job) const {
+    const QString dir = ThumbCache::homeDir() + QStringLiteral("/tmp");
+    QDir().mkpath(dir);
+    return dir + QLatin1Char('/') +
+           ThumbCache::makeKey(cachePath(job), job.mtime, job.sizePx) +
+           QStringLiteral(".png");
+  }
+
   void ensureThumbnailers() {
-    if (m_loaded)
-      return;
-    m_thumbnailers = loadThumbnailers(m_thumbnailerDirs);
-    m_loaded = true;
+    if (!m_loaded) {
+      m_thumbnailers = loadThumbnailers(m_thumbnailerDirs);
+      m_loaded = true;
+    }
+    if (!m_handlersLoaded) {
+      m_handlers.clear();
+      for (const ExecThumbnailer &spec : m_handlerSpecs) {
+        if (spec.exec.isEmpty() || !tryExecOk(spec.tryExec))
+          continue;
+        Thumbnailer t;
+        t.exec = spec.exec;
+        t.tryExec = spec.tryExec;
+        t.mimes = spec.mimes;
+        m_handlers.append(t);
+      }
+      m_handlersLoaded = true;
+    }
   }
 
   void kick() {
@@ -377,28 +1057,124 @@ private:
     }
 
     const QFileInfo fi(job.path);
-    if (!fi.exists() || !fi.isReadable() || fi.isDir()) {
+    if (!fi.exists()) {
       fail(job.key, job.path);
       kick();
       return;
+    }
+
+    if (fi.isDir()) {
+      const QImage mosaic =
+          ThumbnailService::renderFolderMosaicImage(job.path, job.sizePx);
+      if (!mosaic.isNull() && storePackedImage(job, mosaic)) {
+        const QString url = packedUrl(job);
+        m_ready.insert(job.key, url);
+        if (notify)
+          notify(job.path, url);
+      } else {
+        fail(job.key, job.path);
+      }
+      kick();
+      return;
+    }
+
+    if (!fi.isReadable()) {
+      fail(job.key, job.path);
+      kick();
+      return;
+    }
+
+    if (looksLikeImage(job.path, job.mime)) {
+      QImage direct = ThumbnailService::decodeRaster(job.path, job.sizePx);
+      if (!direct.isNull()) {
+        direct = scaleToFit(direct, job.sizePx);
+        if (storePackedImage(job, direct)) {
+          const QString url = packedUrl(job);
+          m_ready.insert(job.key, url);
+          if (notify)
+            notify(job.path, url);
+          kick();
+          return;
+        }
+      }
     }
 
     ensureThumbnailers();
     const Thumbnailer *thumb =
-        matchThumbnailer(m_thumbnailers, job.path, job.mime, m_mime);
+        matchThumbnailer(m_handlers, job.path, job.mime, m_mime);
+    if (!thumb)
+      thumb = matchThumbnailer(m_thumbnailers, job.path, job.mime, m_mime);
     if (!thumb) {
+      const QString scratch = scratchPath(job);
+      if (looksLikeArchive(job.path, job.mime) &&
+          renderArchiveCard(job.path, scratch, job.sizePx)) {
+        QFile f(scratch);
+        QByteArray png;
+        if (f.open(QIODevice::ReadOnly))
+          png = f.readAll();
+        f.remove();
+        if (storePacked(job, png)) {
+          const QString url = packedUrl(job);
+          m_ready.insert(job.key, url);
+          if (notify)
+            notify(job.path, url);
+          kick();
+          return;
+        }
+      }
+      if (looksLikeParquet(job.path, job.mime) &&
+          renderParquetCard(job.path, scratch, job.sizePx)) {
+        QFile f(scratch);
+        QByteArray png;
+        if (f.open(QIODevice::ReadOnly))
+          png = f.readAll();
+        f.remove();
+        if (storePacked(job, png)) {
+          const QString url = packedUrl(job);
+          m_ready.insert(job.key, url);
+          if (notify)
+            notify(job.path, url);
+          kick();
+          return;
+        }
+      }
+      if (looksLikeText(job.path, job.mime) &&
+          renderTextCard(job.path, scratch, job.sizePx)) {
+        QFile f(scratch);
+        QByteArray png;
+        if (f.open(QIODevice::ReadOnly))
+          png = f.readAll();
+        f.remove();
+        if (storePacked(job, png)) {
+          const QString url = packedUrl(job);
+          m_ready.insert(job.key, url);
+          if (notify)
+            notify(job.path, url);
+          kick();
+          return;
+        }
+      }
+      if (renderUnknownCard(job.path, scratch, job.sizePx)) {
+        QFile f(scratch);
+        QByteArray png;
+        if (f.open(QIODevice::ReadOnly))
+          png = f.readAll();
+        f.remove();
+        if (storePacked(job, png)) {
+          const QString url = packedUrl(job);
+          m_ready.insert(job.key, url);
+          if (notify)
+            notify(job.path, url);
+          kick();
+          return;
+        }
+      }
       fail(job.key, job.path);
       kick();
       return;
     }
 
-    const QString dest =
-        ThumbnailService::synchroThumbPath(job.path, job.mtime, job.sizePx);
-    QDir().mkpath(ThumbnailService::synchroThumbsDir());
-    const QFile::Permissions ownerOnly =
-        QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner;
-    QFile::setPermissions(ThumbnailService::synchroThumbsDir(), ownerOnly);
-
+    const QString dest = scratchPath(job);
     const QString temp = dest +
                          QStringLiteral(".tmp.%1").arg(QString::number(
                              reinterpret_cast<quintptr>(this), 16)) +
@@ -432,6 +1208,8 @@ private:
     a.path = job.path;
     a.dest = dest;
     a.temp = temp;
+    a.mtime = job.mtime;
+    a.sizePx = job.sizePx;
     a.proc = proc;
     m_active.append(a);
 
@@ -471,20 +1249,48 @@ private:
                     a.proc->exitCode() == 0 && QFileInfo::exists(a.temp) &&
                     QFileInfo(a.temp).size() > 0;
     if (ok) {
+      QFile f(a.temp);
+      QByteArray png;
+      if (f.open(QIODevice::ReadOnly))
+        png = f.readAll();
+      f.remove();
       QFile::remove(a.dest);
-      if (QFile::rename(a.temp, a.dest)) {
-        QFile::setPermissions(a.dest, QFile::ReadOwner | QFile::WriteOwner);
-        const QString url = ThumbnailService::fileUrl(a.dest);
+      if (!png.isEmpty() && a.sizePx > 0 && a.mtime > 0) {
+        ThumbCache::instance().putPng(cachePathFor(a.path), a.mtime, a.sizePx,
+                                      png);
+        const QString url =
+            ThumbCache::imageUrl(cachePathFor(a.path), a.mtime, a.sizePx);
         m_ready.insert(a.key, url);
         if (notify)
           notify(a.path, url);
       } else {
-        QFile::remove(a.temp);
         fail(a.key, a.path);
       }
     } else {
       QFile::remove(a.temp);
-      fail(a.key, a.path);
+      Job fb;
+      fb.key = a.key;
+      fb.path = a.path;
+      fb.mtime = a.mtime;
+      fb.sizePx = a.sizePx;
+      const QString scratch = scratchPath(fb);
+      bool saved = false;
+      if (renderUnknownCard(fb.path, scratch, fb.sizePx)) {
+        QFile f(scratch);
+        QByteArray png;
+        if (f.open(QIODevice::ReadOnly))
+          png = f.readAll();
+        f.remove();
+        saved = storePacked(fb, png);
+      }
+      if (saved) {
+        const QString url = packedUrl(fb);
+        m_ready.insert(a.key, url);
+        if (notify)
+          notify(a.path, url);
+      } else {
+        fail(a.key, a.path);
+      }
     }
     a.proc->deleteLater();
     kick();
@@ -515,7 +1321,10 @@ private:
 
   QStringList m_thumbnailerDirs;
   QVector<Thumbnailer> m_thumbnailers;
+  QVector<ExecThumbnailer> m_handlerSpecs;
+  QVector<Thumbnailer> m_handlers;
   bool m_loaded = false;
+  bool m_handlersLoaded = false;
   QHash<QString, Job> m_pending;
   QHash<QString, QString> m_ready;
   QSet<QString> m_failed;
@@ -746,9 +1555,143 @@ QString ThumbnailService::fileUrl(const QString &path) {
   return QString::fromUtf8(QUrl::fromLocalFile(path).toEncoded());
 }
 
+QImage readWithQt(const QString &path, int maxEdge, bool scaleHint,
+                  bool autoXform) {
+  QImageReader reader(path);
+  reader.setAutoTransform(autoXform);
+  if (!reader.canRead())
+    return {};
+  const QSize sz = reader.size();
+  if (scaleHint && maxEdge > 0 && sz.isValid() &&
+      (sz.width() > maxEdge || sz.height() > maxEdge)) {
+    reader.setScaledSize(sz.scaled(maxEdge, maxEdge, Qt::KeepAspectRatio));
+  } else if (!scaleHint && sz.isValid()) {
+    const qint64 px = qint64(sz.width()) * qint64(sz.height());
+    if (sz.width() > 4096 || sz.height() > 4096 || px > 8ll * 1000 * 1000)
+      return {};
+  }
+  return reader.read();
+}
+
+QImage ThumbnailService::decodeRaster(const QString &path, int maxEdge) {
+  QImage img = readWithQt(path, maxEdge, true, true);
+  if (img.isNull())
+    img = readWithQt(path, maxEdge, false, true);
+  if (img.isNull())
+    img = readWithQt(path, maxEdge, true, false);
+  if (!img.isNull())
+    return scaleToFit(img, maxEdge);
+
+#ifdef SYNCHRO_HAVE_WEBP
+  if (looksLikeWebP(path, QString()) || sniffKind(path) == SniffKind::WebP) {
+    QFile f(path);
+    if (f.open(QIODevice::ReadOnly) && f.size() > 0 &&
+        f.size() <= 80ll * 1024 * 1024) {
+      const QImage webp = decodeWebPBytes(f.readAll(), maxEdge);
+      if (!webp.isNull())
+        return webp;
+    }
+  }
+#endif
+
+  if (looksLikeImage(path, QString()) || looksLikeWebP(path, QString()) ||
+      looksLikeVideo(path, QString()))
+    return scaleToFit(decodeViaFfmpeg(path, maxEdge), maxEdge);
+  return {};
+}
+
+QString ThumbnailService::ensureRasterPng(const QString &path, qint64 mtime,
+                                          int maxEdge) {
+  if (path.isEmpty())
+    return {};
+  if (mtime <= 0)
+    mtime = QFileInfo(path).lastModified().toMSecsSinceEpoch();
+  if (maxEdge <= 0)
+    maxEdge = 4096;
+  const QString dest = synchroThumbPath(path, mtime, maxEdge);
+  if (QFileInfo::exists(dest) && QFileInfo(dest).size() > 0)
+    return dest;
+  const QImage img = decodeRaster(path, maxEdge);
+  if (img.isNull())
+    return {};
+  QDir().mkpath(synchroThumbsDir());
+  const QFile::Permissions ownerOnly =
+      QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner;
+  QFile::setPermissions(synchroThumbsDir(), ownerOnly);
+  if (!img.save(dest, "PNG"))
+    return {};
+  QFile::setPermissions(dest, QFile::ReadOwner | QFile::WriteOwner);
+  return dest;
+}
+
+QImage ThumbnailService::renderFolderMosaicImage(const QString &dirPath,
+                                                 int sizePx) {
+  if (dirPath.isEmpty())
+    return {};
+  const QFileInfo dirInfo(dirPath);
+  if (!dirInfo.exists() || !dirInfo.isDir() || !dirInfo.isReadable())
+    return {};
+  const int px = qBound(64, sizePx, 512);
+  const QVector<MosaicPick> kids = pickMosaicChildren(dirPath);
+  if (kids.isEmpty())
+    return renderFolderCard(dirInfo.fileName(), QImage(), px);
+
+  const int gap = qMax(1, px / 32);
+  const int cell = (px - gap * 3) / 2;
+  if (cell < 8)
+    return {};
+
+  QImage canvas(px, px, QImage::Format_ARGB32_Premultiplied);
+  canvas.fill(Qt::transparent);
+  QPainter p(&canvas);
+  p.setRenderHint(QPainter::SmoothPixmapTransform);
+
+  const QString scratchDir = ThumbCache::homeDir() + QStringLiteral("/tmp");
+  QDir().mkpath(scratchDir);
+  const QString scratchBase =
+      scratchDir + QLatin1Char('/') +
+      ThumbCache::makeKey(dirPath, 0, sizePx) + QStringLiteral(".tile");
+  int painted = 0;
+  for (int i = 0; i < kids.size() && painted < 4; ++i) {
+    const QString scratch =
+        scratchBase + QLatin1Char('.') + QString::number(i) +
+        QStringLiteral(".png");
+    const QImage tile = tileForChild(kids.at(i), cell, scratch);
+    QFile::remove(scratch);
+    if (tile.isNull())
+      continue;
+    const int col = painted % 2;
+    const int row = painted / 2;
+    const QRect r(gap + col * (cell + gap), gap + row * (cell + gap), cell,
+                  cell);
+    p.drawImage(r, tile);
+    ++painted;
+  }
+  p.end();
+  if (painted == 0)
+    return renderFolderCard(dirInfo.fileName(), QImage(), px);
+  return canvas;
+}
+
+bool ThumbnailService::renderFolderMosaic(const QString &dirPath,
+                                          const QString &dest, int sizePx) {
+  if (dest.isEmpty())
+    return false;
+  const QImage canvas = renderFolderMosaicImage(dirPath, sizePx);
+  if (canvas.isNull())
+    return false;
+  QDir().mkpath(QFileInfo(dest).absolutePath());
+  if (!canvas.save(dest, "PNG"))
+    return false;
+  QFile::setPermissions(dest, QFile::ReadOwner | QFile::WriteOwner);
+  return true;
+}
+
 ThumbnailService::ThumbnailService(QObject *parent) : QObject(parent) {
   qRegisterMetaType<ThumbnailJob>();
   qRegisterMetaType<QVector<ThumbnailJob>>();
+  qRegisterMetaType<ExecThumbnailer>();
+  qRegisterMetaType<QVector<ExecThumbnailer>>();
 
   m_engine = new ThumbnailEngine;
   m_engine->notify = [this](const QString &path, const QString &url) {
@@ -772,6 +1715,12 @@ ThumbnailService::ThumbnailService(QObject *parent) : QObject(parent) {
         eng->setThumbnailerDirectories(dirs);
       },
       Qt::QueuedConnection);
+  connect(
+      this, &ThumbnailService::handlerThumbnailersChanged, m_engine,
+      [eng = m_engine](const QVector<ExecThumbnailer> &list) {
+        eng->setHandlerThumbnailers(list);
+      },
+      Qt::QueuedConnection);
   m_thread.start();
 }
 
@@ -787,20 +1736,68 @@ ThumbnailService::~ThumbnailService() {
   m_engine = nullptr;
 }
 
+QString ThumbnailService::packedUrl(const QString &path, qint64 mtime,
+                                    int sizePx) {
+  return ThumbCache::imageUrl(cachePathFor(path), mtime, sizePx);
+}
+
+bool hydratePacked(const ThumbnailJob &job, QString *url) {
+  const QString packed = cachePathFor(job.path);
+  auto *cache = &ThumbCache::instance();
+  if (!cache->contains(packed, job.mtime, job.sizePx)) {
+    const QString uri = ThumbnailService::canonicalFileUri(job.path);
+    const qint64 mtimeSec = job.mtime / 1000;
+    const QString xdg =
+        ThumbnailService::xdgThumbPath(job.path, job.sizePx);
+    if (ThumbnailService::isValidXdgThumbnail(xdg, uri, mtimeSec))
+      cache->ingestFile(packed, job.mtime, job.sizePx, xdg);
+    else {
+      const QString syn = ThumbnailService::synchroThumbPath(
+          packed, job.mtime, job.sizePx);
+      if (QFileInfo::exists(syn))
+        cache->ingestFile(packed, job.mtime, job.sizePx, syn);
+    }
+  }
+  if (!cache->contains(packed, job.mtime, job.sizePx))
+    return false;
+  if (url)
+    *url = ThumbCache::imageUrl(packed, job.mtime, job.sizePx);
+  return true;
+}
+
 void ThumbnailService::request(const QString &path, qint64 mtime, int sizePx) {
-  QVector<ThumbnailJob> jobs(1);
-  jobs[0].path = path;
-  jobs[0].mtime = mtime;
-  jobs[0].sizePx = sizePx;
-  emit submitted(jobs, false);
+  ThumbnailJob job;
+  job.path = path;
+  job.mtime = mtime;
+  job.sizePx = sizePx;
+  QString url;
+  if (hydratePacked(job, &url)) {
+    emit thumbnailReady(path, url);
+    return;
+  }
+  emit submitted({job}, false);
 }
 
 void ThumbnailService::requestVisible(const QVector<ThumbnailJob> &jobs) {
-  emit submitted(jobs, true);
+  QVector<ThumbnailJob> miss;
+  miss.reserve(jobs.size());
+  for (const ThumbnailJob &job : jobs) {
+    QString url;
+    if (hydratePacked(job, &url))
+      emit thumbnailReady(job.path, url);
+    else
+      miss.append(job);
+  }
+  emit submitted(miss, true);
 }
 
 void ThumbnailService::cancelAll() { emit cancelRequested(); }
 
 void ThumbnailService::setThumbnailerDirectories(const QStringList &dirs) {
   emit thumbnailerDirectoriesChanged(dirs);
+}
+
+void ThumbnailService::setHandlerThumbnailers(
+    const QVector<ExecThumbnailer> &list) {
+  emit handlerThumbnailersChanged(list);
 }

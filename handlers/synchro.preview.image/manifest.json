@@ -19,6 +19,9 @@
       "image/tiff",
       "image/svg+xml"
     ],
+    "suffix": [
+      ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".svg"
+    ],
     "minItems": 1,
     "maxItems": 1,
     "host": "posix-local"

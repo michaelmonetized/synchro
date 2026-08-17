@@ -34,6 +34,8 @@ public:
   QVector<HandlerRegistry::Match>
   openMatches(const QVector<Manifest::Item> &items) const;
   QVariantList openCandidates(const QVector<Manifest::Item> &items) const;
+  QVector<HandlerRegistry::Match>
+  actionMatches(const QVector<Manifest::Item> &items) const;
 
   QString lastError() const { return m_error; }
   HandlerExec *exec() const { return m_exec; }

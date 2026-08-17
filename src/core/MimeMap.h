@@ -12,6 +12,9 @@ public:
   QString iconNameForMime(const QString &mimeName) const;
   // GUI-thread themed resolve: preferred → theme → application-x-executable.
   QString resolveIcon(const QString &iconName) const;
+  // Suffix, well-known basename (Dockerfile, Makefile, …), or a UTF-8 sniff.
+  static bool isProbablyText(const QString &path,
+                             const QString &mimeHint = QString());
 
 private:
   QMimeDatabase m_db;

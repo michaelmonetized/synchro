@@ -18,6 +18,7 @@ class Config : public QObject {
                  sortChanged)
   Q_PROPERTY(QStringList locationChips READ locationChips WRITE setLocationChips
                  NOTIFY locationChipsChanged)
+  Q_PROPERTY(QStringList pins READ pins WRITE setPins NOTIFY pinsChanged)
   Q_PROPERTY(QString lastPath READ lastPath WRITE setLastPath NOTIFY
                  lastPathChanged)
 
@@ -37,6 +38,7 @@ public:
   QString sortRole() const { return m_sortRole; }
   QString sortOrder() const { return m_sortOrder; }
   QStringList locationChips() const { return m_chips; }
+  QStringList pins() const { return m_pins; }
   QString lastPath() const { return m_lastPath; }
 
   Q_INVOKABLE void setShowHidden(bool show);
@@ -44,7 +46,9 @@ public:
   Q_INVOKABLE void setSortRole(const QString &role);
   Q_INVOKABLE void setSortOrder(const QString &order);
   Q_INVOKABLE void setLocationChips(const QStringList &ids);
+  Q_INVOKABLE void setPins(const QStringList &paths);
   Q_INVOKABLE void setLastPath(const QString &path);
+  static QString normalizePin(const QString &path);
 
   bool load();
   bool save() const;
@@ -54,6 +58,7 @@ signals:
   void viewChanged();
   void sortChanged();
   void locationChipsChanged();
+  void pinsChanged();
   void lastPathChanged();
 
 private:
@@ -67,5 +72,6 @@ private:
   QString m_sortRole = QStringLiteral("name");
   QString m_sortOrder = QStringLiteral("asc");
   QStringList m_chips;
+  QStringList m_pins;
   QString m_lastPath;
 };

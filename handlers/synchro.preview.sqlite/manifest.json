@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.preview.sqlite",
+  "name": "SQLite preview",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Browse tables and a row sample from a SQLite file. Read-only.",
+  "kinds": ["preview"],
+  "priority": 80,
+  "match": {
+    "matchMode": "any",
+    "mime": [
+      "application/vnd.sqlite3",
+      "application/x-sqlite3"
+    ],
+    "suffix": [".db", ".sqlite", ".sqlite3", ".db3", ".s3db", ".sl3"],
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {
+    "preview": "sqlite.qml"
+  },
+  "preview": {
+    "runtime": "inprocess"
+  },
+  "permissions": ["fs-read"]
+}

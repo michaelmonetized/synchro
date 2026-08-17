@@ -2,6 +2,9 @@
 
 #include "DirectoryModel.h"
 
+#include <QDir>
+#include <QMimeDatabase>
+
 FilterProxy::FilterProxy(QObject *parent) : QSortFilterProxyModel(parent) {
   setDynamicSortFilter(true);
   setFilterCaseSensitivity(Qt::CaseInsensitive);
@@ -47,6 +50,27 @@ void FilterProxy::bindSource(DirectoryModel *model) {
   });
   connect(model, &DirectoryModel::pathChanged, this, [this] { applySort(); });
   applySort();
+}
+
+void FilterProxy::setPortalRules(const QVector<PortalFilterRule> &rules) {
+  if (m_portalRules.size() == rules.size()) {
+    bool same = true;
+    for (int i = 0; i < rules.size(); ++i) {
+      if (m_portalRules.at(i).type != rules.at(i).type ||
+          m_portalRules.at(i).pattern != rules.at(i).pattern) {
+        same = false;
+        break;
+      }
+    }
+    if (same)
+      return;
+  }
+  beginFilterChange();
+  m_portalRules = rules;
+  endFilterChange(QSortFilterProxyModel::Direction::Rows);
+  snapCursorIfHidden();
+  emit countChanged();
+  emit currentIndexChanged();
 }
 
 void FilterProxy::setFilter(const QString &filter) {
@@ -131,6 +155,27 @@ QString FilterProxy::currentName() const {
   if (row < 0)
     return {};
   return data(index(row, 0), DirectoryModel::NameRole).toString();
+}
+
+void FilterProxy::requestVisibleThumbs(int first, int last, int sizePx) {
+  auto *dm = directoryModel();
+  if (!dm)
+    return;
+  const int rows = rowCount();
+  QVector<int> srcRows;
+  if (rows > 0 && last >= 0) {
+    first = qBound(0, first, rows - 1);
+    last = qBound(0, last, rows - 1);
+    if (last < first)
+      qSwap(first, last);
+    srcRows.reserve(last - first + 1);
+    for (int i = first; i <= last; ++i) {
+      const QModelIndex src = mapToSource(index(i, 0));
+      if (src.isValid())
+        srcRows.append(src.row());
+    }
+  }
+  dm->requestSourceThumbs(srcRows, sizePx);
 }
 
 int FilterProxy::seekPrefix(const QString &prefix) {
@@ -228,18 +273,52 @@ bool FilterProxy::lessThan(const QModelIndex &left,
   return QString::localeAwareCompare(an.toLower(), bn.toLower()) < 0;
 }
 
+bool FilterProxy::matchesPortal(const QString &name, const QString &path,
+                                bool isDir, const QString &mime) const {
+  if (m_portalRules.isEmpty())
+    return true;
+  if (isDir)
+    return true;
+  QString resolved = mime;
+  if (resolved.isEmpty()) {
+    const QString hint = path.isEmpty() ? name : path;
+    resolved = QMimeDatabase()
+                   .mimeTypeForFile(hint, QMimeDatabase::MatchExtension)
+                   .name();
+  }
+  for (const PortalFilterRule &rule : m_portalRules) {
+    if (rule.type == 0) {
+      if (QDir::match(rule.pattern, name))
+        return true;
+    } else if (rule.type == 1) {
+      if (rule.pattern.endsWith(QLatin1String("/*"))) {
+        const QString prefix = rule.pattern.left(rule.pattern.size() - 1);
+        if (resolved.startsWith(prefix, Qt::CaseInsensitive))
+          return true;
+      } else if (resolved.compare(rule.pattern, Qt::CaseInsensitive) == 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 bool FilterProxy::filterAcceptsRow(int sourceRow,
                                    const QModelIndex &sourceParent) const {
   if (sourceParent.isValid())
     return false;
-  if (m_filter.isEmpty())
-    return true;
   const QAbstractItemModel *src = sourceModel();
   if (!src)
     return false;
-  const QString name = src->data(src->index(sourceRow, 0, sourceParent),
-                                 DirectoryModel::NameRole)
-                           .toString();
+  const QModelIndex idx = src->index(sourceRow, 0, sourceParent);
+  const QString name = src->data(idx, DirectoryModel::NameRole).toString();
+  const bool isDir = src->data(idx, DirectoryModel::IsDirRole).toBool();
+  const QString path = src->data(idx, DirectoryModel::PathRole).toString();
+  const QString mime = src->data(idx, DirectoryModel::MimeRole).toString();
+  if (!matchesPortal(name, path, isDir, mime))
+    return false;
+  if (m_filter.isEmpty())
+    return true;
   return name.contains(m_filter, Qt::CaseInsensitive);
 }
 
@@ -250,4 +329,74 @@ void FilterProxy::snapCursorIfHidden() {
     return;
   if (currentIndex() < 0)
     setCurrentIndex(0);
+}
+
+FilesOnlyProxy::FilesOnlyProxy(QObject *parent)
+    : QSortFilterProxyModel(parent) {
+  connect(this, &QAbstractItemModel::modelReset, this,
+          &FilesOnlyProxy::countChanged);
+  connect(this, &QAbstractItemModel::rowsInserted, this,
+          &FilesOnlyProxy::countChanged);
+  connect(this, &QAbstractItemModel::rowsRemoved, this,
+          &FilesOnlyProxy::countChanged);
+}
+
+void FilesOnlyProxy::setListing(FilterProxy *src) {
+  if (m_listing == src)
+    return;
+  if (m_listing)
+    disconnect(m_listing, nullptr, this, nullptr);
+  m_listing = src;
+  setSourceModel(src);
+  if (m_listing) {
+    connect(m_listing, &FilterProxy::currentIndexChanged, this,
+            &FilesOnlyProxy::currentIndexChanged);
+  }
+  emit currentIndexChanged();
+  emit countChanged();
+}
+
+int FilesOnlyProxy::currentIndex() const {
+  if (!m_listing)
+    return -1;
+  const int srcRow = m_listing->currentIndex();
+  if (srcRow < 0)
+    return -1;
+  const QModelIndex mapped = mapFromSource(m_listing->index(srcRow, 0));
+  return mapped.isValid() ? mapped.row() : -1;
+}
+
+void FilesOnlyProxy::setCurrentIndex(int proxyRow) {
+  if (!m_listing || rowCount() == 0)
+    return;
+  const int next = qBound(0, proxyRow, rowCount() - 1);
+  const QModelIndex src = mapToSource(index(next, 0));
+  if (!src.isValid())
+    return;
+  m_listing->setCurrentIndex(src.row());
+}
+
+void FilesOnlyProxy::requestVisibleThumbs(int first, int last, int sizePx) {
+  if (!m_listing || rowCount() <= 0)
+    return;
+  first = qBound(0, first, rowCount() - 1);
+  last = qBound(0, last, rowCount() - 1);
+  if (last < first)
+    qSwap(first, last);
+  const QModelIndex a = mapToSource(index(first, 0));
+  const QModelIndex b = mapToSource(index(last, 0));
+  if (!a.isValid() || !b.isValid())
+    return;
+  m_listing->requestVisibleThumbs(qMin(a.row(), b.row()),
+                                  qMax(a.row(), b.row()), sizePx);
+}
+
+bool FilesOnlyProxy::filterAcceptsRow(int sourceRow,
+                                      const QModelIndex &sourceParent) const {
+  if (sourceParent.isValid() || !sourceModel())
+    return false;
+  return !sourceModel()
+              ->data(sourceModel()->index(sourceRow, 0),
+                     DirectoryModel::IsDirRole)
+              .toBool();
 }

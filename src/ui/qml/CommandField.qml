@@ -5,8 +5,11 @@ Item {
     id: root
 
     required property var keyMachine
+    property var fileModel
 
     readonly property bool fieldActive: keyMachine && keyMachine.fieldFocused
+    readonly property bool typingSearch: keyMachine && keyMachine.mode === "field-search"
+    readonly property bool viewingSearch: fileModel && fileModel.isSearch
 
     implicitHeight: Math.max(Theme.fontBody + Theme.space(10), 28)
 
@@ -33,7 +36,7 @@ Item {
                 return "?"
             return "/"
         }
-        color: root.fieldActive ? Theme.accent : Theme.muted
+        color: (root.fieldActive || root.viewingSearch) ? Theme.accent : Theme.muted
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody
     }
@@ -84,6 +87,7 @@ Item {
                 root.keyMachine.focusFilter()
         }
 
+        Keys.priority: Keys.BeforeItem
         Keys.onPressed: function (event) {
             if (!root.keyMachine)
                 return
@@ -102,7 +106,7 @@ Item {
             if (root.keyMachine && root.keyMachine.mode === "field-command")
                 return "command…"
             if (root.keyMachine && root.keyMachine.mode === "field-search")
-                return "search names…"
+                return "search names…  Tab listing"
             return "filter or command…"
         }
         color: Theme.muted
@@ -113,15 +117,28 @@ Item {
 
     Text {
         id: hint
+        objectName: "commandModeHint"
         anchors.right: parent.right
         anchors.rightMargin: Theme.space(8)
         anchors.verticalCenter: parent.verticalCenter
-        text: (root.keyMachine && root.keyMachine.statusMessage.length)
-              ? root.keyMachine.statusMessage
-              : "Ctrl+K"
-        color: (root.keyMachine && root.keyMachine.statusMessage.length)
-               ? Theme.accent
-               : Theme.muted
+        text: {
+            if (root.keyMachine && root.keyMachine.statusMessage.length)
+                return root.keyMachine.statusMessage
+            if (root.typingSearch)
+                return "SEARCH   Tab listing"
+            if (root.viewingSearch)
+                return "RESULTS   Tab search"
+            if (root.keyMachine && root.keyMachine.mode === "field-filter")
+                return "FILTER"
+            if (root.keyMachine && root.keyMachine.mode === "field-command")
+                return "COMMAND"
+            if (root.keyMachine && root.keyMachine.mode === "field-jump")
+                return "JUMP"
+            return "LIST   Tab search"
+        }
+        color: (root.fieldActive || root.viewingSearch ||
+                (root.keyMachine && root.keyMachine.statusMessage.length))
+               ? Theme.accent : Theme.muted
         elide: Text.ElideLeft
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody
@@ -131,8 +148,9 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: 1
-        color: Theme.normalBorder
+        height: root.fieldActive ? 2 : 1
+        color: (root.fieldActive || root.viewingSearch) ? Theme.accent
+                                                        : Theme.normalBorder
     }
 
     Connections {

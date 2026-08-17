@@ -2,6 +2,7 @@
 
 #include <QFile>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QStandardPaths>
 
 SearchService::SearchService(QObject *parent) : QObject(parent) {}
@@ -15,17 +16,31 @@ QString SearchService::executable() {
   return path;
 }
 
+QString SearchService::fuzzyPattern(const QString &query) {
+  const QString t = query.trimmed();
+  if (t.isEmpty())
+    return {};
+  const QStringList parts =
+      t.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+  QStringList escaped;
+  escaped.reserve(parts.size());
+  for (const QString &part : parts)
+    escaped.append(QRegularExpression::escape(part));
+  return escaped.join(QStringLiteral(".*"));
+}
+
 QStringList SearchService::arguments(const QString &query, const QString &root,
                                      bool hidden) {
+  const QString pattern = fuzzyPattern(query);
   QStringList args{QStringLiteral("--color=never"), QStringLiteral("--exclude"),
-                   QStringLiteral(".git"),          QStringLiteral("-F"),
-                   QStringLiteral("-a"),            QStringLiteral("--max-results"),
+                   QStringLiteral(".git"),          QStringLiteral("-a"),
+                   QStringLiteral("--max-results"),
                    QString::number(kMaxResults)};
   if (hidden)
     args.append(QStringLiteral("--hidden"));
   // `--` so a query that starts with '-' is still one pattern argv.
   args.append(QStringLiteral("--"));
-  args.append(query);
+  args.append(pattern.isEmpty() ? query : pattern);
   args.append(root);
   return args;
 }

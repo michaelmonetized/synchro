@@ -100,29 +100,34 @@ void RecentStore::record(const QString &path, const QString &mime) {
   if (!QDir().mkpath(dir))
     return;
 
-  FileLock lock(lockPath(), LOCK_EX);
-  if (!lock.ok())
-    return;
+  {
+    FileLock lock(lockPath(), LOCK_EX);
+    if (!lock.ok())
+      return;
 
-  QFile file(m_path);
-  if (!file.open(QIODevice::WriteOnly | QIODevice::Append))
-    return;
+    QFile file(m_path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Append))
+      return;
 
-  QJsonObject obj;
-  const QDateTime now = QDateTime::currentDateTime();
-  obj.insert(QStringLiteral("ts"),
-             now.toOffsetFromUtc(now.offsetFromUtc()).toString(Qt::ISODate));
-  obj.insert(QStringLiteral("path"), path);
-  obj.insert(QStringLiteral("mime"), mime);
-  obj.insert(QStringLiteral("ws"), QJsonValue::Null);
-  file.write(QJsonDocument(obj).toJson(QJsonDocument::Compact));
-  file.write("\n");
-  file.close();
+    QJsonObject obj;
+    const QDateTime now = QDateTime::currentDateTime();
+    obj.insert(QStringLiteral("ts"),
+               now.toOffsetFromUtc(now.offsetFromUtc()).toString(Qt::ISODate));
+    obj.insert(QStringLiteral("path"), path);
+    obj.insert(QStringLiteral("mime"), mime);
+    obj.insert(QStringLiteral("ws"), QJsonValue::Null);
+    file.write(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+    file.write("\n");
+    file.close();
 
-  m_lines = parseEntries(m_path).size();
-  m_counted = true;
-  if (m_lines >= m_compactAt)
-    compact();
+    m_lines = parseEntries(m_path).size();
+    m_counted = true;
+    if (m_lines >= m_compactAt)
+      compact();
+  }
+  // Never emit while LOCK_EX is held. recent:// reloads by calling
+  // uniqueNewest() → flock(LOCK_SH) on a second fd; that blocks forever
+  // against this exclusive lock (Enter on Recents used to freeze the UI).
   emit entriesChanged();
 }
 

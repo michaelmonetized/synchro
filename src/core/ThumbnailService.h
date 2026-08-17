@@ -1,12 +1,19 @@
 #pragma once
 
 #include <QHash>
+#include <QImage>
 #include <QObject>
 #include <QString>
 #include <QStringList>
 #include <QThread>
 #include <QVector>
 #include <QtGlobal>
+
+struct ExecThumbnailer {
+  QStringList mimes;
+  QString exec;
+  QString tryExec;
+};
 
 struct ThumbnailJob {
   QString path;
@@ -29,6 +36,7 @@ public:
   void requestVisible(const QVector<ThumbnailJob> &jobs);
   void cancelAll();
   void setThumbnailerDirectories(const QStringList &dirs);
+  void setHandlerThumbnailers(const QVector<ExecThumbnailer> &list);
 
   static QString xdgCacheHome();
   static QString synchroThumbsDir();
@@ -49,12 +57,21 @@ public:
   static QStringList parseExec(const QString &exec, const QString &inputPath,
                                const QString &outputPath, int sizePx);
   static QString fileUrl(const QString &path);
+  // Decode via Qt plugins, then libwebp (this distro ships no Qt WebP plugin).
+  static QImage decodeRaster(const QString &path, int maxEdge = 0);
+  static QString ensureRasterPng(const QString &path, qint64 mtime, int maxEdge);
+  // Immediate children only: 2x2, prefer images, at most one video.
+  static bool renderFolderMosaic(const QString &dirPath, const QString &dest,
+                                 int sizePx);
+  static QImage renderFolderMosaicImage(const QString &dirPath, int sizePx);
+  static QString packedUrl(const QString &path, qint64 mtime, int sizePx);
 
 signals:
   void thumbnailReady(const QString &path, const QString &url);
   void submitted(const QVector<ThumbnailJob> &jobs, bool exclusive);
   void cancelRequested();
   void thumbnailerDirectoriesChanged(const QStringList &dirs);
+  void handlerThumbnailersChanged(const QVector<ExecThumbnailer> &list);
 
 private:
   QThread m_thread;
@@ -63,3 +80,5 @@ private:
 
 Q_DECLARE_METATYPE(ThumbnailJob)
 Q_DECLARE_METATYPE(QVector<ThumbnailJob>)
+Q_DECLARE_METATYPE(ExecThumbnailer)
+Q_DECLARE_METATYPE(QVector<ExecThumbnailer>)

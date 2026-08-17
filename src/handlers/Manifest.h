@@ -19,6 +19,9 @@ public:
     QStringList suffix;
     QStringList pathGlob;
     QString pathMode;
+    // "all" (default): mime AND suffix AND pathGlob. "any": any non-empty
+    // clause may match. folderContains is always required when set.
+    QString matchMode;
     QStringList folderContains;
     int minItems = -1;
     int maxItems = -1;
@@ -49,6 +52,7 @@ public:
   QJsonObject folder;
   QJsonObject action;
   QJsonObject location;
+  QJsonObject thumbnail;
   QStringList permissions;
   QString sourceDir;
   bool firstParty = false;

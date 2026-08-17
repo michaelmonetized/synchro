@@ -28,6 +28,9 @@ QVector<CommandSpec> CommandPalette::builtins() {
       {QStringLiteral("recent"), QStringLiteral("Open recents"), true},
       {QStringLiteral("home"), QStringLiteral("Go home"), true},
       {QStringLiteral("hidden"), QStringLiteral("Toggle hidden files"), true},
+      {QStringLiteral("pin"), QStringLiteral("Pin this folder"), true},
+      {QStringLiteral("unpin"), QStringLiteral("Unpin this folder"), true},
+      {QStringLiteral("sort"), QStringLiteral("Sort listing"), true},
       {QStringLiteral("grid"), QStringLiteral("Grid view"), true},
       {QStringLiteral("list"), QStringLiteral("List view"), true},
       {QStringLiteral("empty"), QStringLiteral("Empty trash"), true},
@@ -38,12 +41,21 @@ QVector<CommandSpec> CommandPalette::builtins() {
 
 QString CommandPalette::helpText() {
   return QStringLiteral(
-      "j/k  move     h  up        l  open/peek    Enter  activate\n"
-      "/    filter   :  command   ?name  search   Ctrl+L  jump\n"
-      ".    hidden   v  grid      t  terminal     Space  peek\n"
-      "Esc  pop      F1  help     g  reveal\n"
+      "j/k  move     WASD  move    Shift+WASD  leap 5\n"
+      "h / Left / Q  up     l / Right / E  open/peek     Enter  activate\n"
+      "Space  peek this     Enter  open/send     Esc / Q  leave peek\n"
+      "A/D    peek index/file     W/S  move or scroll file\n"
+      "Ctrl+Enter / right-click  do-layer (actions + params)\n"
+      "do: W/S verbs   A/D params   Enter run   Esc/Q leave\n"
+      "/    filter   Tab  search/listing   :  command   Ctrl+L  jump\n"
+      ".    hidden   v / middle-click  grid      V  visual\n"
+      "Shift+P  pin folder     [ ]  cycle filter\n"
+      "y/x/p copy/cut/paste   r rename   n mkdir   u undo\n"
+      "Delete trash   Shift+Delete unlink   t terminal   g reveal\n"
+      "Esc  pop      F1  help\n"
       "\n"
-      ":trash :recent :home :hidden :grid :list :empty :help :?");
+      ":trash :recent :home :hidden :pin :unpin :sort :grid :list :empty :agent :help :?\n"
+      ":sort name|size|mtime|type [asc|desc]   :sort  flip order");
 }
 
 QString CommandPalette::stripSigil(const QString &text) {

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.preview.archive",
+  "name": "Archive preview",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "List zip/tar members and gzip metadata. Does not extract.",
+  "kinds": ["preview", "thumbnail"],
+  "priority": 75,
+  "match": {
+    "matchMode": "any",
+    "mime": [
+      "application/zip",
+      "application/x-zip-compressed",
+      "application/gzip",
+      "application/x-gzip",
+      "application/x-tar",
+      "application/x-gtar",
+      "application/x-compressed-tar"
+    ],
+    "suffix": [".zip", ".zipx", ".gz", ".gzip", ".tar", ".tgz", ".taz"],
+    "pathGlob": ["*.tar.gz", "*.tar.gzip"],
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {
+    "preview": "archive.qml"
+  },
+  "preview": {
+    "runtime": "inprocess"
+  },
+  "thumbnail": {
+    "runtime": "core",
+    "verb": "archive-card"
+  },
+  "permissions": ["fs-read"]
+}

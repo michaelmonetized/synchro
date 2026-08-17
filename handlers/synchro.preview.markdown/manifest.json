@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.preview.markdown",
+  "name": "Markdown preview",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Rendered markdown peek. Does not replace Omawrite.",
+  "kinds": ["preview", "thumbnail"],
+  "priority": 70,
+  "match": {
+    "mime": ["text/markdown", "text/x-markdown"],
+    "suffix": [".md", ".markdown", ".mdown"],
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {
+    "preview": "Preview.qml"
+  },
+  "preview": {
+    "runtime": "inprocess"
+  },
+  "thumbnail": {
+    "runtime": "core",
+    "verb": "text-card"
+  },
+  "permissions": ["fs-read"]
+}

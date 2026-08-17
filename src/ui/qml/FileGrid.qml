@@ -7,11 +7,15 @@ GridView {
     required property var fileModel
     property var filterProxy
     property var keyMachine
+    property var selection
+    readonly property int selectionEpoch: selection ? selection.epoch : 0
     readonly property var rows: filterProxy ? filterProxy : fileModel
+    readonly property bool showCursorChrome: !keyMachine || keyMachine.listFocused
     readonly property int thumbSizePx: 256
     readonly property int cellInner: 96
 
     signal viewToggleRequested()
+    signal doRequested()
 
     model: grid.rows
     clip: true
@@ -26,32 +30,45 @@ GridView {
     cellWidth: cellInner + Theme.space(16)
     cellHeight: cellInner + Theme.fontBody + Theme.space(20)
     cacheBuffer: cellHeight * 4
+    readonly property int columns: Math.max(1, Math.floor(width / Math.max(1, cellWidth)))
+
+    onColumnsChanged: if (visible && keyMachine)
+        keyMachine.gridStride = columns
 
     highlight: Rectangle {
         color: Theme.selectedFill
         radius: Theme.radius
+        visible: grid.showCursorChrome
+    }
+
+    EmptyListing {
+        anchors.centerIn: parent
+        fileModel: grid.fileModel
+        filterProxy: grid.filterProxy
+    }
+
+    ScrollChrome {
+        flick: grid
     }
 
     function syncThumbnails() {
         if (!grid.fileModel || !grid.visible)
             return
-        if (grid.count <= 0) {
-            grid.fileModel.requestVisibleThumbs(0, -1, grid.thumbSizePx)
+        if (grid.count <= 0)
             return
-        }
-        var first = grid.indexAt(1, grid.contentY + 1)
-        var last = grid.indexAt(Math.max(1, grid.width - 2),
-                                grid.contentY + grid.height - 2)
-        if (first < 0 && last < 0) {
-            thumbSync.interval = 50
-            thumbSync.start()
-            return
-        }
-        if (first < 0)
-            first = 0
-        if (last < 0)
-            last = Math.min(grid.count - 1, first + 40)
-        grid.fileModel.requestVisibleThumbs(first, last, grid.thumbSizePx)
+        var cols = Math.max(1, grid.columns)
+        var rowH = Math.max(1, grid.cellHeight)
+        var over = 2
+        var firstRow = Math.max(0, Math.floor(grid.contentY / rowH) - over)
+        var lastRow = Math.floor((grid.contentY + grid.height - 1) / rowH) + over
+        var first = firstRow * cols
+        var last = Math.min(grid.count - 1, (lastRow + 1) * cols - 1)
+        if (last < first)
+            last = first
+        if (grid.filterProxy)
+            grid.filterProxy.requestVisibleThumbs(first, last, grid.thumbSizePx)
+        else
+            grid.fileModel.requestVisibleThumbs(first, last, grid.thumbSizePx)
     }
 
     Timer {
@@ -69,7 +86,12 @@ GridView {
     onWidthChanged: thumbSync.restart()
     onHeightChanged: thumbSync.restart()
     onCountChanged: thumbSync.restart()
-    onVisibleChanged: if (visible) thumbSync.restart()
+    onVisibleChanged: {
+        if (visible && keyMachine)
+            keyMachine.gridStride = columns
+        if (visible)
+            thumbSync.restart()
+    }
     Component.onCompleted: thumbSync.restart()
 
     delegate: Item {
@@ -83,6 +105,18 @@ GridView {
 
         width: grid.cellWidth
         height: grid.cellHeight
+
+        readonly property bool picked: grid.selection &&
+                                       grid.selectionEpoch >= 0 &&
+                                       grid.selection.isSelected(cell.index)
+
+        Rectangle {
+            anchors.fill: parent
+            visible: grid.showCursorChrome && cell.picked && !cell.GridView.isCurrentItem
+            color: Theme.selectedFill
+            opacity: 0.45
+            radius: Theme.radius
+        }
 
         Rectangle {
             anchors.fill: parent
@@ -114,20 +148,22 @@ GridView {
                 sourceSize.height: grid.cellInner
             }
 
-            Rectangle {
+            FolderMark {
                 anchors.fill: parent
-                visible: cell.thumbnail.length === 0
-                color: "transparent"
-                border.color: Theme.normalBorder
-                border.width: 1
-                radius: Theme.radius
+                visible: cell.thumbnail.length === 0 && cell.isDir
+            }
 
-                Text {
-                    anchors.centerIn: parent
-                    text: cell.isDir ? "▸" : cell.isSymlink ? "↗" : "·"
-                    color: Theme.muted
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontBody
+            FileMark {
+                anchors.centerIn: parent
+                width: Math.round(parent.width * 0.72)
+                height: Math.round(parent.height * 0.84)
+                visible: cell.thumbnail.length === 0 && !cell.isDir
+                suffix: {
+                    var n = cell.name
+                    var i = n.lastIndexOf(".")
+                    if (i <= 0 || i === n.length - 1)
+                        return ""
+                    return n.slice(i + 1).toUpperCase()
                 }
             }
         }
@@ -150,9 +186,38 @@ GridView {
 
         MouseArea {
             anchors.fill: parent
-            acceptedButtons: Qt.LeftButton
-            onClicked: {
+            acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
+            onClicked: function (mouse) {
                 grid.forceActiveFocus()
+                if (mouse.button === Qt.MiddleButton) {
+                    grid.viewToggleRequested()
+                    return
+                }
+                if (mouse.button === Qt.RightButton) {
+                    if (grid.keyMachine && grid.keyMachine.mode === "field-search")
+                        grid.keyMachine.focusList()
+                    if (grid.selection) {
+                        if (!grid.selection.isSelected(cell.index))
+                            grid.selection.click(cell.index)
+                    } else if (grid.filterProxy) {
+                        grid.filterProxy.selectRow(cell.index)
+                    } else {
+                        grid.fileModel.currentIndex = cell.index
+                    }
+                    grid.doRequested()
+                    return
+                }
+                if (grid.keyMachine && grid.keyMachine.mode === "field-search")
+                    grid.keyMachine.focusList()
+                if (grid.selection) {
+                    if (mouse.modifiers & Qt.ControlModifier)
+                        grid.selection.ctrlClick(cell.index)
+                    else if (mouse.modifiers & Qt.ShiftModifier)
+                        grid.selection.shiftClick(cell.index)
+                    else
+                        grid.selection.click(cell.index)
+                    return
+                }
                 if (grid.filterProxy)
                     grid.filterProxy.selectRow(cell.index)
                 else
@@ -168,10 +233,12 @@ GridView {
     }
 
     onActiveFocusChanged: {
-        if (activeFocus && grid.keyMachine && grid.keyMachine.fieldFocused)
+        if (activeFocus && grid.keyMachine && grid.keyMachine.fieldFocused &&
+                grid.keyMachine.mode !== "field-search")
             grid.keyMachine.focusList()
     }
 
+    Keys.priority: Keys.BeforeItem
     Keys.onPressed: function (event) {
         if (grid.keyMachine &&
                 grid.keyMachine.handleListKey(event.key, event.modifiers, event.text)) {

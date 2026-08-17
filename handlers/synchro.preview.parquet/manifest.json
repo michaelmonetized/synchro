@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.preview.parquet",
+  "name": "Parquet preview",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Schema from the Parquet footer. Sample rows if duckdb is installed.",
+  "kinds": ["preview", "thumbnail"],
+  "priority": 70,
+  "match": {
+    "matchMode": "any",
+    "mime": [
+      "application/vnd.apache.parquet",
+      "application/x-parquet",
+      "application/parquet"
+    ],
+    "suffix": [".parquet", ".pq"],
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {
+    "preview": "Preview.qml"
+  },
+  "preview": {
+    "runtime": "inprocess"
+  },
+  "thumbnail": {
+    "runtime": "core",
+    "verb": "parquet-card"
+  },
+  "permissions": ["fs-read"]
+}

@@ -17,6 +17,7 @@
 class DirectoryModelTest;
 class RecentStore;
 class SearchModel;
+class ThumbnailService;
 
 class DirectoryModel : public QAbstractListModel {
   Q_OBJECT
@@ -30,6 +31,8 @@ class DirectoryModel : public QAbstractListModel {
   Q_PROPERTY(QString errorString READ errorString NOTIFY errorStringChanged)
   Q_PROPERTY(bool isTrash READ isTrash NOTIFY pathChanged)
   Q_PROPERTY(bool isRecent READ isRecent NOTIFY pathChanged)
+  Q_PROPERTY(bool isSearch READ isSearch NOTIFY pathChanged)
+  Q_PROPERTY(QString searchQuery READ searchQuery NOTIFY searchQueryChanged)
   Q_PROPERTY(QVariantMap currentStat READ currentStat NOTIFY currentStatChanged)
 
 public:
@@ -66,8 +69,11 @@ public:
   QString errorString() const { return m_error; }
   QString returnPath() const { return m_returnPath; }
   SearchModel *searchModel() const { return m_search; }
+  ThumbnailService *thumbnailService() const { return m_thumbs; }
   bool isTrash() const;
   bool isRecent() const;
+  bool isSearch() const;
+  QString searchQuery() const;
   QVariantMap currentStat() const;
 
   static bool isVirtualPath(const QString &path);
@@ -86,17 +92,21 @@ public:
   Q_INVOKABLE void setCurrentIndex(int index);
   Q_INVOKABLE void moveCursor(int delta);
   Q_INVOKABLE void activateCurrent();
+  void activateIndex(int sourceRow);
+  void requestRestore(const QStringList &trashFiles);
   Q_INVOKABLE QString currentName() const;
   Q_INVOKABLE bool currentIsDir() const;
   Q_INVOKABLE QString currentOrigPath() const;
   Q_INVOKABLE bool restoreCurrent();
   Q_INVOKABLE bool emptyTrash();
   Q_INVOKABLE void requestVisibleThumbs(int first, int last, int sizePx);
+  void requestSourceThumbs(const QVector<int> &sourceRows, int sizePx);
   QVariantMap cachedStat(const QString &path) const;
   void requestStatPath(const QString &path);
 
 signals:
   void fileActivated(const QString &path, const QString &mime);
+  void restoreRequested(const QStringList &files);
   void entryStatReady(const QString &path, const QVariantMap &st);
   void pathChanged();
   void showHiddenChanged();
@@ -110,6 +120,7 @@ signals:
                      const QStringList &names);
   void firstRowsInserted(qint64 elapsedMs, int rows);
   void currentStatChanged();
+  void searchQueryChanged();
 
 private slots:
   void onBatchReady(quint64 generation, const QVector<DirectoryEntry> &batch);
@@ -172,6 +183,7 @@ private:
   int m_thumbFirst = -1;
   int m_thumbLast = -1;
   int m_thumbSizePx = 128;
+  QVector<int> m_thumbRows;
 
   int m_currentIndex = -1;
   bool m_showHidden = false;

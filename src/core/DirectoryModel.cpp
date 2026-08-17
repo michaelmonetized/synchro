@@ -116,6 +116,12 @@ bool DirectoryModel::isTrash() const { return isTrashPath(m_path); }
 
 bool DirectoryModel::isRecent() const { return isRecentPath(m_path); }
 
+bool DirectoryModel::isSearch() const { return isSearchPath(m_path); }
+
+QString DirectoryModel::searchQuery() const {
+  return m_search ? m_search->query() : QString();
+}
+
 int DirectoryModel::currentIndex() const {
   if (searching())
     return m_search->currentIndex();
@@ -239,6 +245,9 @@ void DirectoryModel::resetListing() {
   m_indexByPath.clear();
   m_visibleRowByAll.clear();
   m_suppressedNames.clear();
+  m_thumbRows.clear();
+  m_thumbFirst = -1;
+  m_thumbLast = -1;
   m_currentIndex = -1;
   endResetModel();
   emit countChanged();
@@ -262,10 +271,13 @@ void DirectoryModel::setRecentStore(RecentStore *store) {
     disconnect(m_recents, nullptr, this, nullptr);
   m_recents = store;
   if (m_recents)
-    connect(m_recents, &RecentStore::entriesChanged, this, [this] {
-      if (isRecent())
-        reload();
-    });
+    connect(
+        m_recents, &RecentStore::entriesChanged, this,
+        [this] {
+          if (isRecent())
+            reload();
+        },
+        Qt::QueuedConnection);
   if (isRecent())
     reload();
 }
@@ -334,6 +346,8 @@ void DirectoryModel::bindSearch() {
             m_lastFirstRowsMs = ms;
             emit firstRowsInserted(ms, rows);
           });
+  connect(m_search, &SearchModel::queryChanged, this,
+          &DirectoryModel::searchQueryChanged);
 }
 
 void DirectoryModel::unbindSearch() {
@@ -571,6 +585,29 @@ void DirectoryModel::moveCursor(int delta) {
     setCurrentIndex(m_currentIndex + delta);
 }
 
+void DirectoryModel::activateIndex(int sourceRow) {
+  setCurrentIndex(sourceRow);
+  activateCurrent();
+}
+
+void DirectoryModel::requestRestore(const QStringList &trashFiles) {
+  if (trashFiles.isEmpty())
+    return;
+  if (receivers(SIGNAL(restoreRequested(QStringList))) > 0) {
+    emit restoreRequested(trashFiles);
+    return;
+  }
+  QString dest;
+  QString err;
+  if (!TrashStore::restore(trashFiles.first(), &dest, &err)) {
+    m_error = err;
+    emit errorStringChanged();
+    return;
+  }
+  const QFileInfo fi(dest);
+  setPath(fi.absolutePath(), fi.fileName());
+}
+
 void DirectoryModel::activateCurrent() {
   if (searching()) {
     m_search->activateCurrent();
@@ -580,7 +617,7 @@ void DirectoryModel::activateCurrent() {
   if (!e)
     return;
   if (e->dirKind == QLatin1String("trash") || isTrash()) {
-    restoreCurrent();
+    requestRestore({e->path});
     return;
   }
   if (e->dirKind == QLatin1String("pending")) {
@@ -814,7 +851,9 @@ void DirectoryModel::onStatsReady(quint64 generation,
     emit entryStatReady(e.path, entryToMap(e));
   }
   maybeActivatePending();
-  if (m_thumbFirst >= 0)
+  if (!m_thumbRows.isEmpty())
+    requestSourceThumbs(m_thumbRows, m_thumbSizePx);
+  else if (m_thumbFirst >= 0)
     requestVisibleThumbs(m_thumbFirst, m_thumbLast, m_thumbSizePx);
 }
 
@@ -1071,36 +1110,57 @@ void DirectoryModel::onWatchEvents(const QVector<DirectoryWatchEvent> &events) {
 }
 
 void DirectoryModel::requestVisibleThumbs(int first, int last, int sizePx) {
+  QVector<int> rows;
+  const int count = rowCount();
+  if (count > 0 && last >= 0) {
+    first = qBound(0, first, count - 1);
+    last = qBound(0, last, count - 1);
+    if (last < first)
+      qSwap(first, last);
+    rows.reserve(last - first + 1);
+    for (int i = first; i <= last; ++i)
+      rows.append(i);
+  }
+  requestSourceThumbs(rows, sizePx);
+}
+
+void DirectoryModel::requestSourceThumbs(const QVector<int> &sourceRows,
+                                         int sizePx) {
   if (sizePx <= 0)
     sizePx = 128;
   m_thumbSizePx = sizePx;
-  m_thumbFirst = first;
-  m_thumbLast = last;
+  m_thumbRows = sourceRows;
+  if (!sourceRows.isEmpty()) {
+    m_thumbFirst = sourceRows.first();
+    m_thumbLast = sourceRows.last();
+  } else {
+    m_thumbFirst = -1;
+    m_thumbLast = -1;
+  }
   if (!m_thumbs)
     return;
   QVector<ThumbnailJob> jobs;
-  const int rows = rowCount();
-  if (rows > 0 && last >= 0) {
-    first = qBound(0, first, rows - 1);
-    last = qBound(0, last, rows - 1);
-    if (last < first)
-      qSwap(first, last);
-    const int center = first + (last - first) / 2;
-    jobs.reserve(last - first + 1);
-    for (int i = first; i <= last; ++i) {
-      const DirectoryEntry *e = entryAt(i);
-      if (!e || e->isDir || e->path.isEmpty() || e->mtime <= 0)
-        continue;
-      if (!e->thumbnail.isEmpty())
-        continue;
-      ThumbnailJob job;
-      job.path = e->path;
-      job.mime = e->mime;
-      job.mtime = e->mtime;
-      job.sizePx = sizePx;
-      job.priority = qAbs(i - center);
-      jobs.append(job);
-    }
+  jobs.reserve(sourceRows.size());
+  const int n = sourceRows.size();
+  const int center = n / 2;
+  for (int i = 0; i < n; ++i) {
+    const DirectoryEntry *e = entryAt(sourceRows.at(i));
+    if (!e || e->path.isEmpty())
+      continue;
+    if (!e->thumbnail.isEmpty())
+      continue;
+    qint64 mtime = e->mtime;
+    if (mtime <= 0)
+      mtime = QFileInfo(e->path).lastModified().toMSecsSinceEpoch();
+    if (mtime <= 0)
+      continue;
+    ThumbnailJob job;
+    job.path = e->path;
+    job.mime = e->mime;
+    job.mtime = mtime;
+    job.sizePx = sizePx;
+    job.priority = qAbs(i - center);
+    jobs.append(job);
   }
   m_thumbs->requestVisible(jobs);
 }

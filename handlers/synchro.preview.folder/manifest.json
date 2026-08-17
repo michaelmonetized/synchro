@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.preview.folder",
+  "name": "Folder peek",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Temporary drill-down listing over a folder. Does not replace the main listing.",
+  "kinds": ["preview"],
+  "priority": 70,
+  "keepLoaded": true,
+  "match": {
+    "mime": ["inode/directory"],
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {
+    "preview": "Preview.qml"
+  },
+  "preview": {
+    "runtime": "inprocess"
+  },
+  "permissions": ["fs-read"]
+}

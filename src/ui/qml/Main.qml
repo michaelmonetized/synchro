@@ -11,6 +11,7 @@ Window {
     readonly property var history: navStack
     readonly property var keys: keyMachine
     readonly property var chips: typeof locationChips !== "undefined" ? locationChips : null
+    readonly property var selection: typeof selectionModel !== "undefined" ? selectionModel : null
     readonly property bool gridMode: root.keys ? root.keys.gridMode : false
 
     width: 960
@@ -38,6 +39,7 @@ Window {
         anchors.left: parent.left
         anchors.right: parent.right
         keyMachine: root.keys
+        fileModel: root.files
     }
 
     FileList {
@@ -53,7 +55,10 @@ Window {
         filterProxy: root.listing
         navStack: root.history
         keyMachine: root.keys
+        selection: root.selection
         onViewToggleRequested: if (root.keys) root.keys.gridMode = true
+        onDoRequested: if (typeof hostApi !== "undefined" && hostApi)
+            hostApi.openDoLayer()
     }
 
     FileGrid {
@@ -68,7 +73,10 @@ Window {
         fileModel: root.files
         filterProxy: root.listing
         keyMachine: root.keys
+        selection: root.selection
         onViewToggleRequested: if (root.keys) root.keys.gridMode = false
+        onDoRequested: if (typeof hostApi !== "undefined" && hostApi)
+            hostApi.openDoLayer()
     }
 
     StatusLine {
@@ -79,72 +87,32 @@ Window {
         anchors.bottom: parent.bottom
         fileModel: root.files
         keyMachine: root.keys
+        selection: root.selection
+        filterProxy: root.listing
+        host: typeof hostApi !== "undefined" ? hostApi : null
+    }
+
+    Confirm {
+        anchors.fill: parent
+        z: 105
+        keyMachine: root.keys
     }
 
     PeekOverlay {
         anchors.fill: parent
         host: typeof hostApi !== "undefined" ? hostApi : null
+        keys: root.keys
     }
 
-    Item {
+    DoOverlay {
         id: actionOverlay
-        objectName: "actionOverlay"
         anchors.fill: parent
-        z: 110
-        visible: typeof hostApi !== "undefined" && hostApi && hostApi.actionOpen
-        focus: false
-
-        Rectangle {
-            anchors.fill: parent
-            color: Theme.background
-            opacity: 0.86
-            MouseArea {
-                anchors.fill: parent
-                onClicked: if (typeof hostApi !== "undefined" && hostApi)
-                    hostApi.closeAction()
-            }
-        }
-
-        Rectangle {
-            id: actionFrame
-            anchors.centerIn: parent
-            width: Math.min(parent.width - Theme.space(48), 480)
-            height: Math.min(parent.height - Theme.space(48), 360)
-            color: Theme.background
-            border.color: Theme.normalBorder
-            border.width: 1
-
-            Item {
-                id: actionSurface
-                objectName: "actionSurface"
-                anchors.fill: parent
-                anchors.margins: Theme.space(8)
-            }
-        }
-
-        function reparentAction() {
-            if (typeof hostApi === "undefined" || !hostApi || !hostApi.actionItem)
-                return
-            hostApi.actionItem.parent = actionSurface
-            hostApi.actionItem.anchors.fill = actionSurface
-            hostApi.actionItem.forceActiveFocus()
-        }
-
-        Connections {
-            target: typeof hostApi !== "undefined" ? hostApi : null
-            function onActionItemChanged() { actionOverlay.reparentAction() }
-            function onActionOpenChanged() {
-                if (typeof hostApi !== "undefined" && hostApi && hostApi.actionOpen)
-                    actionOverlay.reparentAction()
-                if (typeof hostApi !== "undefined" && hostApi && !hostApi.actionOpen) {
-                    if (root.keys && root.keys.fieldFocused)
-                        commandField.focusInput()
-                    else if (root.gridMode)
-                        fileGrid.forceActiveFocus()
-                    else
-                        fileList.forceActiveFocus()
-                }
-            }
+        host: typeof hostApi !== "undefined" ? hostApi : null
+        onClosed: {
+            if (root.keys && root.keys.fieldFocused)
+                commandField.focusInput()
+            else
+                root.focusListing()
         }
     }
 
@@ -163,10 +131,7 @@ Window {
     Connections {
         target: root.files
         function onPathChanged() {
-            if (root.gridMode)
-                fileGrid.forceActiveFocus()
-            else
-                fileList.forceActiveFocus()
+            root.focusListing()
         }
     }
 
@@ -183,10 +148,13 @@ Window {
             }
         }
         function onGridModeChanged() {
-            if (root.gridMode)
+            if (root.gridMode) {
+                root.keys.gridStride = fileGrid.columns
                 fileGrid.forceActiveFocus()
-            else
+            } else {
+                root.keys.gridStride = 1
                 fileList.forceActiveFocus()
+            }
         }
     }
 
@@ -228,5 +196,24 @@ Window {
         }
     }
 
-    Component.onCompleted: fileList.forceActiveFocus()
+    function focusListing() {
+        if (root.keys && !root.keys.listFocused)
+            return
+        if (root.gridMode)
+            fileGrid.forceActiveFocus()
+        else
+            fileList.forceActiveFocus()
+    }
+
+    onActiveChanged: if (active)
+        Qt.callLater(root.focusListing)
+
+    onActiveFocusItemChanged: {
+        if (!active || (root.keys && !root.keys.listFocused))
+            return
+        if (!activeFocusItem || activeFocusItem === root)
+            Qt.callLater(root.focusListing)
+    }
+
+    Component.onCompleted: Qt.callLater(root.focusListing)
 }

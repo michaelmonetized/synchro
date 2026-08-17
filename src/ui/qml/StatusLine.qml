@@ -6,6 +6,10 @@ Item {
 
     required property var fileModel
     property var keyMachine
+    property var selection
+    property var filterProxy
+    property var host: null
+    property string extra: ""
 
     implicitHeight: Math.max(Theme.fontBody + Theme.space(8), 22)
 
@@ -41,7 +45,15 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         text: {
             var bits = []
-            if (root.fileModel && root.fileModel.count !== undefined)
+            if (root.keyMachine && root.keyMachine.mode === "field-search")
+                bits.push("SEARCH")
+            else if (root.fileModel && root.fileModel.isSearch)
+                bits.push("RESULTS")
+            if (root.extra)
+                bits.push(root.extra)
+            if (root.selection && root.selection.statusText)
+                bits.push(root.selection.statusText)
+            else if (root.fileModel && root.fileModel.count !== undefined)
                 bits.push(root.fileModel.count + " files")
             var st = root.stat
             if (st && st.name)
@@ -52,10 +64,23 @@ Item {
                 bits.push(root.fmtTime(st.mtime))
             if (st && st.perm)
                 bits.push(st.perm)
+            if (root.fileModel && root.fileModel.showHidden)
+                bits.push("hidden")
+            if (root.filterProxy && root.filterProxy.sortRoleName) {
+                var role = root.filterProxy.sortRoleName
+                var desc = root.filterProxy.sortOrder === "desc"
+                if (role !== "name" || desc)
+                    bits.push(role + (desc ? "↓" : "↑"))
+            }
             if (root.fileModel && root.fileModel.path)
                 bits.push(root.fileModel.path)
             if (root.keyMachine && root.keyMachine.statusMessage)
                 bits.push(root.keyMachine.statusMessage)
+            if (root.host && root.host.actionOpen && root.host.doHint)
+                bits.push(root.host.doHint)
+            else if (root.host && root.keyMachine && root.keyMachine.listFocused &&
+                     !root.keyMachine.peekOpen && root.host.listHint)
+                bits.push(root.host.listHint)
             return bits.join("   ")
         }
         color: Theme.muted

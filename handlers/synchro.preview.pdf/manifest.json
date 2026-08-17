@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.preview.pdf",
+  "name": "PDF preview",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "In-window PDF peek via Qt PDF. Thumbnails stay with evince-thumbnailer.",
+  "kinds": ["preview"],
+  "priority": 65,
+  "match": {
+    "mime": ["application/pdf", "application/x-pdf"],
+    "suffix": [".pdf"],
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {
+    "preview": "Preview.qml"
+  },
+  "preview": {
+    "runtime": "inprocess"
+  },
+  "permissions": ["fs-read"]
+}

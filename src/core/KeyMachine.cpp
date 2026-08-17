@@ -1,11 +1,14 @@
 #include "KeyMachine.h"
 
 #include "DirectoryModel.h"
+#include "FileOpEngine.h"
 #include "FilterProxy.h"
+#include "LocationChips.h"
 #include "NavStack.h"
 #include "PeekHost.h"
 #include "RecentStore.h"
 #include "SearchModel.h"
+#include "SelectionModel.h"
 
 #include <QAbstractItemModel>
 #include <QDir>
@@ -65,8 +68,42 @@ QString KeyMachine::mode() const {
     return QStringLiteral("field-search");
   case Mode::PeekOpen:
     return QStringLiteral("peek-open");
+  case Mode::VisualSelect:
+    return QStringLiteral("visual-select");
+  case Mode::RenameInline:
+    return QStringLiteral("rename-inline");
+  case Mode::ConfirmDialog:
+    return QStringLiteral("confirm-dialog");
   }
   return QStringLiteral("list-focused");
+}
+
+bool KeyMachine::ynPrompt() const {
+  return m_promptKind == QLatin1String("unlink") ||
+         m_promptKind == QLatin1String("empty-trash");
+}
+
+void KeyMachine::setChooserMode(bool on, bool multiple, bool save) {
+  if (m_chooserMode == on && m_chooserMultiple == multiple &&
+      m_chooserSave == save)
+    return;
+  m_chooserMode = on;
+  m_chooserMultiple = multiple;
+  m_chooserSave = on && save;
+  if (!on)
+    m_chooserPromptOpen = false;
+  emit chooserModeChanged();
+}
+
+void KeyMachine::setChooserPromptOpen(bool on) {
+  m_chooserPromptOpen = on && m_chooserMode;
+}
+
+void KeyMachine::setPromptText(const QString &text) {
+  if (m_promptText == text)
+    return;
+  m_promptText = text;
+  emit promptChanged();
 }
 
 bool KeyMachine::actionOpen() const {
@@ -141,7 +178,31 @@ void KeyMachine::setGridMode(bool on) {
   if (m_gridMode == on)
     return;
   m_gridMode = on;
+  if (!on)
+    setGridStride(1);
   emit gridModeChanged();
+}
+
+void KeyMachine::setGridStride(int columns) {
+  const int next = qMax(1, columns);
+  if (m_gridStride == next)
+    return;
+  m_gridStride = next;
+  emit gridStrideChanged();
+}
+
+void KeyMachine::nudgeCursor(int dx, int dy, bool leap) {
+  const int step = leap ? 5 : 1;
+  const int stride = m_gridMode ? m_gridStride : 1;
+  const int delta = dy * step * stride + dx * step;
+  if (delta == 0)
+    return;
+  if (m_selection)
+    m_selection->moveCursor(delta);
+  else if (m_proxy)
+    m_proxy->moveCursor(delta);
+  else if (m_model)
+    m_model->moveCursor(delta);
 }
 
 void KeyMachine::setStatusMessage(const QString &text) {
@@ -217,7 +278,10 @@ void KeyMachine::clearFieldAndFilter() {
 
 void KeyMachine::onPathChanged() {
   m_seek.clear();
-  if (!m_promptKind.isEmpty()) {
+  if (m_selection)
+    m_selection->exitVisual();
+  if (!m_promptKind.isEmpty() || m_mode == Mode::RenameInline ||
+      m_mode == Mode::ConfirmDialog) {
     clearConfirm();
     setStatusMessage(QString());
   }
@@ -266,6 +330,8 @@ void KeyMachine::closeOverlays() {
 void KeyMachine::focusFilter() {
   closeOverlays();
   setHelpOpen(false);
+  if (m_selection)
+    m_selection->exitVisual();
   setMode(Mode::FieldFilter);
   applyFieldText();
 }
@@ -298,18 +364,110 @@ void KeyMachine::focusCommand() {
   setMode(Mode::FieldCommand);
 }
 
+void KeyMachine::focusSearch() {
+  closeOverlays();
+  setHelpOpen(false);
+  if (m_selection)
+    m_selection->exitVisual();
+  if (!isSearchText(m_fieldText)) {
+    m_fieldText = QStringLiteral("?");
+    emit fieldTextChanged();
+  }
+  applyFieldText();
+  setMode(Mode::FieldSearch);
+}
+
+void KeyMachine::toggleSearchField() {
+  if (m_mode == Mode::FieldSearch) {
+    const QString q = searchQuery(m_fieldText);
+    if (q.isEmpty()) {
+      clearFieldAndFilter();
+      setMode(Mode::ListFocused);
+      return;
+    }
+    m_searchDebounce.stop();
+    runSearch();
+    setMode(Mode::ListFocused);
+    return;
+  }
+  if (m_chooserMode && m_chooserSave && !isSearchText(m_fieldText)) {
+    emit saveNameFocusRequested();
+    return;
+  }
+  focusSearch();
+}
+
 void KeyMachine::focusList() {
   closeOverlays();
   setHelpOpen(false);
-  if (m_mode == Mode::FieldSearch)
-    cancelSearch();
   setMode(Mode::ListFocused);
 }
 
 void KeyMachine::clearConfirm() {
-  if (m_promptKind.isEmpty())
+  if (m_promptKind.isEmpty() && m_promptText.isEmpty())
     return;
   m_promptKind.clear();
+  m_promptText.clear();
+  emit promptChanged();
+}
+
+void KeyMachine::startRename() {
+  if (m_chooserMode || (m_model && m_model->isTrash()))
+    return;
+  QString name;
+  if (m_selection)
+    name = m_selection->cursorName();
+  if (name.isEmpty() && m_proxy)
+    name = m_proxy->currentName();
+  if (name.isEmpty() && m_model)
+    name = m_model->currentName();
+  if (name.isEmpty())
+    return;
+  if (m_selection)
+    m_selection->exitVisual();
+  m_promptKind = QStringLiteral("rename");
+  m_promptText = name;
+  setMode(Mode::RenameInline);
+  emit promptChanged();
+}
+
+void KeyMachine::startMkdir() {
+  if (m_chooserMode || (m_model && DirectoryModel::isVirtualPath(
+                                       m_model ? m_model->path() : QString())))
+    return;
+  if (m_selection)
+    m_selection->exitVisual();
+  m_promptKind = QStringLiteral("mkdir");
+  m_promptText = QStringLiteral("New folder");
+  emit promptChanged();
+  setMode(Mode::ConfirmDialog);
+}
+
+void KeyMachine::startUnlinkConfirm() {
+  if (m_chooserMode)
+    return;
+  const int n = m_selection ? m_selection->selectedCount() : 0;
+  const QString cursor = m_selection ? m_selection->cursorPath() : QString();
+  if (n <= 0 && cursor.isEmpty())
+    return;
+  if (m_selection)
+    m_selection->exitVisual();
+  m_promptKind = QStringLiteral("unlink");
+  m_promptText = n > 1 ? QStringLiteral("Permanently delete %1 items?").arg(n)
+                       : QStringLiteral("Permanently delete?");
+  emit promptChanged();
+  setMode(Mode::ConfirmDialog);
+}
+
+void KeyMachine::startEmptyConfirm() {
+  if (!m_model || !m_model->isTrash())
+    return;
+  if (m_selection)
+    m_selection->exitVisual();
+  m_promptKind = QStringLiteral("empty-trash");
+  m_promptText = QStringLiteral("Empty trash?");
+  emit promptChanged();
+  setMode(Mode::ConfirmDialog);
 }
 
 void KeyMachine::requestEmptyTrash() {
@@ -317,12 +475,14 @@ void KeyMachine::requestEmptyTrash() {
     setStatusMessage(QStringLiteral("empty is only available in trash"));
     return;
   }
-  m_promptKind = QStringLiteral("empty-trash");
-  setStatusMessage(QStringLiteral("Empty trash? y/n"));
+  startEmptyConfirm();
 }
 
 void KeyMachine::acceptEmptyTrash() {
-  clearConfirm();
+  if (m_fileOps) {
+    m_fileOps->emptyTrash();
+    return;
+  }
   if (!m_model || !m_model->isTrash()) {
     setStatusMessage(QStringLiteral("empty is only available in trash"));
     return;
@@ -336,34 +496,90 @@ void KeyMachine::acceptEmptyTrash() {
   setStatusMessage(QStringLiteral("emptied trash"));
 }
 
-bool KeyMachine::handleConfirmKey(int key, int modifiers, const QString &text) {
-  if (m_promptKind != QLatin1String("empty-trash"))
+void KeyMachine::acceptPrompt() {
+  const QString text = m_promptText.trimmed();
+  if (m_mode == Mode::RenameInline) {
+    if (m_fileOps)
+      m_fileOps->renameCursor(text);
+    clearConfirm();
+    setMode(Mode::ListFocused);
+    return;
+  }
+  if (m_mode != Mode::ConfirmDialog)
+    return;
+  if (m_promptKind == QLatin1String("mkdir")) {
+    if (m_fileOps)
+      m_fileOps->mkdirHere(text);
+    clearConfirm();
+    setMode(Mode::ListFocused);
+    return;
+  }
+  if (m_promptKind == QLatin1String("unlink")) {
+    if (m_fileOps)
+      m_fileOps->unlinkSelection();
+    clearConfirm();
+    setMode(Mode::ListFocused);
+    return;
+  }
+  if (m_promptKind == QLatin1String("empty-trash")) {
+    acceptEmptyTrash();
+    clearConfirm();
+    setMode(Mode::ListFocused);
+  }
+}
+
+bool KeyMachine::handleChooserPromptKey(int key, int modifiers) {
+  if (!m_chooserMode || !m_chooserPromptOpen)
     return false;
   if (hasChord(modifiers) || hasAlt(modifiers))
     return true;
   if (key == Qt::Key_Escape) {
-    clearConfirm();
-    setStatusMessage(QString());
+    emit chooserPromptDismissRequested();
     return true;
   }
-  const QString t = text.toLower();
-  if (key == Qt::Key_Y || t == QLatin1String("y")) {
-    acceptEmptyTrash();
+  if (key == Qt::Key_Return || key == Qt::Key_Enter || key == Qt::Key_Y) {
+    emit chooserAcceptRequested();
     return true;
   }
-  if (key == Qt::Key_N || t == QLatin1String("n")) {
-    clearConfirm();
-    setStatusMessage(QString());
-    return true;
-  }
-  // y/n/Esc only — do not treat other keys as list verbs while armed.
+  if (key == Qt::Key_N)
+    emit chooserPromptDismissRequested();
   return true;
 }
 
+bool KeyMachine::handleConfirmKey(int key, int modifiers, const QString &text) {
+  if (m_mode != Mode::ConfirmDialog && m_mode != Mode::RenameInline)
+    return false;
+  if (hasChord(modifiers) || hasAlt(modifiers))
+    return true;
+  if (key == Qt::Key_Escape) {
+    escape();
+    return true;
+  }
+  if ((key == Qt::Key_Return || key == Qt::Key_Enter) && !ynPrompt()) {
+    acceptPrompt();
+    return true;
+  }
+  if (ynPrompt()) {
+    const QString t = text.toLower();
+    if (key == Qt::Key_Y || t == QLatin1String("y")) {
+      acceptPrompt();
+      return true;
+    }
+    if (key == Qt::Key_N || t == QLatin1String("n")) {
+      escape();
+      return true;
+    }
+    return true;
+  }
+  return false;
+}
+
 void KeyMachine::escape() {
-  if (!m_promptKind.isEmpty()) {
+  if (m_mode == Mode::RenameInline || m_mode == Mode::ConfirmDialog ||
+      !m_promptKind.isEmpty()) {
     clearConfirm();
     setStatusMessage(QString());
+    setMode(Mode::ListFocused);
     return;
   }
   if (m_helpOpen) {
@@ -378,6 +594,12 @@ void KeyMachine::escape() {
     closePeek();
     return;
   }
+  if (m_mode == Mode::VisualSelect) {
+    if (m_selection)
+      m_selection->exitVisual();
+    setMode(Mode::ListFocused);
+    return;
+  }
   if (m_mode != Mode::ListFocused) {
     if (m_mode == Mode::FieldSearch || isSearchText(m_fieldText))
       cancelSearch();
@@ -390,11 +612,18 @@ void KeyMachine::escape() {
     setMode(Mode::ListFocused);
     return;
   }
+  if (m_selection && m_selection->selectedCount() > 1) {
+    m_selection->collapseToCursor();
+    return;
+  }
   if (!m_fieldText.isEmpty() || (m_proxy && !m_proxy->filter().isEmpty())) {
     if (isSearchText(m_fieldText))
       cancelSearch();
     clearFieldAndFilter();
+    return;
   }
+  if (m_chooserMode)
+    emit dismissRequested();
 }
 
 void KeyMachine::acceptField() {
@@ -496,7 +725,8 @@ void KeyMachine::runSearch() {
       m_nav->navigate(QStringLiteral("search://"));
     else
       m_model->setPath(QStringLiteral("search://"));
-  }
+  } else if (m_search->query() == query && m_search->root() == root)
+    return;
   m_search->start(query, root, m_model && m_model->showHidden());
 }
 
@@ -526,12 +756,25 @@ void KeyMachine::revealCurrent() {
 
 void KeyMachine::finishCommand() {
   clearFieldAndFilter();
+  if (m_mode == Mode::ConfirmDialog || m_mode == Mode::RenameInline)
+    return;
   if (m_promptKind.isEmpty())
     setStatusMessage(QString());
   setMode(Mode::ListFocused);
 }
 
 void KeyMachine::runCommand(const QString &text) {
+  const QString stripped = CommandPalette::stripSigil(text);
+  if (stripped.compare(QLatin1String("sort"), Qt::CaseInsensitive) == 0 ||
+      stripped.startsWith(QLatin1String("sort "), Qt::CaseInsensitive)) {
+    QString info;
+    if (!applySortCommand(stripped, &info))
+      return;
+    finishCommand();
+    if (!info.isEmpty())
+      setStatusMessage(info);
+    return;
+  }
   CommandSpec spec;
   QString err;
   if (!m_palette.resolve(text, &spec, &err)) {
@@ -567,9 +810,16 @@ bool KeyMachine::runBuiltin(const QString &id, QString *info) {
     return true;
   }
   if (id == QLatin1String("hidden")) {
-    if (m_model)
+    if (m_model) {
       m_model->setShowHidden(!m_model->showHidden());
+      if (info)
+        *info = m_model->showHidden() ? QStringLiteral("hidden on")
+                                      : QStringLiteral("hidden off");
+    }
     return true;
+  }
+  if (id == QLatin1String("sort")) {
+    return applySortCommand(QStringLiteral("sort"), info);
   }
   if (id == QLatin1String("grid")) {
     setGridMode(true);
@@ -597,6 +847,8 @@ bool KeyMachine::runBuiltin(const QString &id, QString *info) {
   }
   if (id == QLatin1String("recent"))
     return runRecent(info);
+  if (id == QLatin1String("pin") || id == QLatin1String("unpin"))
+    return runPinCommand(id, info);
   if (id == QLatin1String("empty")) {
     if (!m_model || !m_model->isTrash()) {
       if (info)
@@ -610,12 +862,114 @@ bool KeyMachine::runBuiltin(const QString &id, QString *info) {
   return false;
 }
 
+bool KeyMachine::applySortCommand(const QString &text, QString *info) {
+  if (!m_proxy) {
+    setStatusMessage(QStringLiteral("sort is not available"));
+    return false;
+  }
+  const QStringList parts =
+      text.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+  QString role = m_proxy->sortRoleName();
+  QString order = m_proxy->sortOrder();
+  bool touched = false;
+  for (int i = 1; i < parts.size(); ++i) {
+    const QString p = parts.at(i).toLower();
+    if (p == QLatin1String("name") || p == QLatin1String("size") ||
+        p == QLatin1String("mtime") || p == QLatin1String("type")) {
+      role = p;
+      touched = true;
+    } else if (p == QLatin1String("asc") || p == QLatin1String("desc")) {
+      order = p;
+      touched = true;
+    } else {
+      setStatusMessage(QStringLiteral("sort name|size|mtime|type [asc|desc]"));
+      return false;
+    }
+  }
+  if (!touched)
+    order = order == QLatin1String("desc") ? QStringLiteral("asc")
+                                           : QStringLiteral("desc");
+  m_proxy->setSortRoleName(role);
+  m_proxy->setSortOrder(order);
+  if (info)
+    *info = QStringLiteral("sort %1 %2")
+                .arg(m_proxy->sortRoleName(), m_proxy->sortOrder());
+  return true;
+}
+
 bool KeyMachine::runRecent(QString *info) {
   Q_UNUSED(info);
   if (m_nav)
     m_nav->navigate(QStringLiteral("recent://"));
   else if (m_model)
     m_model->setPath(QStringLiteral("recent://"));
+  return true;
+}
+
+QString KeyMachine::pinTarget() const {
+  if (m_selection) {
+    const QString cursor = m_selection->cursorPath();
+    if (!cursor.isEmpty() && !DirectoryModel::isVirtualPath(cursor)) {
+      const QFileInfo fi(cursor);
+      if (fi.isDir()) {
+        const QString canon = fi.canonicalFilePath();
+        return canon.isEmpty() ? fi.absoluteFilePath() : canon;
+      }
+    }
+  }
+  if (!m_model)
+    return {};
+  const QString cwd = m_model->path();
+  if (cwd.isEmpty() || DirectoryModel::isVirtualPath(cwd))
+    return {};
+  const QFileInfo fi(cwd);
+  if (!fi.isDir())
+    return {};
+  const QString canon = fi.canonicalFilePath();
+  return canon.isEmpty() ? fi.absoluteFilePath() : canon;
+}
+
+bool KeyMachine::runPinCommand(const QString &id, QString *info) {
+  if (!m_chips) {
+    setStatusMessage(QStringLiteral("pins are not available"));
+    return false;
+  }
+  const QString path = pinTarget();
+  if (path.isEmpty()) {
+    setStatusMessage(QStringLiteral("cannot pin this location"));
+    return false;
+  }
+  const bool pinned = m_chips->isPinned(path);
+  const bool wantPin = id != QLatin1String("unpin");
+  if (wantPin && pinned) {
+    if (!m_chips->unpin(path)) {
+      setStatusMessage(QStringLiteral("cannot unpin"));
+      return false;
+    }
+    if (info)
+      *info = QStringLiteral("unpinned %1").arg(QFileInfo(path).fileName());
+    return true;
+  }
+  if (!wantPin) {
+    if (!pinned) {
+      if (info)
+        *info = QStringLiteral("not pinned");
+      return true;
+    }
+    if (!m_chips->unpin(path)) {
+      setStatusMessage(QStringLiteral("cannot unpin"));
+      return false;
+    }
+    if (info)
+      *info = QStringLiteral("unpinned %1").arg(QFileInfo(path).fileName());
+    return true;
+  }
+  if (!m_chips->pin(path)) {
+    setStatusMessage(QStringLiteral("cannot pin"));
+    return false;
+  }
+  if (info)
+    *info = QStringLiteral("pinned %1").arg(QFileInfo(path).fileName());
   return true;
 }
 
@@ -678,18 +1032,25 @@ bool KeyMachine::isReservedVerb(int key, int modifiers) {
   case Qt::Key_N:
   case Qt::Key_R:
   case Qt::Key_Y:
-  case Qt::Key_D:
   case Qt::Key_P:
   case Qt::Key_U:
   case Qt::Key_T:
   case Qt::Key_G:
+  case Qt::Key_Delete:
     return !shift;
+  case Qt::Key_W:
+  case Qt::Key_A:
+  case Qt::Key_S:
+  case Qt::Key_D:
+  case Qt::Key_Q:
+  case Qt::Key_E:
   case Qt::Key_V:
   case Qt::Key_Period:
   case Qt::Key_Slash:
   case Qt::Key_Colon:
   case Qt::Key_Question:
   case Qt::Key_F1:
+  case Qt::Key_X:
   case Qt::Key_Space:
   case Qt::Key_Return:
   case Qt::Key_Enter:
@@ -708,11 +1069,98 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
   const bool alt = hasAlt(modifiers);
   const bool chord = hasChord(modifiers);
   const bool shift = hasShift(modifiers);
+  const bool ctrl = hasCtrl(modifiers);
+  const bool meta = hasMeta(modifiers);
+
+  if (key == Qt::Key_Space && ctrl && !alt && !meta) {
+    if (m_selection && (!m_chooserMode || m_chooserMultiple))
+      m_selection->toggleCursor();
+    return true;
+  }
+  if (key == Qt::Key_A && ctrl && !alt && !meta) {
+    if (m_selection && (!m_chooserMode || m_chooserMultiple))
+      m_selection->selectAll();
+    return true;
+  }
+  if ((key == Qt::Key_Y && !alt && !chord && !shift) ||
+      (key == Qt::Key_C && ctrl && !alt && !meta)) {
+    if (!m_chooserMode && m_fileOps)
+      m_fileOps->copySelection();
+    return true;
+  }
+  if ((key == Qt::Key_X && !alt && !chord && !shift) ||
+      (key == Qt::Key_X && ctrl && !alt && !meta)) {
+    if (!m_chooserMode && m_fileOps)
+      m_fileOps->cutSelection();
+    return true;
+  }
+  if (!alt && !chord &&
+      (key == Qt::Key_W || key == Qt::Key_A || key == Qt::Key_S ||
+       key == Qt::Key_D)) {
+    int dx = 0;
+    int dy = 0;
+    if (key == Qt::Key_W)
+      dy = -1;
+    else if (key == Qt::Key_S)
+      dy = 1;
+    else if (key == Qt::Key_A)
+      dx = -1;
+    else
+      dx = 1;
+    nudgeCursor(dx, dy, shift);
+    return true;
+  }
+  if ((key == Qt::Key_P && !alt && !chord && !shift) ||
+      (key == Qt::Key_V && ctrl && !alt && !meta)) {
+    if (!m_chooserMode && m_fileOps)
+      m_fileOps->paste();
+    return true;
+  }
+  if (key == Qt::Key_V && shift && !alt && !chord) {
+    if (m_selection && (!m_chooserMode || m_chooserMultiple)) {
+      if (m_mode == Mode::VisualSelect) {
+        m_selection->exitVisual();
+        setMode(Mode::ListFocused);
+      } else {
+        m_selection->enterVisual();
+        setMode(Mode::VisualSelect);
+      }
+    }
+    return true;
+  }
+  if (key == Qt::Key_N && !alt && !chord && !shift) {
+    if (!m_chooserMode)
+      startMkdir();
+    return true;
+  }
+  if ((key == Qt::Key_R && !alt && !chord && !shift) ||
+      (key == Qt::Key_F2 && !alt && !chord)) {
+    if (!m_chooserMode)
+      startRename();
+    return true;
+  }
+  if ((key == Qt::Key_U && !alt && !chord && !shift) ||
+      (key == Qt::Key_Z && ctrl && !alt && !meta)) {
+    if (!m_chooserMode && m_fileOps)
+      m_fileOps->undo();
+    return true;
+  }
+  if (key == Qt::Key_Delete && !alt && !chord) {
+    if (m_chooserMode)
+      return true;
+    if (shift || (m_model && m_model->isTrash()))
+      startUnlinkConfirm();
+    else if (m_fileOps)
+      m_fileOps->trashSelection();
+    return true;
+  }
 
   if (key == Qt::Key_J || key == Qt::Key_Down) {
     if (alt || chord)
       return false;
-    if (m_proxy)
+    if (m_selection)
+      m_selection->moveCursor(1);
+    else if (m_proxy)
       m_proxy->moveCursor(1);
     else if (m_model)
       m_model->moveCursor(1);
@@ -721,7 +1169,9 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
   if (key == Qt::Key_K || key == Qt::Key_Up) {
     if (alt || chord)
       return false;
-    if (m_proxy)
+    if (m_selection)
+      m_selection->moveCursor(-1);
+    else if (m_proxy)
       m_proxy->moveCursor(-1);
     else if (m_model)
       m_model->moveCursor(-1);
@@ -730,13 +1180,20 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
   if (key == Qt::Key_Return || key == Qt::Key_Enter) {
     if (alt || chord)
       return false;
-    if (m_proxy)
+    if (m_chooserMode) {
+      emit chooserAcceptRequested();
+      return true;
+    }
+    if (m_selection)
+      m_selection->activate();
+    else if (m_proxy)
       m_proxy->activateCurrent();
     else if (m_model)
       m_model->activateCurrent();
     return true;
   }
-  if (key == Qt::Key_L && !alt && !chord && !shift) {
+  if ((key == Qt::Key_L || key == Qt::Key_Right || key == Qt::Key_E) &&
+      !alt && !chord && !shift) {
     const bool isDir = m_model && m_model->currentIsDir();
     if (!isDir && m_host) {
       m_host->openCurrent();
@@ -753,8 +1210,9 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
       m_host->toggle();
     return true;
   }
-  if ((key == Qt::Key_H || key == Qt::Key_Backspace) && !alt && !chord &&
-      !shift) {
+  if ((key == Qt::Key_H || key == Qt::Key_Backspace || key == Qt::Key_Left ||
+       key == Qt::Key_Q) &&
+      !alt && !chord && !shift) {
     if (m_nav)
       m_nav->goUp();
     return true;
@@ -769,9 +1227,33 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
       m_nav->goForward();
     return true;
   }
+  if (m_chooserMode &&
+      (key == Qt::Key_BracketLeft || key == Qt::Key_BracketRight) && !alt &&
+      !chord && !shift) {
+    emit filterCycleRequested(key == Qt::Key_BracketRight ? 1 : -1);
+    return true;
+  }
+  if ((key == Qt::Key_Tab || key == Qt::Key_Backtab) && !alt && !chord) {
+    toggleSearchField();
+    return true;
+  }
+  if ((key == Qt::Key_P && shift && !alt && !chord)) {
+    QString info;
+    runPinCommand(QStringLiteral("pin"), &info);
+    if (!info.isEmpty())
+      setStatusMessage(info);
+    return true;
+  }
   if (key == Qt::Key_Period && !alt && !chord && !shift) {
-    if (m_model)
+    if (m_selection)
+      m_selection->exitVisual();
+    if (m_mode == Mode::VisualSelect)
+      setMode(Mode::ListFocused);
+    if (m_model) {
       m_model->setShowHidden(!m_model->showHidden());
+      setStatusMessage(m_model->showHidden() ? QStringLiteral("hidden on")
+                                             : QStringLiteral("hidden off"));
+    }
     return true;
   }
   if (key == Qt::Key_Slash && !alt && !chord) {
@@ -807,10 +1289,47 @@ void KeyMachine::seek(const QString &chunk) {
     m_proxy->seekPrefix(m_seek);
 }
 
+bool KeyMachine::handleDoKey(int key, int modifiers) {
+  if (!m_host || !m_host->actionOpen())
+    return false;
+  const bool params = m_host->doParamsFocused();
+  if (key == Qt::Key_Escape ||
+      (key == Qt::Key_Q && !hasChord(modifiers) && !hasAlt(modifiers) &&
+       !hasShift(modifiers))) {
+    closeAction();
+    return true;
+  }
+  if (key == Qt::Key_A && !hasChord(modifiers) && !hasAlt(modifiers) &&
+      !hasShift(modifiers)) {
+    m_host->setDoParamsFocused(false);
+    return true;
+  }
+  if (key == Qt::Key_D && !hasChord(modifiers) && !hasAlt(modifiers) &&
+      !hasShift(modifiers)) {
+    m_host->setDoParamsFocused(true);
+    return true;
+  }
+  if ((key == Qt::Key_Return || key == Qt::Key_Enter) && !hasAlt(modifiers) &&
+      !hasMeta(modifiers)) {
+    if (hasCtrl(modifiers))
+      return true;
+    if (params && m_host->deliverDoKey(key, modifiers))
+      return true;
+    m_host->runDoVerb();
+    return true;
+  }
+  if (params && m_host->deliverDoKey(key, modifiers))
+    return true;
+  if (key == Qt::Key_J || key == Qt::Key_Down || key == Qt::Key_S)
+    m_host->doMove(1);
+  else if (key == Qt::Key_K || key == Qt::Key_Up || key == Qt::Key_W)
+    m_host->doMove(-1);
+  return true;
+}
+
 bool KeyMachine::handlePeekKey(int key, int modifiers) {
   if ((key == Qt::Key_Return || key == Qt::Key_Enter) && hasCtrl(modifiers) &&
       !hasAlt(modifiers) && !hasMeta(modifiers)) {
-    closeOverlays();
     emit openWithRequested();
     return true;
   }
@@ -821,19 +1340,118 @@ bool KeyMachine::handlePeekKey(int key, int modifiers) {
     emit terminalRequested();
     return true;
   }
-  if (key == Qt::Key_Space || key == Qt::Key_Escape) {
+  if (key == Qt::Key_Escape) {
     if (m_host)
       m_host->close();
     else
       setMode(Mode::ListFocused);
     return true;
   }
-  if (key == Qt::Key_J || key == Qt::Key_Down) {
+  if (m_chooserMode &&
+      (key == Qt::Key_BracketLeft || key == Qt::Key_BracketRight) &&
+      !hasShift(modifiers)) {
+    emit filterCycleRequested(key == Qt::Key_BracketRight ? 1 : -1);
+    return true;
+  }
+  if ((key == Qt::Key_Return || key == Qt::Key_Enter) &&
+      !hasShift(modifiers) && !hasChord(modifiers) && !hasAlt(modifiers)) {
+    if (m_chooserMode) {
+      emit chooserAcceptRequested();
+      return true;
+    }
+    if (m_host)
+      m_host->commitPeek();
+    return true;
+  }
+  if (key == Qt::Key_Space && !hasShift(modifiers)) {
+    if (m_host && m_host->folderListing()) {
+      m_host->peekActivate();
+      return true;
+    }
+    if (m_host && m_host->inFolderPeek()) {
+      m_host->peekBack();
+      return true;
+    }
+    if (m_host)
+      m_host->close();
+    else
+      setMode(Mode::ListFocused);
+    return true;
+  }
+  const bool listing = m_host && m_host->folderListing();
+  const bool filePeek = m_host && m_host->isOpen() && !listing;
+  const bool previewOn = filePeek && m_host->peekPreviewFocused();
+
+  if (filePeek && !m_host->inFolderPeek() && !hasShift(modifiers) &&
+      (key == Qt::Key_Q || key == Qt::Key_H || key == Qt::Key_Left ||
+       key == Qt::Key_Backspace)) {
+    m_host->close();
+    return true;
+  }
+
+  if (m_host && m_host->inFolderPeek()) {
+    if ((key == Qt::Key_H || key == Qt::Key_Left || key == Qt::Key_Backspace ||
+         key == Qt::Key_Q) &&
+        !hasShift(modifiers)) {
+      m_host->peekBack();
+      return true;
+    }
+    if ((key == Qt::Key_L || key == Qt::Key_Right || key == Qt::Key_E) &&
+        !hasShift(modifiers) && !previewOn) {
+      m_host->peekActivate();
+      return true;
+    }
+    if (listing && (key == Qt::Key_W || key == Qt::Key_A || key == Qt::Key_S ||
+                    key == Qt::Key_D)) {
+      int dx = 0;
+      int dy = 0;
+      if (key == Qt::Key_W)
+        dy = -1;
+      else if (key == Qt::Key_S)
+        dy = 1;
+      else if (key == Qt::Key_A)
+        dx = -1;
+      else
+        dx = 1;
+      const int step = hasShift(modifiers) ? 5 : 1;
+      const int stride = m_host ? m_host->peekGridStride() : 1;
+      const int delta = dy * step * stride + dx * step;
+      if (delta != 0)
+        m_host->peekMove(delta);
+      return true;
+    }
+  }
+
+  // A/D hop index ↔ file. Qt focus stays on the list. S is scroll, not hop.
+  if (filePeek && !hasShift(modifiers)) {
+    if (key == Qt::Key_A) {
+      if (previewOn)
+        m_host->setPeekPreviewFocused(false);
+      return true;
+    }
+    if (key == Qt::Key_D && !previewOn) {
+      m_host->setPeekPreviewFocused(true);
+      return true;
+    }
+  }
+
+  if (previewOn && !hasChord(modifiers) && !hasAlt(modifiers) &&
+      key != Qt::Key_J && key != Qt::Key_K && key != Qt::Key_T &&
+      key != Qt::Key_Escape && key != Qt::Key_Space && key != Qt::Key_Q) {
+    if (m_host->deliverPeekKey(key, modifiers))
+      return true;
+    if (key == Qt::Key_W || key == Qt::Key_S || key == Qt::Key_Up ||
+        key == Qt::Key_Down || key == Qt::Key_PageUp ||
+        key == Qt::Key_PageDown || key == Qt::Key_Tab)
+      return true;
+  }
+
+  if (key == Qt::Key_J || key == Qt::Key_Down || key == Qt::Key_S) {
     if (m_host)
       m_host->step(1);
     return true;
   }
-  if (key == Qt::Key_K || key == Qt::Key_Up) {
+  if (key == Qt::Key_K || key == Qt::Key_Up || key == Qt::Key_W) {
     if (m_host)
       m_host->step(-1);
     return true;
@@ -842,11 +1460,16 @@ bool KeyMachine::handlePeekKey(int key, int modifiers) {
 }
 
 bool KeyMachine::handleListKey(int key, int modifiers, const QString &text) {
+  if (handleChooserPromptKey(key, modifiers))
+    return true;
+  if (m_host && m_host->actionOpen())
+    return handleDoKey(key, modifiers);
   if (m_mode == Mode::PeekOpen)
     return handlePeekKey(key, modifiers);
-  if (!m_promptKind.isEmpty())
+  if (m_mode == Mode::RenameInline || m_mode == Mode::ConfirmDialog ||
+      !m_promptKind.isEmpty())
     return handleConfirmKey(key, modifiers, text);
-  if (m_mode != Mode::ListFocused)
+  if (m_mode != Mode::ListFocused && m_mode != Mode::VisualSelect)
     return false;
 
   if (key == Qt::Key_K && hasCtrl(modifiers) && !hasAlt(modifiers) &&
@@ -861,7 +1484,6 @@ bool KeyMachine::handleListKey(int key, int modifiers, const QString &text) {
   }
   if ((key == Qt::Key_Return || key == Qt::Key_Enter) &&
       hasCtrl(modifiers) && !hasAlt(modifiers) && !hasMeta(modifiers)) {
-    closeOverlays();
     emit openWithRequested();
     return true;
   }
@@ -897,10 +1519,17 @@ bool KeyMachine::handleListKey(int key, int modifiers, const QString &text) {
 }
 
 bool KeyMachine::handleFieldKey(int key, int modifiers) {
+  if (handleChooserPromptKey(key, modifiers))
+    return true;
   if (m_mode == Mode::ListFocused)
     return false;
   if (key == Qt::Key_Escape) {
     escape();
+    return true;
+  }
+  if ((key == Qt::Key_Tab || key == Qt::Key_Backtab) &&
+      !hasAlt(modifiers) && !hasChord(modifiers)) {
+    toggleSearchField();
     return true;
   }
   if (key == Qt::Key_Return || key == Qt::Key_Enter) {

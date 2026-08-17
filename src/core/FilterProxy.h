@@ -2,8 +2,14 @@
 
 #include <QSortFilterProxyModel>
 #include <QString>
+#include <QVector>
 
 class DirectoryModel;
+
+struct PortalFilterRule {
+  uint type = 0; // 0 = glob, 1 = mime
+  QString pattern;
+};
 
 // Name substring filter in C++ so the command field never walks rows in QML.
 class FilterProxy : public QSortFilterProxyModel {
@@ -40,6 +46,8 @@ public:
   Q_INVOKABLE void activateCurrent();
   Q_INVOKABLE QString currentName() const;
   Q_INVOKABLE int seekPrefix(const QString &prefix);
+  Q_INVOKABLE void requestVisibleThumbs(int first, int last, int sizePx);
+  void setPortalRules(const QVector<PortalFilterRule> &rules);
 
 signals:
   void filterChanged();
@@ -61,8 +69,40 @@ private:
   bool keepSourceOrder() const;
   static int roleFromName(const QString &name);
 
+  bool matchesPortal(const QString &name, const QString &path, bool isDir,
+                     const QString &mime) const;
+
   QString m_filter;
   QString m_sortRole = QStringLiteral("name");
   QString m_sortOrder = QStringLiteral("asc");
   bool m_syncing = false;
+  QVector<PortalFilterRule> m_portalRules;
+};
+
+// Peek grid index: files only. Source is a FilterProxy.
+class FilesOnlyProxy : public QSortFilterProxyModel {
+  Q_OBJECT
+  Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY
+                 currentIndexChanged)
+  Q_PROPERTY(int count READ count NOTIFY countChanged)
+
+public:
+  explicit FilesOnlyProxy(QObject *parent = nullptr);
+
+  void setListing(FilterProxy *src);
+  int currentIndex() const;
+  Q_INVOKABLE void setCurrentIndex(int proxyRow);
+  int count() const { return rowCount(); }
+  Q_INVOKABLE void requestVisibleThumbs(int first, int last, int sizePx);
+
+signals:
+  void currentIndexChanged();
+  void countChanged();
+
+protected:
+  bool filterAcceptsRow(int sourceRow,
+                        const QModelIndex &sourceParent) const override;
+
+private:
+  FilterProxy *m_listing = nullptr;
 };

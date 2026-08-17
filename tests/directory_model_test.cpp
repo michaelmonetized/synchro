@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QImage>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -139,6 +140,7 @@ private slots:
   void staleWatchCreateDoesNotClobberNewPath();
   void staleDeleteSelfDoesNotKickNewPath();
   void deleteDuringListingIsNotResurrected();
+  void visibleThumbsFillPngAndFolderMosaic();
 
 private:
   QTemporaryDir m_fixture;
@@ -1022,6 +1024,41 @@ void DirectoryModelTest::samePathSetPathIsNoop() {
   QCOMPARE(pathSpy.count(), 0);
   QCOMPARE(model.rowCount(), static_cast<int>(before));
   QVERIFY(!model.listing());
+}
+
+void DirectoryModelTest::visibleThumbsFillPngAndFolderMosaic() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("album")));
+  auto writeColor = [](const QString &path, QRgb color) {
+    QImage img(24, 24, QImage::Format_RGB32);
+    img.fill(color);
+    return img.save(path, "PNG");
+  };
+  QVERIFY(writeColor(tmp.filePath(QStringLiteral("shot.png")), qRgb(200, 30, 30)));
+  QVERIFY(writeColor(tmp.filePath(QStringLiteral("album/a.png")),
+                     qRgb(30, 200, 30)));
+  QVERIFY(writeColor(tmp.filePath(QStringLiteral("album/b.png")),
+                     qRgb(30, 30, 200)));
+
+  DirectoryModel model;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  model.requestVisibleThumbs(0, model.rowCount() - 1, 128);
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        const int shot = findRow(model, QStringLiteral("shot.png"));
+        const int album = findRow(model, QStringLiteral("album"));
+        if (shot < 0 || album < 0)
+          return false;
+        return !roleAt(model, shot, DirectoryModel::ThumbnailRole)
+                    .toString()
+                    .isEmpty() &&
+               !roleAt(model, album, DirectoryModel::ThumbnailRole)
+                    .toString()
+                    .isEmpty();
+      },
+      4000));
 }
 
 int main(int argc, char **argv) {

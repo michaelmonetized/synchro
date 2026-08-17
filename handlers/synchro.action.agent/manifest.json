@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.action.agent",
+  "name": "Agent",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Open omarchy-agent in the listing directory. The wrapper cds to ~/Work when cwd is $HOME and that folder exists.",
+  "kinds": ["action"],
+  "priority": 50,
+  "match": {
+    "minItems": 0,
+    "maxItems": 1000000,
+    "host": "posix-local"
+  },
+  "entryPoints": {},
+  "action": {
+    "runtime": "exec",
+    "exec": "omarchy-agent",
+    "tryExec": "omarchy-agent"
+  },
+  "permissions": ["exec"]
+}

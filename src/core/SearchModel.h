@@ -108,4 +108,5 @@ private:
   bool m_hidden = false;
   bool m_listing = false;
   bool m_loggedFirst = false;
+  bool m_replaceOnNextHit = false;
 };

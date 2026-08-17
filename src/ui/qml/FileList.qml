@@ -8,11 +8,15 @@ ListView {
     property var filterProxy
     property var navStack
     property var keyMachine
+    property var selection
+    readonly property int selectionEpoch: selection ? selection.epoch : 0
     readonly property int thumbSizePx: 128
 
     signal viewToggleRequested()
+    signal doRequested()
 
     readonly property var rows: filterProxy ? filterProxy : fileModel
+    readonly property bool showCursorChrome: !keyMachine || keyMachine.listFocused
 
     model: list.rows
     clip: true
@@ -28,27 +32,35 @@ ListView {
 
     highlight: Rectangle {
         color: Theme.selectedFill
+        visible: list.showCursorChrome
+    }
+
+    EmptyListing {
+        anchors.centerIn: parent
+        fileModel: list.fileModel
+        filterProxy: list.filterProxy
+    }
+
+    ScrollChrome {
+        flick: list
     }
 
     function syncThumbnails() {
         if (!list.fileModel || !list.visible)
             return
-        if (list.count <= 0) {
-            list.fileModel.requestVisibleThumbs(0, -1, list.thumbSizePx)
+        if (list.count <= 0)
             return
-        }
-        var first = list.indexAt(1, list.contentY + 1)
-        var last = list.indexAt(1, list.contentY + list.height - 2)
-        if (first < 0 && last < 0) {
-            thumbSync.interval = 50
-            thumbSync.start()
-            return
-        }
-        if (first < 0)
-            first = 0
-        if (last < 0)
-            last = Math.min(list.count - 1, first + 40)
-        list.fileModel.requestVisibleThumbs(first, last, list.thumbSizePx)
+        var h = 24
+        if (list.count > 0 && list.contentHeight > 0)
+            h = Math.max(8, list.contentHeight / list.count)
+        var over = 16
+        var first = Math.max(0, Math.floor(list.contentY / h) - over)
+        var last = Math.min(list.count - 1,
+                            Math.ceil((list.contentY + list.height) / h) + over)
+        if (list.filterProxy)
+            list.filterProxy.requestVisibleThumbs(first, last, list.thumbSizePx)
+        else
+            list.fileModel.requestVisibleThumbs(first, last, list.thumbSizePx)
     }
 
     Timer {
@@ -79,6 +91,17 @@ ListView {
         width: ListView.view.width
         height: Math.max(Theme.fontBody + Theme.space(8), 20)
 
+        readonly property bool picked: list.selection &&
+                                       list.selectionEpoch >= 0 &&
+                                       list.selection.isSelected(row.index)
+
+        Rectangle {
+            anchors.fill: parent
+            visible: list.showCursorChrome && row.picked && !row.ListView.isCurrentItem
+            color: Theme.selectedFill
+            opacity: 0.45
+        }
+
         Rectangle {
             anchors.fill: parent
             visible: hover.hovered && !row.ListView.isCurrentItem
@@ -108,15 +131,14 @@ ListView {
                 sourceSize.height: iconBox.height
             }
 
-            Text {
+            FolderMark {
                 anchors.fill: parent
-                visible: row.thumbnail.length === 0
-                verticalAlignment: Text.AlignVCenter
-                horizontalAlignment: Text.AlignHCenter
-                text: row.isDir ? "▸" : row.isSymlink ? "↗" : ""
-                color: Theme.foreground
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontBody
+                visible: row.thumbnail.length === 0 && row.isDir
+            }
+
+            FileMark {
+                anchors.fill: parent
+                visible: row.thumbnail.length === 0 && !row.isDir
             }
         }
 
@@ -135,8 +157,37 @@ ListView {
 
         MouseArea {
             anchors.fill: parent
-            acceptedButtons: Qt.LeftButton
-            onClicked: {
+            acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
+            onClicked: function (mouse) {
+                if (mouse.button === Qt.MiddleButton) {
+                    list.viewToggleRequested()
+                    return
+                }
+                if (mouse.button === Qt.RightButton) {
+                    if (list.keyMachine && list.keyMachine.mode === "field-search")
+                        list.keyMachine.focusList()
+                    if (list.selection) {
+                        if (!list.selection.isSelected(row.index))
+                            list.selection.click(row.index)
+                    } else if (list.filterProxy) {
+                        list.filterProxy.selectRow(row.index)
+                    } else {
+                        list.fileModel.currentIndex = row.index
+                    }
+                    list.doRequested()
+                    return
+                }
+                if (list.keyMachine && list.keyMachine.mode === "field-search")
+                    list.keyMachine.focusList()
+                if (list.selection) {
+                    if (mouse.modifiers & Qt.ControlModifier)
+                        list.selection.ctrlClick(row.index)
+                    else if (mouse.modifiers & Qt.ShiftModifier)
+                        list.selection.shiftClick(row.index)
+                    else
+                        list.selection.click(row.index)
+                    return
+                }
                 if (list.filterProxy)
                     list.filterProxy.selectRow(row.index)
                 else
@@ -151,6 +202,7 @@ ListView {
         }
     }
 
+    Keys.priority: Keys.BeforeItem
     Keys.onPressed: function (event) {
         if (list.keyMachine &&
                 list.keyMachine.handleListKey(event.key, event.modifiers, event.text)) {
@@ -188,13 +240,15 @@ ListView {
             else
                 list.fileModel.activateCurrent()
             event.accepted = true
-        } else if (event.key === Qt.Key_L && !alt && !chord && !shift) {
+        } else if ((event.key === Qt.Key_L || event.key === Qt.Key_Right) &&
+                   !alt && !chord && !shift) {
             if (list.filterProxy)
                 list.filterProxy.activateCurrent()
             else
                 list.fileModel.activateCurrent()
             event.accepted = true
-        } else if ((event.key === Qt.Key_H || event.key === Qt.Key_Backspace) &&
+        } else if ((event.key === Qt.Key_H || event.key === Qt.Key_Backspace ||
+                    event.key === Qt.Key_Left) &&
                    !alt && !chord && !shift) {
             if (list.navStack)
                 list.navStack.goUp()
@@ -217,7 +271,8 @@ ListView {
     }
 
     onActiveFocusChanged: {
-        if (activeFocus && list.keyMachine && list.keyMachine.fieldFocused)
+        if (activeFocus && list.keyMachine && list.keyMachine.fieldFocused &&
+                list.keyMachine.mode !== "field-search")
             list.keyMachine.focusList()
     }
 

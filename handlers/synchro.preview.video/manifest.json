@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.preview.video",
+  "name": "Video preview",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "In-window muted video peek via Qt Multimedia. Does not execute file content.",
+  "kinds": ["preview"],
+  "priority": 58,
+  "keepLoaded": true,
+  "match": {
+    "mime": [
+      "video/mp4",
+      "video/x-matroska",
+      "video/quicktime",
+      "video/webm",
+      "video/x-msvideo",
+      "video/mpeg",
+      "video/ogg",
+      "video/x-ms-wmv",
+      "video/3gpp"
+    ],
+    "suffix": [
+      ".mp4", ".m4v", ".mkv", ".mov", ".webm", ".avi", ".mpeg", ".mpg",
+      ".ogv", ".wmv", ".3gp"
+    ],
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {
+    "preview": "Preview.qml"
+  },
+  "preview": {
+    "runtime": "inprocess",
+    "autoplay": true
+  },
+  "permissions": ["fs-read"]
+}

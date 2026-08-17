@@ -1,20 +1,47 @@
 # Synchro
 
-Omarchy file OS: a themed Qt Quick browser, an opt-in OS file picker, and a
-handler contract. Nautilus stays the packaged folder app. This repo does not
-edit `/usr/share/omarchy/`.
+Omarchy-native file OS: a Qt Quick browser, an opt-in OS file picker, and a
+handler contract that works like Omarchy / Quickshell plugins — without living
+inside `omarchy-shell`.
 
-## Build and run
+Nautilus stays the packaged folder app. This repo does not edit
+`/usr/share/omarchy/`.
+
+**Status: work in progress.** The window is daily-driveable on Omarchy 4
+(Hyprland + Quickshell chrome + Qt 6.11). Peek, the do-layer, first-party
+handlers, trash, thumbs, and an opt-in FileChooser portal are in-tree. Folder
+MIME, Super+Shift+F, and session-default picker are **not** stolen yet.
+
+## Why it exists
+
+Omarchy's desktop chrome is one long-running Quickshell process
+(`omarchy-shell`). Plugins for the bar, panels, and overlays install with
+`omarchy plugin add <git-url>` — a `manifest.json`, reserved `omarchy.*` ids,
+and an unsandboxed-code warning.
+
+Synchro copies that **ritual**, not the process:
+
+- Same instinct: a git repo, a manifest, kinds + entry points, `synchro handler add`.
+- Different address space: handlers load in Synchro (in-process QML) or as a
+  detached peer (`omawrite %f`, `omacut %f`). They never join `omarchy-shell`.
+- A file-manager crash must not take the bar, lock screen, or polkit with it.
+
+If you already write Omarchy plugins or Qt Quick apps, you already know how to
+extend Synchro.
+
+## Use it
 
 ```bash
-cmake -S . -B build -G Ninja && cmake --build build && ./build/synchro
+cmake -S . -B build -G Ninja
+cmake --build build
+./build/synchro
+./build/synchro ~/Pictures
 ```
 
-`--new-window` is accepted and is the default (new process). A positional
-`[path]` opens that directory.
+`--new-window` is accepted and is the default (new process).
 
-Optional develop install (puts `synchro` and the launchers on `~/.local/bin`,
-and the portal/D-Bus files under `~/.local/share`):
+Optional develop install (binary + launchers on `~/.local/bin`, portal/D-Bus
+files under `~/.local/share`):
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX="$HOME/.local"
@@ -22,8 +49,243 @@ cmake --build build
 cmake --install build
 ```
 
-`packaging/omarchy/` is a **user overlay**. CMake never installs those files
-into `/usr/share/omarchy/`.
+`packaging/omarchy/` is a **user overlay**. CMake never writes `/usr/share/omarchy/`.
+
+### Keys
+
+The list is focused on launch. The command field is always visible; it is not
+an always-focused omnibar.
+
+| Key | What it does |
+|---|---|
+| `j`/`k` · `WASD` | Move. Shift+WASD leaps 5. |
+| `h` / `Q` / Backspace | Up a directory |
+| `l` / `E` / Right | Into a folder, or peek a file |
+| `Enter` | Open the file, or enter the folder |
+| `Space` | Peek (look). Esc / Q / Space again leave. |
+| `Ctrl+Enter` / right-click | Do-layer (sticky actions + params) |
+| `/` · `Ctrl+K` | Filter the listing |
+| `:` | Command palette (`:trash` `:home` `:hidden` `:help`) |
+| `Ctrl+L` | Jump (current path selected) |
+| `?name` | Name search via `fd` |
+| `v` | List / grid. `V` is visual select. |
+| `y` `x` `p` | Copy / cut / paste |
+| `Delete` | Trash. `u` undoes. |
+| `t` | Terminal in this folder |
+| `F1` / `:?` | Key reference |
+
+Peek is **look**. Enter is **commit**. The do-layer is **do**.
+
+**Peek.** Space on a file opens the preview overlay. `A`/`D` hop the index ↔
+the file; `W`/`S` then scroll the preview (sqlite / duckdb / text / archives
+are interactive). Enter / double-click in peek is the same commit as the root
+listing.
+
+**Do-layer.** Ctrl+Enter and right-click open the same sticky surface. Actions
+on the left, look box on the right (file preview, or a large folder mosaic).
+If the action has QML params, they mount under the look box — format picks,
+open-with list, whatever the handler shipped. `W`/`S` change verbs. `A`/`D`
+hop verbs ↔ params (or the preview). Enter runs. Esc / Q leave.
+
+## Extend it
+
+This is the product. Almost everything that *interprets* a file is a handler.
+The core owns listing, navigation, selection, search, thumbnails, trash, and
+the registry.
+
+### Kinds
+
+| Kind | When it runs | Typical runtime |
+|---|---|---|
+| `preview` | Peek (Space) and the do-layer look box | In-process QML |
+| `open` | Enter / double-click | `exec` of a peer (`omawrite %f`) |
+| `action` | Do-layer, `:` palette, or a key | `exec`, core verb, or QML params |
+| `folder` | Entering a matching directory | Banner QML only (v1) |
+| `location` | Jump chip / `:name` | Path, core adapter, or chrome QML |
+| `thumbnail` | Listing / mosaic tiles | Core verb or system `.thumbnailer` |
+
+A pack may declare more than one kind (preview + action is common).
+
+### Install (same shape as `omarchy plugin add`)
+
+```bash
+synchro handler add <git-url>          # lands disabled
+synchro handler add <git-url> --enable
+synchro handler list
+synchro handler enable <id>
+synchro handler disable <id>
+synchro handler update [id]
+synchro handler remove <id>
+synchro handler validate <dir>
+```
+
+`--yes` skips the warning and the confirm prompts.
+
+Third-party trees land in `~/.config/synchro/handlers/<id>/`. First-party
+handlers ship in this repo under `handlers/` and load by default.
+
+**Reserved namespaces:** `synchro.*` and `omarchy.*` are first-party only.
+`synchro handler add` will reject them.
+
+**Threat model:** handlers are unsandboxed user code — in-process QML or a
+detached exec — same as Omarchy plugins. Review the repo before you enable it.
+
+### Anatomy of a handler
+
+A handler is a directory:
+
+```
+my.preview.notes/
+  manifest.json
+  Preview.qml          # only if the kind needs QML
+```
+
+`manifest.json` is the same idea as an Omarchy plugin manifest:
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "acme.preview.notes",
+  "name": "Notes peek",
+  "version": "1.0.0",
+  "author": "you",
+  "license": "MIT",
+  "description": "Peek a .note file as text.",
+  "kinds": ["preview"],
+  "priority": 70,
+  "match": {
+    "suffix": [".note"],
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {
+    "preview": "Preview.qml"
+  },
+  "preview": {
+    "runtime": "inprocess"
+  }
+}
+```
+
+Rules that match `omarchy-plugin-validate`:
+
+- Entry points are relative, no leading `/`, no `..`, and must exist.
+- No symlinks that escape the handler folder.
+- `folder.replaceListing` is rejected (the host owns the listing model).
+- `preview` / QML `action` need an entry point. `open` and exec `action` may
+  be manifest-only.
+
+Validate before you push:
+
+```bash
+synchro handler validate ./my.preview.notes
+```
+
+### In-process QML
+
+Preview and action QML root on `HandlerSurface`:
+
+```qml
+import QtQuick
+import Synchro.Handler 1.0
+import Synchro.Theme 1.0
+
+HandlerSurface {
+    id: root
+    // injected: file, selection, host, manifest
+
+    Text {
+        anchors.fill: parent
+        anchors.margins: Theme.space(8)
+        color: Theme.foreground
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.fontBody
+        wrapMode: Text.Wrap
+        text: {
+            var p = root.host.readPreview(root.file, 65536)
+            return p.text || p.error || ""
+        }
+    }
+}
+```
+
+The list keeps Qt focus. Esc / Space / Q stay with Synchro.
+
+- **Peek:** implement `peekKey(key, modifiers)` (return true if consumed)
+  and/or set `peekFlickable`. `A`/`D` hop index ↔ file; `W`/`S` then call
+  `peekKey`.
+- **Do-layer params:** implement `commit()` (Enter runs it) and optional
+  `actionKey(key, modifiers)`. The QML mounts on the right, under the look
+  box. See `handlers/synchro.action.copy-as/`.
+
+Useful `host` calls (read-only first-party policy — do not execute the file):
+
+| Call | Use |
+|---|---|
+| `host.readPreview(file, maxBytes)` | First N bytes as text |
+| `host.readParquet(file, maxRows)` | Footer schema + sample |
+| `host.readDatabase(file, "sqlite"\|"duckdb", table, offset, limit)` | Table browser |
+| `host.readArchive(file, maxEntries)` | Zip / tar / gzip members |
+| `host.rasterUrl(file)` | Image URL Qt can paint (WebP rasterized) |
+| `host.copyText(text)` | Clipboard |
+| `host.runOpen(handlerId)` | Run a registered `open` handler |
+| `host.closeAction()` | Leave the do-layer |
+| `host.navigate(url)` / `host.reveal(url)` / `host.openExternal(url)` | Leave this file |
+
+Theme tokens (`Theme.foreground`, `Theme.accent`, `Theme.space(8)`, …) follow
+the active Omarchy theme. Do not import `qs.Commons` — that module belongs to
+the shell.
+
+### Exec peers
+
+Omawrite does not need QML. The first-party wrapper is a manifest:
+
+```json
+{
+  "kinds": ["open"],
+  "entryPoints": {},
+  "open": {
+    "runtime": "exec",
+    "exec": "omawrite %f",
+    "tryExec": "omawrite"
+  }
+}
+```
+
+`tryExec` hides the handler when the binary is missing. Field codes follow the
+usual desktop-entry shape (`%f` `%F` `%d`). This is how a future Quickshell
+photo surface, or any Qt Quick peer, attaches: ship a `.desktop`-style exec
+and a Synchro manifest, not a Nautilus Python extension.
+
+### First-party handlers (in-tree)
+
+| Id | Kind | Role |
+|---|---|---|
+| `synchro.preview.image` | preview | Raster peek |
+| `synchro.preview.text` | preview | Highlighted text; unknown text-ish files fall through here |
+| `synchro.preview.markdown` | preview | Rendered markdown (Enter still opens Omawrite) |
+| `synchro.preview.pdf` | preview | PDF peek |
+| `synchro.preview.video` | preview | Video peek |
+| `synchro.preview.parquet` | preview | Schema + sample rows |
+| `synchro.preview.sqlite` | preview | Interactive table / schema browser |
+| `synchro.preview.duckdb` | preview | Same browser; needs `duckdb` on PATH |
+| `synchro.preview.archive` | preview | Zip / tar / gzip member list (no extract) |
+| `synchro.preview.folder` | preview | Folder peek listing |
+| `synchro.open.xdg` | open | `xdg-open` fallback |
+| `synchro.open.omawrite` | open | Markdown → Omawrite |
+| `synchro.open.omacut` | open | Video → Omacut |
+| `synchro.action.open-with` | action | App picker, mounted as do-layer params |
+| `synchro.action.copy-as` | action | Copy path / URI / name (QML params) |
+| `synchro.action.trash` | action | Core trash verb |
+| `synchro.action.terminal` | action | `xdg-terminal-exec --dir=%d` |
+| `synchro.action.agent` | action | `omarchy-agent` in this folder |
+| `synchro.location.home` | location | `$HOME` |
+| `synchro.location.recent` | location | Recents |
+| `synchro.location.trash` | location | XDG trash |
+
+Office docs, audio, 7z, fonts, and a few more previews are still on the
+[preview backlog](PREVIEW-BACKLOG.md).
 
 ## Opt-in FileChooser
 
@@ -56,12 +318,18 @@ org.freedesktop.impl.portal.FileChooser=synchro;gtk
 
 3. `systemctl --user restart xdg-desktop-portal.service`.
 
+4. Optional: keep `--portal` up as a user service. Copy
+   `packaging/systemd/synchro-portal.service` to `~/.config/systemd/user/`,
+   then `systemctl --user daemon-reload && systemctl --user enable --now synchro-portal`.
+   After a rebuild: `systemctl --user restart synchro-portal`.
+   Logs: `journalctl --user -u synchro-portal -f`.
+
 `omarchy file select` already talks to the frontend portal; it is not forked.
-Chooser windows float via `packaging/omarchy/synchro.lua` (see below).
+Chooser windows float via `packaging/omarchy/synchro.lua`.
 
 ## Super+Shift+F overlay
 
-Omarchy still binds Super+Shift+F to Nautilus. To use Synchro locally, append
+Omarchy still binds Super+Shift+F to Nautilus. To try Synchro locally, append
 `packaging/omarchy/bindings-overlay.lua` to `~/.config/hypr/bindings.lua` and
 reload Hyprland:
 
@@ -81,41 +349,6 @@ Window rules: copy `packaging/omarchy/synchro.lua` to
 `~/.config/hypr/hyprland.lua`. Browser windows stay tiled; Open/Save/Select
 titles float.
 
-## Handlers
-
-Third-party handlers are a git repo with a `manifest.json`, same ritual as
-`omarchy plugin add`. They run unsandboxed (in-process QML or a detached
-exec). Review the code. Reserved `synchro.*` / `omarchy.*` ids are first-party
-only.
-
-```bash
-synchro handler add <git-url>          # lands disabled
-synchro handler add <git-url> --enable
-synchro handler list
-synchro handler enable <id>
-synchro handler disable <id>
-synchro handler update [id]
-synchro handler remove <id>
-synchro handler validate <dir>
-```
-
-`--yes` skips the warning and confirm prompts.
-
-## Optional: semantic index
-
-The GUI runs if `synchro-index` is missing. No auto-pull. Opt-in roots live in
-`~/.config/synchro/index.json`.
-
-```bash
-synchro index pull --dry-run   # prints: ollama pull nomic-embed-text
-synchro index pull             # explicit; never runs on first launch
-synchro index start            # systemctl --user start synchro-index.service
-synchro index status
-synchro index reindex [root]
-```
-
-`'` in the command field queries the sidecar. `--portal` never starts it.
-
 ## What this does not take over
 
 - **Folder MIME.** Nautilus remains `xdg-mime query default` for folders.
@@ -124,6 +357,8 @@ synchro index reindex [root]
   under `packaging/omarchy/` as a user overlay.
 - **Session-default FileChooser.** User `hyprland-portals.conf` only.
 - **`org.freedesktop.FileManager1`.** Still Nautilus.
+- **`omarchy-shell`.** Synchro is not a Quickshell plugin and will not become
+  one.
 
 ## Slotting
 
@@ -131,7 +366,14 @@ synchro index reindex [root]
 |---|---|
 | Tiled browser, path bar, chips, command field | Tabs / split |
 | Enter → handler `open` (Omawrite, xdg-open) | FileManager1 |
-| Peek, trash, recents, `?` name search | `??` / `rg` content search |
+| Peek, do-layer, trash, recents, `?` name search | `??` / `rg` content search |
 | Opt-in FileChooser (`synchro --portal`) | Session-default picker |
 | `synchro handler add` | `folder.replaceListing` |
 | Optional `synchro index pull` | Vendored GGUF, LLM chat, Snapper UI |
+
+The long-form product spec is [DESIGN.md](DESIGN.md). Preview gaps:
+[PREVIEW-BACKLOG.md](PREVIEW-BACKLOG.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).

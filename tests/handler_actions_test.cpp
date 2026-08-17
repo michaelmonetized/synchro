@@ -44,9 +44,11 @@ private slots:
   void terminalExecShape();
   void terminalDisabledOnVirtual();
   void runActionTerminalDisabledOnVirtual();
+  void runActionAgentDisabledOnVirtual();
   void trashMovesToXdgTrash();
   void trashRefusesHome();
   void runActionById();
+  void actionMatchesIncludesCopyAs();
 };
 
 void HandlerActionsTest::terminalExecShape() {
@@ -126,6 +128,34 @@ void HandlerActionsTest::runActionTerminalDisabledOnVirtual() {
   QVERIFY(!launched);
 }
 
+void HandlerActionsTest::runActionAgentDisabledOnVirtual() {
+  HandlerRegistry reg;
+  reg.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  reg.setUserDir(tmp.filePath(QStringLiteral("none")));
+  reg.setConfigPath(tmp.filePath(QStringLiteral("none.json")));
+  reg.setScanEnv(false);
+  reg.scan();
+  QVERIFY(reg.contains(QStringLiteral("synchro.action.agent")));
+
+  HandlerExec exec;
+  bool launched = false;
+  exec.setLaunchHook([&](const QString &, const QStringList &,
+                         const QProcessEnvironment &) {
+    launched = true;
+    return true;
+  });
+  HandlerActions actions(&reg, &exec);
+  QVERIFY(!actions.runAction(QStringLiteral("synchro.action.agent"), {},
+                             QStringLiteral("trash://")));
+  QVERIFY(actions.lastError().contains(QStringLiteral("virtual")));
+  QVERIFY(!launched);
+  QVERIFY(!actions.runAction(QStringLiteral("synchro.action.agent"), {},
+                             QStringLiteral("recent://")));
+  QVERIFY(!launched);
+}
+
 void HandlerActionsTest::trashMovesToXdgTrash() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
@@ -202,6 +232,31 @@ void HandlerActionsTest::runActionById() {
   QVERIFY(!actions.runAction(QStringLiteral("synchro.open.xdg"), {},
                              tmp.path()));
   QVERIFY(actions.lastError().contains(QStringLiteral("not an action")));
+}
+
+void HandlerActionsTest::actionMatchesIncludesCopyAs() {
+  HandlerRegistry reg;
+  reg.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  reg.setUserDir(tmp.filePath(QStringLiteral("none")));
+  reg.setConfigPath(tmp.filePath(QStringLiteral("none.json")));
+  reg.setScanEnv(false);
+  reg.scan();
+  QVERIFY(reg.contains(QStringLiteral("synchro.action.copy-as")));
+
+  HandlerExec exec;
+  HandlerActions actions(&reg, &exec);
+  const QString file = tmp.filePath(QStringLiteral("notes.md"));
+  QVERIFY(writeText(file, QByteArrayLiteral("hi\n")));
+  const auto hits =
+      actions.actionMatches({item(file, QStringLiteral("text/markdown"))});
+  QStringList ids;
+  for (const auto &m : hits)
+    ids.append(m.id);
+  QVERIFY(ids.contains(QStringLiteral("synchro.action.copy-as")));
+  QVERIFY(ids.contains(QStringLiteral("synchro.action.open-with")));
+  QVERIFY(ids.contains(QStringLiteral("synchro.action.trash")));
 }
 
 int main(int argc, char **argv) {

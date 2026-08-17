@@ -395,13 +395,34 @@ States and what owns the key:
 | `Shift+Delete` | Confirm-then-unlink the selected set |
 | `u` / `Ctrl+Z` | Undo last file op (trash undo = restore) |
 | `t` | Open a terminal in the listing cwd: `uwsm-app -- xdg-terminal-exec --dir=%d` (see terminal note) |
-| `Ctrl+Return` | Open-with palette |
+| `Ctrl+Return` | Do-layer (same as right-click). Sticky. |
 | `g` | Reveal: if the row has an original/parent path (recent, trash, search), navigate there and select |
 | `?`, `F1` | Key reference overlay |
 | double-click | Same as Enter |
 | click | Move cursor; if set size was 1, set = `{cursor}` |
+| right-click | Do-layer on the clicked row (keeps a multi-selection if that row is already in it) |
 | Shift+click | Range from anchor to clicked row |
 | Ctrl+click | Toggle clicked row |
+
+#### Do-layer (Ctrl+Enter / right-click)
+
+Context actions are **not** a Nautilus-style popup that dies on mouse-out. `Ctrl+Enter` and right-click open the same sticky **do** overlay, visually distinct from peek (caption `do · filename`, accent frame).
+
+| Key | In the do-layer |
+|---|---|
+| `W`/`S` / `j`/`k` | Move among verbs. Does **not** move the file listing. |
+| `A` / `D` | Hop verbs ↔ mounted params (same idea as peek index ↔ file). |
+| `Enter` | Run the current verb. If it has mounted QML params, commit those. |
+| `Esc` / `Q` | Leave. Listing cursor stays put. |
+| double-click a verb | Same as Enter |
+
+Left: matching verbs. **Open** is first (same commit as listing Enter). **Open with…** is pinned next; its right pane is the app picker (`Palette.qml`). Other `action` handlers follow (`synchro handler add`, same kind as `:`).
+
+Right: **look** — the same peek preview for a file, or a large folder mosaic — plus a one-line briefing. When the handler declares `entryPoints.action`, that QML mounts as a **params** strip under the look box (sliders, format picks, extra flags). This is the thing a GTK context menu cannot do without another dialog. First-party example: `synchro.action.copy-as` (Copy path). `D` hops into params, or into the preview when the verb has none.
+
+Hold-to-glance / weapon-wheel latch is later. Status line: `Enter open · Ctrl+Enter do` while browsing; verb/params hints while the layer is open.
+
+`:trash` / `:terminal` still run immediately (you already named the verb). A QML action invoked with `:` opens the do-layer focused on that verb so params can be filled.
 
 #### Command field text (only while a `field-*` state is active)
 
@@ -428,7 +449,7 @@ v1 is multi-select (K17). `SelectionModel` holds `cursor` and `selected: set<ind
 - Default: `selected = {cursor}`. Status shows `128 files` (no “N selected”).
 - When `|selected| > 1`, status shows `3 selected   128 files`.
 - Copy / cut / trash / `%F` / `SYNCHRO_SELECTION.items[]` use the set, in listing order.
-- `open` / `preview` default `maxItems: 1`. Enter with `|selected| > 1`: if **every** item matches the **same** winning `open` handler and that handler allows `maxItems >= |set|`, run it once with `%F`; else open the Open-with palette. Peek always uses the cursor only.
+- `open` / `preview` default `maxItems: 1`. Enter with `|selected| > 1`: if **every** item matches the **same** winning `open` handler and that handler allows `maxItems >= |set|`, run it once with `%F`; else open the do-layer (Open with selected). Peek always uses the cursor only.
 - Leaving a directory collapses the set to `{0}` or the previously selected name if it still exists.
 
 #### Terminal (`t`)
@@ -848,7 +869,7 @@ v1: internal reorder not needed (flat list). Drag out can wait. Drop *onto* Sync
 | `preview` | Peek (Space) on a file | In-process QML preferred; exec only if the handler says so (rare) | Nautilus Previewer / `org.gnome.NautilusPreviewer` |
 | `open` | Activate a file (Enter, double-click) | In-process surface *or* `exec` | MIME default + "Open With" + Nautilus extensions that hijack open |
 | `folder` | *Entering* a directory that matches | v1: in-process **banner** QML above the listing. **`folder.replaceListing` is not v1** (HostApi cannot inject a model). | Folder handlers, photo libraries, "this is a git repo" |
-| `action` | Command palette (`:`) / Ctrl+Return / key | In-process function or `exec` over the current selection | Context menus, Nautilus scripts, "Open in terminal" |
+| `action` | Command palette (`:`) / do-layer (Ctrl+Enter, right-click) / key | In-process function, `exec`, or QML params over the current selection | Context menus, Nautilus scripts, "Open in terminal" |
 | `location` | Jump chip / `:name` | **Three runtimes** (next subsection). Not a peek `HandlerSurface`. | Places, Recent, Trash, network roots (later) |
 
 A handler may declare multiple kinds. Example: a photo pack might be `preview` + `folder` + `action`.
@@ -1136,6 +1157,10 @@ Shipped as `synchro` subcommands (the binary is both the GUI and the CLI via arg
 | `synchro.preview.text` | preview | later | first N KB of text, no exec |
 | `synchro.preview.markdown` | preview | later | rendered md; does not replace Omawrite |
 | `synchro.preview.pdf` | preview | later | poppler/QtPDF or evince-thumbnailer still |
+| `synchro.preview.parquet` | preview | yes | footer schema + sample rows (duckdb optional) |
+| `synchro.preview.sqlite` | preview | yes | `sqlite.qml` table/schema browser in the peek pane |
+| `synchro.preview.duckdb` | preview | yes | `duckdb.qml` same browser; needs `duckdb` on PATH |
+| `synchro.preview.archive` | preview | yes | `archive.qml` zip/tar member list + gzip metadata; no extract |
 | `synchro.open.xdg` | open | **yes** | `xdg-open %f`, priority 0 |
 | `synchro.open.omawrite` | open | yes if `omawrite` present | `omawrite %f`, `text/markdown`, priority 80 |
 | `synchro.open.omacut` | open | optional | `omacut %f`, video MIME |
@@ -1234,6 +1259,8 @@ A third-party *or* first-party wrapper. Because Omawrite is already installed as
 | `open` | `entryPoints.open` **or** `open.exec` |
 | `folder` | `entryPoints.folder` (banner only in v1) |
 | `action` | `entryPoints.action` **or** `action.exec` **or** `action.runtime == "core"` |
+
+`entryPoints.action` QML is mounted in the do-layer's right pane (params / briefing extras), not as a replacement listing. Implement `commit()` and optional `actionKey(key, modifiers)` on the `HandlerSurface`. The list keeps Qt focus.
 | `location` | `location.runtime == "path"` + `location.path` **or** `location.runtime == "core"` + `location.adapter` **or** `entryPoints.location` (chrome) |
 
 #### Complete example — in-process image preview (v1 first-party)
@@ -1599,6 +1626,8 @@ Not a search box bolted onto a GNOME toolbar. The field is always visible; `/` `
 #### 2. Peek as a handler, not a separate app
 
 Nautilus shells out to `org.gnome.NautilusPreviewer` (already special-cased as a float in `system.lua`). Synchro peeks in-process via `preview` handlers so Space is instant and themed. Heavy previews (video decode, PDF) can opt into exec later.
+
+Interactive peeks stay a file picker: the list keeps Qt focus. `A`/`D` hop the logical cursor between the left index and the right file. File-focused `W`/`S` call `HandlerSurface.peekKey` (default: scroll `peekFlickable`). `j`/`k` still step files. SQLite/DuckDB use `sqlite.qml` / `duckdb.qml` plus `host.readDatabase`.
 
 #### 3. Capture inbox (`synchro.location.captures`) — later
 
@@ -2096,7 +2125,7 @@ Dependencies are other PRs in this list unless noted.
 
 - **Files:** CLI add/update/remove/enable/disable, `~/.config/synchro/handlers.json`, `handlers/synchro.open.omawrite/manifest.json`, `handlers/synchro.action.terminal/manifest.json` (`xdg-terminal-exec --dir=%d`), `handlers/synchro.action.open-with/*`, `handlers/synchro.action.trash/manifest.json`
 - **Deps:** PR 9
-- **Description:** Third-party install ritual. Omawrite exec + `tryExec`. `t` uses the terminal shape, not `omarchy-launch-terminal`. Open-with palette. Trash action is a core-verb wrapper. Reserved namespaces.
+- **Description:** Third-party install ritual. Omawrite exec + `tryExec`. `t` uses the terminal shape, not `omarchy-launch-terminal`. Do-layer (Ctrl+Enter / right-click) with mounted QML params. Trash action is a core-verb wrapper. Reserved namespaces.
 
 ### PR 12 — `synchro: colon command palette`
 

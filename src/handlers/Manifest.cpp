@@ -18,7 +18,8 @@ const QStringList kLegalKinds = {QStringLiteral("preview"),
                                  QStringLiteral("open"),
                                  QStringLiteral("folder"),
                                  QStringLiteral("action"),
-                                 QStringLiteral("location")};
+                                 QStringLiteral("location"),
+                                 QStringLiteral("thumbnail")};
 
 const QStringList kCoreAdapters = {QStringLiteral("trash"),
                                    QStringLiteral("recent"),
@@ -173,6 +174,22 @@ void validateKindRequirements(const Manifest &m, QStringList *errors) {
         errors->append(QStringLiteral("unknown location.runtime '%1'")
                            .arg(runtime));
       }
+    } else if (kind == QLatin1String("thumbnail")) {
+      const QString runtime = kindObjectRuntime(m.thumbnail);
+      const bool hasExec =
+          !m.thumbnail.value(QStringLiteral("exec")).toString().isEmpty();
+      const bool core = runtime == QLatin1String("core");
+      if (core &&
+          m.thumbnail.value(QStringLiteral("verb")).toString().isEmpty())
+        errors->append(QStringLiteral("thumbnail.runtime core requires "
+                                      "thumbnail.verb"));
+      if (!hasExec && !core && runtime != QLatin1String("exec"))
+        errors->append(QStringLiteral("kind 'thumbnail' requires "
+                                      "thumbnail.exec or thumbnail.runtime "
+                                      "core"));
+      if (runtime == QLatin1String("exec") && !hasExec)
+        errors->append(QStringLiteral("thumbnail.runtime exec requires "
+                                      "thumbnail.exec"));
     }
   }
 }
@@ -295,6 +312,7 @@ Manifest Manifest::fromJson(const QJsonObject &obj) {
   m.folder = obj.value(QStringLiteral("folder")).toObject();
   m.action = obj.value(QStringLiteral("action")).toObject();
   m.location = obj.value(QStringLiteral("location")).toObject();
+  m.thumbnail = obj.value(QStringLiteral("thumbnail")).toObject();
 
   const QJsonObject eps = obj.value(QStringLiteral("entryPoints")).toObject();
   for (auto it = eps.begin(); it != eps.end(); ++it) {
@@ -312,6 +330,9 @@ Manifest Manifest::fromJson(const QJsonObject &obj) {
   m.match.pathMode = match.value(QStringLiteral("pathMode")).toString();
   if (m.match.pathMode.isEmpty())
     m.match.pathMode = QStringLiteral("all");
+  m.match.matchMode = match.value(QStringLiteral("matchMode")).toString();
+  if (m.match.matchMode.isEmpty())
+    m.match.matchMode = QStringLiteral("all");
   m.match.folderContains =
       jsonStringList(match.value(QStringLiteral("folderContains")));
   if (match.contains(QStringLiteral("minItems")))
@@ -355,6 +376,8 @@ QString Manifest::tryExec(const QString &kind) const {
     return action.value(QStringLiteral("tryExec")).toString();
   if (kind == QLatin1String("folder"))
     return folder.value(QStringLiteral("tryExec")).toString();
+  if (kind == QLatin1String("thumbnail"))
+    return thumbnail.value(QStringLiteral("tryExec")).toString();
   return {};
 }
 
@@ -367,6 +390,8 @@ QString Manifest::execLine(const QString &kind) const {
     return action.value(QStringLiteral("exec")).toString();
   if (kind == QLatin1String("folder"))
     return folder.value(QStringLiteral("exec")).toString();
+  if (kind == QLatin1String("thumbnail"))
+    return thumbnail.value(QStringLiteral("exec")).toString();
   return {};
 }
 
@@ -381,6 +406,8 @@ QString Manifest::runtime(const QString &kind) const {
     return kindObjectRuntime(folder);
   if (kind == QLatin1String("location"))
     return kindObjectRuntime(location);
+  if (kind == QLatin1String("thumbnail"))
+    return kindObjectRuntime(thumbnail);
   return {};
 }
 
@@ -389,6 +416,8 @@ QString Manifest::coreVerb(const QString &kind) const {
     return action.value(QStringLiteral("verb")).toString();
   if (kind == QLatin1String("location"))
     return location.value(QStringLiteral("adapter")).toString();
+  if (kind == QLatin1String("thumbnail"))
+    return thumbnail.value(QStringLiteral("verb")).toString();
   return {};
 }
 
@@ -538,49 +567,52 @@ bool manifestMatches(const Manifest &m, const QString &kind,
     return false;
   };
 
-  if (!m.match.mime.isEmpty()) {
-    if (modeAll(m.match.mimeMode)) {
+  auto clauseHolds = [&](const auto &okFn, bool modeIsAll) {
+    if (modeIsAll) {
       for (const auto &item : items) {
-        if (!mimeOk(item))
+        if (!okFn(item))
           return false;
       }
-    } else {
-      bool any = false;
-      for (const auto &item : items) {
-        if (mimeOk(item)) {
-          any = true;
-          break;
-        }
-      }
-      if (!any)
-        return false;
+      return true;
     }
-  }
-
-  if (!m.match.pathGlob.isEmpty()) {
-    if (modeAll(m.match.pathMode)) {
-      for (const auto &item : items) {
-        if (!pathOk(item))
-          return false;
-      }
-    } else {
-      bool any = false;
-      for (const auto &item : items) {
-        if (pathOk(item)) {
-          any = true;
-          break;
-        }
-      }
-      if (!any)
-        return false;
-    }
-  }
-
-  if (!m.match.suffix.isEmpty()) {
     for (const auto &item : items) {
-      if (!suffixOk(item))
-        return false;
+      if (okFn(item))
+        return true;
     }
+    return false;
+  };
+
+  const bool combineAny =
+      m.match.matchMode.compare(QLatin1String("any"), Qt::CaseInsensitive) == 0;
+  if (combineAny) {
+    bool any = false;
+    bool have = false;
+    if (!m.match.mime.isEmpty()) {
+      have = true;
+      if (clauseHolds(mimeOk, modeAll(m.match.mimeMode)))
+        any = true;
+    }
+    if (!m.match.pathGlob.isEmpty()) {
+      have = true;
+      if (clauseHolds(pathOk, modeAll(m.match.pathMode)))
+        any = true;
+    }
+    if (!m.match.suffix.isEmpty()) {
+      have = true;
+      if (clauseHolds(suffixOk, true))
+        any = true;
+    }
+    if (have && !any)
+      return false;
+  } else {
+    if (!m.match.mime.isEmpty() &&
+        !clauseHolds(mimeOk, modeAll(m.match.mimeMode)))
+      return false;
+    if (!m.match.pathGlob.isEmpty() &&
+        !clauseHolds(pathOk, modeAll(m.match.pathMode)))
+      return false;
+    if (!m.match.suffix.isEmpty() && !clauseHolds(suffixOk, true))
+      return false;
   }
 
   if (!m.match.folderContains.isEmpty()) {

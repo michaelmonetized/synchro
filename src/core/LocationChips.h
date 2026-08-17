@@ -32,6 +32,11 @@ public:
 
   Q_INVOKABLE void activate(const QString &id);
   Q_INVOKABLE void refresh();
+  Q_INVOKABLE bool pin(const QString &path);
+  Q_INVOKABLE bool unpin(const QString &path);
+  Q_INVOKABLE bool isPinned(const QString &path) const;
+  static QString pinId(const QString &path);
+  static bool isPinId(const QString &id);
 
   static QString expandPath(const QString &path);
   static bool allowedInChooser(const QString &adapter, const QString &runtime);
@@ -42,7 +47,9 @@ signals:
 
 private:
   QVariantMap chipMap(const QString &id) const;
+  QVariantMap pinChipMap(const QString &path) const;
   bool chipActive(const QVariantMap &chip) const;
+  void persistPins();
   void rebuild();
 
   HandlerRegistry *m_registry = nullptr;

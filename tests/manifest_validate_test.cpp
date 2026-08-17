@@ -40,6 +40,7 @@ private slots:
   void firstPartyXdgValid();
   void firstPartyOmawriteValid();
   void firstPartyActionHandlersValid();
+  void firstPartyPreviewHandlersValid();
   void actionCoreRequiresVerb();
   void schemaVersionMustBeNumberOne();
   void requiredFields();
@@ -116,6 +117,12 @@ void ManifestValidateTest::firstPartyActionHandlersValid() {
   QCOMPARE(openWith.manifest.entryPoints.value(QStringLiteral("action")),
            QStringLiteral("Palette.qml"));
 
+  const auto copyAs = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.action.copy-as")), true);
+  QVERIFY2(copyAs.ok, qPrintable(copyAs.errors.join(QLatin1Char(';'))));
+  QCOMPARE(copyAs.manifest.entryPoints.value(QStringLiteral("action")),
+           QStringLiteral("Params.qml"));
+
   const auto home = validateManifestDir(
       QDir(root).filePath(QStringLiteral("synchro.location.home")), true);
   QVERIFY2(home.ok, qPrintable(home.errors.join(QLatin1Char(';'))));
@@ -139,6 +146,26 @@ void ManifestValidateTest::firstPartyActionHandlersValid() {
            QStringLiteral("core"));
   QCOMPARE(trashLoc.manifest.coreVerb(QStringLiteral("location")),
            QStringLiteral("trash"));
+}
+
+void ManifestValidateTest::firstPartyPreviewHandlersValid() {
+  const QString root = QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR);
+  for (const char *id : {"synchro.preview.text", "synchro.preview.markdown",
+                         "synchro.preview.pdf", "synchro.preview.image",
+                         "synchro.preview.video", "synchro.preview.folder",
+                         "synchro.preview.parquet", "synchro.preview.sqlite",
+                         "synchro.preview.duckdb",
+                         "synchro.preview.archive"}) {
+    const auto v = validateManifestDir(QDir(root).filePath(QLatin1String(id)),
+                                       true);
+    QVERIFY2(v.ok, qPrintable(v.errors.join(QLatin1Char(';'))));
+    QVERIFY(v.manifest.hasKind(QStringLiteral("preview")));
+  }
+  const auto text = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.preview.text")), true);
+  QVERIFY(text.manifest.hasKind(QStringLiteral("thumbnail")));
+  QCOMPARE(text.manifest.runtime(QStringLiteral("thumbnail")),
+           QStringLiteral("core"));
 }
 
 void ManifestValidateTest::actionCoreRequiresVerb() {

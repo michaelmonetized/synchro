@@ -142,6 +142,8 @@ private slots:
   void enterRecentEmptyStatus();
   void enterRecentJumpsToLast();
   void enterHelpOpensOverlay();
+  void tabTogglesSearchFromList();
+  void enterSortChangesRoleAndFlips();
   void escCommandSingleStep();
   void colonDoesNotReplaceListVerbs();
   void unknownAndAmbiguousStayInField();
@@ -399,7 +401,7 @@ void CommandFieldTest::typeToSeekHighlightsFirstMatch() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   QVERIFY(writeFile(tmp.filePath(QStringLiteral("aaa.txt"))));
-  QVERIFY(writeFile(tmp.filePath(QStringLiteral("qxy_only"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("mxy_only"))));
   QVERIFY(writeFile(tmp.filePath(QStringLiteral("zzz.txt"))));
 
   DirectoryModel model;
@@ -410,10 +412,10 @@ void CommandFieldTest::typeToSeekHighlightsFirstMatch() {
 
   model.setPath(tmp.path());
   QVERIFY(waitListingDone(model));
-  QVERIFY(findProxy(proxy, QStringLiteral("qxy_only")) >= 0);
+  QVERIFY(findProxy(proxy, QStringLiteral("mxy_only")) >= 0);
 
-  QVERIFY(keys.handleListKey(Qt::Key_Q, Qt::NoModifier, QStringLiteral("q")));
-  QCOMPARE(proxy.currentName(), QStringLiteral("qxy_only"));
+  QVERIFY(keys.handleListKey(Qt::Key_M, Qt::NoModifier, QStringLiteral("m")));
+  QCOMPARE(proxy.currentName(), QStringLiteral("mxy_only"));
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
 }
 
@@ -1023,6 +1025,9 @@ void CommandFieldTest::enterHelpOpensOverlay() {
   QVERIFY(keys.helpOpen());
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
   QVERIFY(keys.helpText().contains(QStringLiteral(":trash")));
+  QVERIFY(keys.helpText().contains(QStringLiteral(":sort")));
+  QVERIFY(keys.helpText().contains(QStringLiteral(":pin")));
+  QVERIFY(keys.helpText().contains(QStringLiteral("Tab")));
 
   QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
   QVERIFY(!keys.helpOpen());
@@ -1031,6 +1036,21 @@ void CommandFieldTest::enterHelpOpensOverlay() {
   keys.setFieldText(QStringLiteral(":?"));
   keys.acceptField();
   QVERIFY(keys.helpOpen());
+}
+
+void CommandFieldTest::tabTogglesSearchFromList() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  QVERIFY(keys.handleListKey(Qt::Key_Tab, Qt::NoModifier, QString()));
+  QCOMPARE(keys.mode(), QStringLiteral("field-search"));
+  QCOMPARE(keys.fieldText(), QStringLiteral("?"));
+  QVERIFY(keys.handleFieldKey(Qt::Key_Tab, Qt::NoModifier));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(keys.fieldText().isEmpty());
 }
 
 void CommandFieldTest::escCommandSingleStep() {
@@ -1185,7 +1205,54 @@ void CommandFieldTest::successfulCommandClearsStatus() {
   keys.focusCommand();
   keys.setFieldText(QStringLiteral(":hidden"));
   keys.acceptField();
-  QVERIFY(keys.statusMessage().isEmpty());
+  QCOMPARE(keys.statusMessage(), QStringLiteral("hidden on"));
+}
+
+void CommandFieldTest::enterSortChangesRoleAndFlips() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("a.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("z.bin"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(proxy.sortRoleName(), QStringLiteral("name"));
+  QCOMPARE(proxy.sortOrder(), QStringLiteral("asc"));
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":sort size"));
+  keys.acceptField();
+  QCOMPARE(proxy.sortRoleName(), QStringLiteral("size"));
+  QCOMPARE(proxy.sortOrder(), QStringLiteral("asc"));
+  QCOMPARE(keys.statusMessage(), QStringLiteral("sort size asc"));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":sort"));
+  keys.acceptField();
+  QCOMPARE(proxy.sortRoleName(), QStringLiteral("size"));
+  QCOMPARE(proxy.sortOrder(), QStringLiteral("desc"));
+  QCOMPARE(keys.statusMessage(), QStringLiteral("sort size desc"));
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":sort mtime asc"));
+  keys.acceptField();
+  QCOMPARE(proxy.sortRoleName(), QStringLiteral("mtime"));
+  QCOMPARE(proxy.sortOrder(), QStringLiteral("asc"));
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":sort nope"));
+  keys.acceptField();
+  QCOMPARE(keys.mode(), QStringLiteral("field-command"));
+  QCOMPARE(keys.statusMessage(),
+           QStringLiteral("sort name|size|mtime|type [asc|desc]"));
+  QCOMPARE(proxy.sortRoleName(), QStringLiteral("mtime"));
 }
 
 void CommandFieldTest::mainQmlColonEntersCommand() {

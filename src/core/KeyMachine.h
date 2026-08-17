@@ -10,11 +10,14 @@
 #include <functional>
 
 class DirectoryModel;
+class FileOpEngine;
 class FilterProxy;
 class NavStack;
+class LocationChips;
 class PeekHost;
 class RecentStore;
 class SearchModel;
+class SelectionModel;
 
 // Ranger-with-visible-field keyboard states (K7). The list owns keys on
 // launch; the field is chrome, not an always-focused omnibar.
@@ -29,9 +32,16 @@ class KeyMachine : public QObject {
                  fieldTextChanged)
   Q_PROPERTY(int jumpEpoch READ jumpEpoch NOTIFY jumpEpochChanged)
   Q_PROPERTY(bool gridMode READ gridMode WRITE setGridMode NOTIFY gridModeChanged)
+  Q_PROPERTY(int gridStride READ gridStride WRITE setGridStride NOTIFY
+                 gridStrideChanged)
   Q_PROPERTY(bool helpOpen READ helpOpen NOTIFY helpOpenChanged)
   Q_PROPERTY(QString helpText READ helpText CONSTANT)
   Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
+  Q_PROPERTY(QString promptText READ promptText WRITE setPromptText NOTIFY
+                 promptChanged)
+  Q_PROPERTY(QString promptKind READ promptKind NOTIFY promptChanged)
+  Q_PROPERTY(bool ynPrompt READ ynPrompt NOTIFY promptChanged)
+  Q_PROPERTY(bool chooserMode READ chooserMode NOTIFY chooserModeChanged)
 
 public:
   enum class Mode {
@@ -40,7 +50,10 @@ public:
     FieldJump,
     FieldCommand,
     FieldSearch,
-    PeekOpen
+    PeekOpen,
+    VisualSelect,
+    RenameInline,
+    ConfirmDialog
   };
   Q_ENUM(Mode)
 
@@ -52,7 +65,8 @@ public:
 
   QString mode() const;
   bool listFocused() const {
-    return m_mode == Mode::ListFocused || m_mode == Mode::PeekOpen;
+    return m_mode == Mode::ListFocused || m_mode == Mode::PeekOpen ||
+           m_mode == Mode::VisualSelect;
   }
   bool fieldFocused() const {
     return m_mode == Mode::FieldFilter || m_mode == Mode::FieldJump ||
@@ -61,7 +75,14 @@ public:
   bool peekOpen() const { return m_mode == Mode::PeekOpen; }
   bool actionOpen() const;
   void setPeekHost(PeekHost *host);
+  void setSelection(SelectionModel *sel) { m_selection = sel; }
+  void setFileOps(FileOpEngine *ops) { m_fileOps = ops; }
+  void setChooserMode(bool on, bool multiple = false, bool save = false);
+  void setChooserPromptOpen(bool on);
+  bool chooserMode() const { return m_chooserMode; }
+  bool chooserSave() const { return m_chooserSave; }
   void setRecentStore(RecentStore *store) { m_recents = store; }
+  void setLocationChips(LocationChips *chips) { m_chips = chips; }
   void setSearchModel(SearchModel *search);
   void setTrashAvailable(bool on) { m_trashAvailable = on; }
   void setActionRunner(ActionRunner runner) { m_actionRunner = std::move(runner); }
@@ -70,16 +91,23 @@ public:
   int jumpEpoch() const { return m_jumpEpoch; }
   Mode modeEnum() const { return m_mode; }
   bool gridMode() const { return m_gridMode; }
+  int gridStride() const { return m_gridStride; }
   bool helpOpen() const { return m_helpOpen; }
   QString helpText() const { return CommandPalette::helpText(); }
   QString statusMessage() const { return m_status; }
+  QString promptText() const { return m_promptText; }
+  QString promptKind() const { return m_promptKind; }
+  bool ynPrompt() const;
 
   Q_INVOKABLE void setFieldText(const QString &text);
   Q_INVOKABLE void setGridMode(bool on);
+  Q_INVOKABLE void setGridStride(int columns);
   Q_INVOKABLE void setStatusMessage(const QString &text);
   Q_INVOKABLE void focusFilter();
   Q_INVOKABLE void focusJump();
   Q_INVOKABLE void focusCommand();
+  Q_INVOKABLE void focusSearch();
+  Q_INVOKABLE void toggleSearchField();
   Q_INVOKABLE void focusList();
   Q_INVOKABLE void escape();
   Q_INVOKABLE void acceptField();
@@ -87,7 +115,12 @@ public:
   Q_INVOKABLE bool handleListKey(int key, int modifiers, const QString &text);
   Q_INVOKABLE bool handleFieldKey(int key, int modifiers);
   Q_INVOKABLE void requestEmptyTrash();
-  bool confirmOpen() const { return !m_promptKind.isEmpty(); }
+  Q_INVOKABLE void setPromptText(const QString &text);
+  Q_INVOKABLE void acceptPrompt();
+  bool confirmOpen() const {
+    return m_mode == Mode::RenameInline || m_mode == Mode::ConfirmDialog ||
+           !m_promptKind.isEmpty();
+  }
 
   // Path-sigil jump only. Bare names (even if they exist as dirs) never jump.
   static bool isJumpText(const QString &text, const QString &cwd);
@@ -105,8 +138,16 @@ signals:
   void openWithRequested();
   void actionOpenChanged();
   void gridModeChanged();
+  void gridStrideChanged();
   void helpOpenChanged();
   void statusMessageChanged();
+  void promptChanged();
+  void chooserModeChanged();
+  void chooserAcceptRequested();
+  void dismissRequested();
+  void chooserPromptDismissRequested();
+  void filterCycleRequested(int delta);
+  void saveNameFocusRequested();
 
 private:
   void setMode(Mode mode);
@@ -119,10 +160,14 @@ private:
   void onPathChanged();
   bool handleListVerbs(int key, int modifiers);
   bool handlePeekKey(int key, int modifiers);
+  bool handleDoKey(int key, int modifiers);
   void seek(const QString &chunk);
   void runCommand(const QString &text);
   bool runBuiltin(const QString &id, QString *info);
   bool runRecent(QString *info);
+  bool applySortCommand(const QString &text, QString *info);
+  bool runPinCommand(const QString &id, QString *info);
+  QString pinTarget() const;
   void finishCommand();
   bool fieldQueryEmpty() const;
   void scheduleSearch();
@@ -131,8 +176,14 @@ private:
   void revealCurrent();
   QString searchRoot() const;
   bool handleConfirmKey(int key, int modifiers, const QString &text);
+  bool handleChooserPromptKey(int key, int modifiers);
   void clearConfirm();
   void acceptEmptyTrash();
+  void startRename();
+  void startMkdir();
+  void startUnlinkConfirm();
+  void startEmptyConfirm();
+  void nudgeCursor(int dx, int dy, bool leap);
 
   static bool isReservedVerb(int key, int modifiers);
 
@@ -140,7 +191,10 @@ private:
   FilterProxy *m_proxy = nullptr;
   NavStack *m_nav = nullptr;
   PeekHost *m_host = nullptr;
+  SelectionModel *m_selection = nullptr;
+  FileOpEngine *m_fileOps = nullptr;
   RecentStore *m_recents = nullptr;
+  LocationChips *m_chips = nullptr;
   SearchModel *m_search = nullptr;
   CommandPalette m_palette;
   QTimer m_searchDebounce;
@@ -152,7 +206,13 @@ private:
   QElapsedTimer m_seekClock;
   int m_jumpEpoch = 0;
   bool m_gridMode = false;
+  int m_gridStride = 1;
   bool m_helpOpen = false;
   bool m_trashAvailable = true;
   QString m_promptKind;
+  QString m_promptText;
+  bool m_chooserMode = false;
+  bool m_chooserMultiple = false;
+  bool m_chooserSave = false;
+  bool m_chooserPromptOpen = false;
 };

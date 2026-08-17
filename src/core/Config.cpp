@@ -71,6 +71,7 @@ void Config::applyDefaults() {
   m_sortRole = QStringLiteral("name");
   m_sortOrder = QStringLiteral("asc");
   m_chips = defaultLocationChips();
+  m_pins.clear();
   m_lastPath.clear();
 }
 
@@ -106,6 +107,16 @@ bool Config::load() {
   }
   if (obj.contains(QStringLiteral("lastPath")))
     m_lastPath = obj.value(QStringLiteral("lastPath")).toString();
+  if (obj.contains(QStringLiteral("pins"))) {
+    QStringList pins;
+    for (const QString &raw :
+         jsonStringList(obj.value(QStringLiteral("pins")))) {
+      const QString pin = normalizePin(raw);
+      if (!pin.isEmpty() && !pins.contains(pin))
+        pins.append(pin);
+    }
+    m_pins = pins;
+  }
   return true;
 }
 
@@ -127,6 +138,10 @@ bool Config::save() const {
   obj.insert(QStringLiteral("view"), m_view);
   obj.insert(QStringLiteral("sort"), sort);
   obj.insert(QStringLiteral("locationChips"), chips);
+  QJsonArray pins;
+  for (const QString &path : m_pins)
+    pins.append(path);
+  obj.insert(QStringLiteral("pins"), pins);
   obj.insert(QStringLiteral("lastPath"), m_lastPath);
   QSaveFile out(m_path);
   if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
@@ -164,6 +179,34 @@ void Config::setSortOrder(const QString &order) {
     return;
   m_sortOrder = next;
   emit sortChanged();
+}
+
+QString Config::normalizePin(const QString &path) {
+  QString t = path.trimmed();
+  if (t.isEmpty())
+    return {};
+  if (t == QLatin1String("~"))
+    t = QDir::homePath();
+  else if (t.startsWith(QLatin1String("~/")))
+    t = QDir::homePath() + t.mid(1);
+  t = QDir::cleanPath(t);
+  if (!QFileInfo(t).isAbsolute())
+    return {};
+  return t;
+}
+
+void Config::setPins(const QStringList &paths) {
+  QStringList next;
+  next.reserve(paths.size());
+  for (const QString &raw : paths) {
+    const QString pin = normalizePin(raw);
+    if (!pin.isEmpty() && !next.contains(pin))
+      next.append(pin);
+  }
+  if (m_pins == next)
+    return;
+  m_pins = next;
+  emit pinsChanged();
 }
 
 void Config::setLocationChips(const QStringList &ids) {

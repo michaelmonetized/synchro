@@ -68,8 +68,18 @@ Item {
                     Text {
                         id: crumbLabel
                         anchors.verticalCenter: parent.verticalCenter
-                        text: crumb.modelData.label
-                        color: crumbHover.hovered ? Theme.accent : Theme.foreground
+                        text: {
+                            var label = crumb.modelData.label
+                            if (label === "search" && root.fileModel &&
+                                    root.fileModel.searchQuery)
+                                return "search  " + root.fileModel.searchQuery
+                            return label
+                        }
+                        color: {
+                            if (crumb.modelData.label === "search")
+                                return Theme.accent
+                            return crumbHover.hovered ? Theme.accent : Theme.foreground
+                        }
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontBody
 

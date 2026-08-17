@@ -279,7 +279,7 @@ bool HandlerExec::run(const Request &req) {
   proc.setProgram(program);
   proc.setArguments(arguments);
   proc.setProcessEnvironment(env);
-  if (!req.cwd.isEmpty())
+  if (!req.cwd.isEmpty() && QFileInfo(req.cwd).isDir())
     proc.setWorkingDirectory(req.cwd);
   qint64 pid = 0;
   if (!proc.startDetached(&pid)) {

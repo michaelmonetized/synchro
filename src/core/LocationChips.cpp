@@ -43,9 +43,11 @@ void LocationChips::setConfig(Config *config) {
   if (m_config)
     disconnect(m_config, nullptr, this, nullptr);
   m_config = config;
-  if (m_config)
+  if (m_config) {
     connect(m_config, &Config::locationChipsChanged, this,
             &LocationChips::rebuild);
+    connect(m_config, &Config::pinsChanged, this, &LocationChips::rebuild);
+  }
   rebuild();
 }
 
@@ -119,7 +121,84 @@ bool LocationChips::allowedInChooser(const QString &adapter,
   return false;
 }
 
+QString LocationChips::pinId(const QString &path) {
+  const QString abs = Config::normalizePin(path);
+  if (abs.isEmpty())
+    return {};
+  return QStringLiteral("pin:") + abs;
+}
+
+bool LocationChips::isPinId(const QString &id) {
+  return id.startsWith(QLatin1String("pin:"));
+}
+
+QVariantMap LocationChips::pinChipMap(const QString &path) const {
+  const QString abs = Config::normalizePin(path);
+  QVariantMap out;
+  if (abs.isEmpty())
+    return out;
+  if (m_chooserMode && DirectoryModel::isVirtualPath(abs))
+    return out;
+  const QFileInfo fi(abs);
+  const QString name = fi.fileName().isEmpty() ? abs : fi.fileName();
+  out.insert(QStringLiteral("id"), pinId(abs));
+  out.insert(QStringLiteral("name"), name);
+  out.insert(QStringLiteral("label"), name);
+  out.insert(QStringLiteral("runtime"), QStringLiteral("path"));
+  out.insert(QStringLiteral("path"), abs);
+  out.insert(QStringLiteral("pinned"), true);
+  out.insert(QStringLiteral("active"), chipActive(out));
+  return out;
+}
+
+bool LocationChips::isPinned(const QString &path) const {
+  if (!m_config)
+    return false;
+  const QString abs = Config::normalizePin(path);
+  return !abs.isEmpty() && m_config->pins().contains(abs);
+}
+
+void LocationChips::persistPins() {
+  if (m_config && m_config->writable())
+    m_config->save();
+}
+
+bool LocationChips::pin(const QString &path) {
+  if (!m_config)
+    return false;
+  const QString abs = Config::normalizePin(path);
+  if (abs.isEmpty() || DirectoryModel::isVirtualPath(abs))
+    return false;
+  if (!QFileInfo(abs).isDir())
+    return false;
+  QStringList pins = m_config->pins();
+  if (pins.contains(abs))
+    return true;
+  if (pins.size() >= 16)
+    return false;
+  pins.append(abs);
+  m_config->setPins(pins);
+  persistPins();
+  return true;
+}
+
+bool LocationChips::unpin(const QString &path) {
+  if (!m_config)
+    return false;
+  const QString abs = Config::normalizePin(path);
+  if (abs.isEmpty())
+    return false;
+  QStringList pins = m_config->pins();
+  if (!pins.removeOne(abs))
+    return false;
+  m_config->setPins(pins);
+  persistPins();
+  return true;
+}
+
 QVariantMap LocationChips::chipMap(const QString &id) const {
+  if (isPinId(id))
+    return pinChipMap(id.mid(4));
   QVariantMap out;
   if (!m_registry || id.isEmpty())
     return out;
@@ -174,11 +253,25 @@ void LocationChips::rebuild() {
                              : Config::defaultLocationChips();
   if (ids.isEmpty())
     ids = Config::defaultLocationChips();
+  bool injectedPins = false;
+  auto appendPins = [&] {
+    if (injectedPins || !m_config)
+      return;
+    injectedPins = true;
+    for (const QString &path : m_config->pins()) {
+      const QVariantMap pin = pinChipMap(path);
+      if (!pin.isEmpty())
+        next.append(pin);
+    }
+  };
   for (const QString &id : ids) {
     const QVariantMap chip = chipMap(id);
     if (!chip.isEmpty())
       next.append(chip);
+    if (id == QLatin1String("synchro.location.home"))
+      appendPins();
   }
+  appendPins();
   if (next == m_chips)
     return;
   m_chips = next;

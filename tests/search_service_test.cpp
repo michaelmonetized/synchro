@@ -61,6 +61,8 @@ private slots:
   void hiddenToggle();
   void cancelStopsProcess();
   void fieldSearchModeAndEnterKeepsResults();
+  void tabHopsSearchAndListing();
+  void spaceSeparatedQueryIsFuzzy();
   void escCancels();
   void contentPrefixIsNotNameSearch();
   void virtualLocationDisabled();
@@ -76,27 +78,33 @@ void SearchServiceTest::argvFixedStringOneQuery() {
   QVERIFY(args.contains(QStringLiteral("--color=never")));
   QVERIFY(args.contains(QStringLiteral("--exclude")));
   QVERIFY(args.contains(QStringLiteral(".git")));
-  QVERIFY(args.contains(QStringLiteral("-F")));
+  QVERIFY(!args.contains(QStringLiteral("-F")));
   QVERIFY(args.contains(QStringLiteral("-a")));
   QVERIFY(args.contains(QStringLiteral("--max-results")));
   QVERIFY(args.contains(QStringLiteral("5000")));
   QVERIFY(!args.contains(QStringLiteral("--hidden")));
-  const int q = args.indexOf(QStringLiteral("foo.bar"));
+  QCOMPARE(SearchService::fuzzyPattern(QStringLiteral("foo.bar")),
+           QStringLiteral("foo\\.bar"));
+  QCOMPARE(SearchService::fuzzyPattern(QStringLiteral("bax jpg")),
+           QStringLiteral("bax.*jpg"));
+  const int q = args.indexOf(QStringLiteral("foo\\.bar"));
   QVERIFY(q >= 0);
   QCOMPARE(args.at(q - 1), QStringLiteral("--"));
   QCOMPARE(args.at(q + 1), QStringLiteral("/tmp"));
-  QCOMPARE(args.filter(QStringLiteral("foo.bar")).size(), 1);
+  QCOMPARE(args.filter(QStringLiteral("foo\\.bar")).size(), 1);
 
+  const QString dashPat = SearchService::fuzzyPattern(QStringLiteral("-x"));
   const QStringList dash = SearchService::arguments(
       QStringLiteral("-x"), QStringLiteral("/tmp"), false);
-  const int dx = dash.indexOf(QStringLiteral("-x"));
+  const int dx = dash.indexOf(dashPat);
   QVERIFY(dx >= 0);
   QCOMPARE(dash.at(dx - 1), QStringLiteral("--"));
-  QVERIFY(dash.indexOf(QStringLiteral("-x")) == dash.lastIndexOf(QStringLiteral("-x")));
+  QVERIFY(dash.indexOf(dashPat) == dash.lastIndexOf(dashPat));
 
+  const QString execPat = SearchService::fuzzyPattern(QStringLiteral("--exec"));
   const QStringList exec = SearchService::arguments(
       QStringLiteral("--exec"), QStringLiteral("/tmp"), false);
-  const int ex = exec.indexOf(QStringLiteral("--exec"));
+  const int ex = exec.indexOf(execPat);
   QVERIFY(ex >= 0);
   QCOMPARE(exec.at(ex - 1), QStringLiteral("--"));
 }
@@ -235,12 +243,75 @@ void SearchServiceTest::fieldSearchModeAndEnterKeepsResults() {
   QCOMPARE(keys.fieldText(), QStringLiteral("?synchro_keep_me"));
   QVERIFY(waitSearch(search));
   QCOMPARE(dir.path(), QStringLiteral("search://"));
+  QVERIFY(dir.isSearch());
+  QCOMPARE(dir.searchQuery(), QStringLiteral("synchro_keep_me"));
   QVERIFY(findName(dir, QStringLiteral("synchro_keep_me.txt")) >= 0);
   QVERIFY(findName(dir, QStringLiteral("other.txt")) < 0);
 
   nav.goUp();
   QVERIFY(waitListing(dir));
   QCOMPARE(canon(dir.path()), canon(root));
+}
+
+void SearchServiceTest::tabHopsSearchAndListing() {
+  if (SearchService::executable().isEmpty())
+    QSKIP("fd is not available");
+
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("synchro_tab_hit.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("other.txt"))));
+
+  DirectoryModel dir;
+  SearchModel search;
+  dir.setSearchModel(&search);
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&dir);
+  NavStack nav(&dir);
+  KeyMachine keys(&dir, &proxy, &nav);
+  keys.setSearchModel(&search);
+
+  dir.setPath(tmp.path());
+  QVERIFY(waitListing(dir));
+
+  QVERIFY(keys.handleListKey(Qt::Key_Tab, Qt::NoModifier, QString()));
+  QCOMPARE(keys.mode(), QStringLiteral("field-search"));
+  QCOMPARE(keys.fieldText(), QStringLiteral("?"));
+
+  keys.setFieldText(QStringLiteral("?synchro_tab_hit"));
+  QVERIFY(keys.handleFieldKey(Qt::Key_Tab, Qt::NoModifier));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(waitSearch(search));
+  QCOMPARE(dir.path(), QStringLiteral("search://"));
+  QVERIFY(findName(dir, QStringLiteral("synchro_tab_hit.txt")) >= 0);
+  QVERIFY(findName(dir, QStringLiteral("other.txt")) < 0);
+
+  QVERIFY(keys.handleListKey(Qt::Key_Tab, Qt::NoModifier, QString()));
+  QCOMPARE(keys.mode(), QStringLiteral("field-search"));
+  QCOMPARE(keys.fieldText(), QStringLiteral("?synchro_tab_hit"));
+  QCOMPARE(dir.path(), QStringLiteral("search://"));
+
+  QSignalSpy reset(&search, &QAbstractItemModel::modelAboutToBeReset);
+  QVERIFY(keys.handleFieldKey(Qt::Key_Tab, Qt::NoModifier));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QCOMPARE(reset.count(), 0);
+  QVERIFY(findName(dir, QStringLiteral("synchro_tab_hit.txt")) >= 0);
+}
+
+void SearchServiceTest::spaceSeparatedQueryIsFuzzy() {
+  if (SearchService::executable().isEmpty())
+    QSKIP("fd is not available");
+
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("Baxter.jpg"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("other.txt"))));
+
+  SearchModel model;
+  model.start(QStringLiteral("bax jpg"), tmp.path(), false);
+  QVERIFY(waitSearch(model));
+  QVERIFY(findName(model, QStringLiteral("Baxter.jpg")) >= 0);
+  QVERIFY(findName(model, QStringLiteral("other.txt")) < 0);
 }
 
 void SearchServiceTest::escCancels() {
