@@ -17,7 +17,9 @@ Item {
     property var fileOps: null
     readonly property var rows: filterProxy ? filterProxy : fileModel
     readonly property int selectionEpoch: selection ? selection.epoch : 0
-    readonly property bool showCursorChrome: !keyMachine || keyMachine.listFocused
+    readonly property bool showCursorChrome: !keyMachine ||
+                                             (keyMachine.listFocused &&
+                                              !keyMachine.panelFocused)
     readonly property bool treeView: !keyMachine || keyMachine.fsnTreeView
 
     signal viewToggleRequested()

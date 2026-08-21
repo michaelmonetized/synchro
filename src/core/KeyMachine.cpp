@@ -242,6 +242,13 @@ void KeyMachine::setPanelSide(const QString &side) {
   emit panelChanged();
 }
 
+void KeyMachine::setPanelFocused(bool on) {
+  if (m_panelFocused == on)
+    return;
+  m_panelFocused = on;
+  emit panelFocusedChanged();
+}
+
 void KeyMachine::togglePanel(const QString &id) {
   setPanelId(m_panelId == id ? QString() : id);
 }

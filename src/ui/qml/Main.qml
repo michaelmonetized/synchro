@@ -78,8 +78,7 @@ Window {
             root.keys.panelId = "synchro.panel.terminal"
             Qt.callLater(root.focusPanel)
         } else if (panelDock.activeFocus) {
-            root.keys.panelId = ""
-            root.focusListing()
+            root.focusListingForce()
         } else {
             root.focusPanel()
         }
@@ -201,6 +200,8 @@ Window {
                                     : 260
         visible: root.panelOpen
         z: 2
+        onActiveFocusChanged: if (root.keys)
+                                  root.keys.panelFocused = activeFocus
         anchors.left: root.panelRight ? undefined : parent.left
         anchors.right: root.panelLeft ? undefined : parent.right
         anchors.top: root.panelBottom ? undefined : commandField.bottom
@@ -239,24 +240,24 @@ Window {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: 1
-            color: Theme.normalBorder
+            height: panelDock.activeFocus ? 2 : 1
+            color: panelDock.activeFocus ? Theme.accent : Theme.normalBorder
         }
         Rectangle {
             visible: root.panelRight
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             anchors.left: parent.left
-            width: 1
-            color: Theme.normalBorder
+            width: panelDock.activeFocus ? 2 : 1
+            color: panelDock.activeFocus ? Theme.accent : Theme.normalBorder
         }
         Rectangle {
             visible: root.panelLeft
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             anchors.right: parent.right
-            width: 1
-            color: Theme.normalBorder
+            width: panelDock.activeFocus ? 2 : 1
+            color: panelDock.activeFocus ? Theme.accent : Theme.normalBorder
         }
 
         MouseArea {
@@ -363,6 +364,8 @@ Window {
     Connections {
         target: root.keys
         function onModeChanged() {
+            if (panelDock.activeFocus)
+                return
             if (root.keys.listFocused)
                 root.focusListing()
             else
@@ -419,6 +422,14 @@ Window {
     function focusListing() {
         if (root.keys && !root.keys.listFocused)
             return
+        // The terminal keeps the keyboard until the user flips back
+        // (Ctrl+` or a click); navigation events must not steal it.
+        if (panelDock.activeFocus)
+            return
+        if (listingLoader.item)
+            listingLoader.item.forceActiveFocus()
+    }
+    function focusListingForce() {
         if (listingLoader.item)
             listingLoader.item.forceActiveFocus()
     }

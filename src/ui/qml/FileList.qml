@@ -23,7 +23,9 @@ ListView {
     signal doRequested()
 
     readonly property var rows: filterProxy ? filterProxy : fileModel
-    readonly property bool showCursorChrome: !keyMachine || keyMachine.listFocused
+    readonly property bool showCursorChrome: !keyMachine ||
+                                             (keyMachine.listFocused &&
+                                              !keyMachine.panelFocused)
 
     readonly property Component folderMarkComp: Component { FolderMark {} }
     readonly property Component fileMarkComp: Component { FileMark {} }
@@ -605,6 +607,7 @@ ListView {
             onClicked: function (mouse) {
                 if (didDrag)
                     return
+                list.forceActiveFocus()
                 if (mouse.button === Qt.MiddleButton) {
                     list.viewToggleRequested()
                     return

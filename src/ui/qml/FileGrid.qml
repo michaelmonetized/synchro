@@ -18,7 +18,9 @@ Item {
                                     !fileModel.isSearch && !fileModel.isVolumes
     readonly property bool searching: fileModel && fileModel.isSearch
     readonly property var rows: filterProxy ? filterProxy : fileModel
-    readonly property bool showCursorChrome: !keyMachine || keyMachine.listFocused
+    readonly property bool showCursorChrome: !keyMachine ||
+                                             (keyMachine.listFocused &&
+                                              !keyMachine.panelFocused)
     readonly property int thumbSizePx: 256
     readonly property int preferredInner: 96
     readonly property int cellPad: Theme.space(16)

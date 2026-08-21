@@ -194,6 +194,8 @@ Item {
         text: {
             if (root.keyMachine && root.keyMachine.statusMessage.length)
                 return root.keyMachine.statusMessage
+            if (root.keyMachine && root.keyMachine.panelFocused)
+                return "TERM"
             if (root.typingSearch)
                 return root.contentSearch ? "CONTENT" : "SEARCH"
             if (root.viewingSearch)
@@ -211,7 +213,8 @@ Item {
             return ""
         }
         color: (root.fieldActive || root.viewingSearch ||
-                (root.keyMachine && root.keyMachine.statusMessage.length))
+                (root.keyMachine && (root.keyMachine.statusMessage.length ||
+                                     root.keyMachine.panelFocused)))
                ? Theme.accent : Theme.muted
         elide: Text.ElideLeft
         font.family: Theme.fontFamily

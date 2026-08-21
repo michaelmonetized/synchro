@@ -38,6 +38,8 @@ class KeyMachine : public QObject {
   Q_PROPERTY(QString panelId READ panelId WRITE setPanelId NOTIFY panelChanged)
   Q_PROPERTY(QString panelSide READ panelSide WRITE setPanelSide NOTIFY
                  panelChanged)
+  Q_PROPERTY(bool panelFocused READ panelFocused WRITE setPanelFocused NOTIFY
+                 panelFocusedChanged)
   Q_PROPERTY(int gridStride READ gridStride WRITE setGridStride NOTIFY
                  gridStrideChanged)
   Q_PROPERTY(bool helpOpen READ helpOpen NOTIFY helpOpenChanged)
@@ -101,6 +103,7 @@ public:
   bool fsnTreeView() const { return m_fsnTreeView; }
   QString panelId() const { return m_panelId; }
   QString panelSide() const { return m_panelSide; }
+  bool panelFocused() const { return m_panelFocused; }
   int gridStride() const { return m_gridStride; }
   bool helpOpen() const { return m_helpOpen; }
   QString helpText() const { return CommandPalette::helpText(); }
@@ -117,6 +120,7 @@ public:
   Q_INVOKABLE void setPanelId(const QString &id);
   Q_INVOKABLE void setPanelSide(const QString &side);
   Q_INVOKABLE void togglePanel(const QString &id);
+  Q_INVOKABLE void setPanelFocused(bool on);
   Q_INVOKABLE void setGridStride(int columns);
   Q_INVOKABLE void setStatusMessage(const QString &text);
   Q_INVOKABLE void focusFilter();
@@ -161,6 +165,7 @@ signals:
   void fsnTreeViewChanged();
   void panelChanged();
   void panelFocusRequested();
+  void panelFocusedChanged();
   void gridStrideChanged();
   void helpOpenChanged();
   void statusMessageChanged();
@@ -238,6 +243,7 @@ private:
   bool m_fsnTreeView = true;
   QString m_panelId;
   QString m_panelSide = QStringLiteral("bottom");
+  bool m_panelFocused = false;
   int m_gridStride = 1;
   bool m_helpOpen = false;
   bool m_trashAvailable = true;
