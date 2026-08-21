@@ -1,5 +1,9 @@
 #include "CommandPalette.h"
 
+#include <QVariantMap>
+
+#include <initializer_list>
+
 namespace {
 
 QString norm(const QString &s) { return s.trimmed().toLower(); }
@@ -48,29 +52,120 @@ QVector<CommandSpec> CommandPalette::builtins() {
   };
 }
 
+namespace {
+
+struct HelpRow {
+  const char *keys;
+  const char *what;
+};
+
+struct HelpSection {
+  const char *title;
+  std::initializer_list<HelpRow> rows;
+};
+
+// Single source of truth for the help overlay (rendered as a grid) and
+// the plain helpText() dump.
+const std::initializer_list<HelpSection> kHelp = {
+    {"Navigate",
+     {{"j k / W S", "move cursor (Shift leaps 5)"},
+      {"h / Left / Q", "up a folder"},
+      {"l / Right / E", "open / peek"},
+      {"Enter", "activate"},
+      {"Tab", "toggle search / listing"},
+      {"[ ]", "cycle chooser filter"},
+      {"Esc", "pop / back"}}},
+    {"Peek",
+     {{"Space", "peek selection"},
+      {"Enter", "open / send"},
+      {"A / D", "step index / file"},
+      {"W / S", "move or scroll file"},
+      {"Esc / Q", "leave peek"}}},
+    {"Do layer",
+     {{"Ctrl+Enter", "open (also right-click)"},
+      {"W / S", "verbs"},
+      {"A / D", "params"},
+      {"Enter", "run"},
+      {"Esc / Q", "leave"}}},
+    {"Find & fields",
+     {{"/", "filter listing"},
+      {":", "command"},
+      {"Ctrl+L", "jump to path"},
+      {"Ctrl+K", "filter field"},
+      {"? name", "name search (fd)"},
+      {"?? text", "content search (rg)"}}},
+    {"Files",
+     {{"y / x / p", "copy / cut / paste"},
+      {"r", "rename"},
+      {"n", "new folder"},
+      {"u", "undo"},
+      {"Delete", "trash"},
+      {"Shift+Delete", "unlink"},
+      {"drag", "drop to move / copy"}}},
+    {"View",
+     {{".", "hidden files"},
+      {"v", "grid / list (middle-click)"},
+      {"V", "visual select"},
+      {"Shift+P", "pin folder"},
+      {"headers", "click to sort columns"},
+      {"All Files Folders", "kind filter chips"}}},
+    {"Terminal",
+     {{"Ctrl+`", "terminal — open / flip focus"},
+      {":term", "bottom | left | right | off"},
+      {"hover", "focus follows the pointer"},
+      {"t", "external terminal"},
+      {"g", "reveal"}}},
+    {"Commands",
+     {{":sort <role>", "name / size / mtime / type"},
+      {":sort", "again: flip order"},
+      {":all :files :folders", "kind filter"},
+      {":trash :recent", "trash / recents"},
+      {":volumes :home", "volumes / home"},
+      {":hidden :pin :unpin", "toggles"},
+      {":grid :list :empty", "views / empty trash"},
+      {":help ? F1", "this help"}}},
+    {"fsv — it's a unix system",
+     {{":fsv / :fsn / Ctrl+M", "3D browser, tree | map"},
+      {"click", "fly to node along the roads"},
+      {"W A S D", "drive"},
+      {"drag / wheel", "orbit / zoom"},
+      {"M", "map <-> tree"},
+      {"Enter", "dive into folder"}}},
+};
+
+} // namespace
+
+QVariantList CommandPalette::helpModel() {
+  QVariantList sections;
+  for (const HelpSection &sec : kHelp) {
+    QVariantList rows;
+    for (const HelpRow &row : sec.rows) {
+      QVariantMap r;
+      r.insert(QStringLiteral("keys"), QString::fromUtf8(row.keys));
+      r.insert(QStringLiteral("what"), QString::fromUtf8(row.what));
+      rows.append(r);
+    }
+    QVariantMap m;
+    m.insert(QStringLiteral("title"), QString::fromUtf8(sec.title));
+    m.insert(QStringLiteral("rows"), rows);
+    sections.append(m);
+  }
+  return sections;
+}
+
 QString CommandPalette::helpText() {
-  return QStringLiteral(
-      "j/k  move     WASD  move    Shift+WASD  leap 5\n"
-      "h / Left / Q  up     l / Right / E  open/peek     Enter  activate\n"
-      "Space  peek this     Enter  open/send     Esc / Q  leave peek\n"
-      "A/D    peek index/file     W/S  move or scroll file\n"
-      "Ctrl+Enter / right-click  do-layer (actions + params)\n"
-      "do: W/S verbs   A/D params   Enter run   Esc/Q leave\n"
-      "/    filter   Tab  search/listing   :  command   Ctrl+L  jump\n"
-      "? name (fd)   ?? content (rg)\n"
-      ".    hidden   v / middle-click  grid      V  visual\n"
-      "Shift+P  pin folder     [ ]  cycle filter\n"
-      "y/x/p copy/cut/paste   drag drop   r rename   n mkdir   u undo\n"
-      "Delete trash   Shift+Delete unlink   t terminal   g reveal\n"
-      "Esc  pop      F1  help\n"
-      "\n"
-      ":trash :recent :volumes :home :hidden :pin :unpin :sort :grid :list :fsn :empty :agent :help :?\n"
-      ":all :files :folders  show everything / files only / folders only\n"
-      ":term [bottom|left|right|off]  terminal panel (follows cwd)\n"
-      "Ctrl+`  open terminal / flip focus between panel and browser\n"
-      ":sort name|size|mtime|type [asc|desc]   :sort  flip order   list headers click-sort\n"
-      ":fsv tree|map / Ctrl+M  3D browser\n"
-      "in fsv: click fly-to   WASD drive   drag orbit   wheel zoom   M map/tree");
+  QString out;
+  for (const HelpSection &sec : kHelp) {
+    out += QString::fromUtf8(sec.title);
+    out += QLatin1Char('\n');
+    for (const HelpRow &row : sec.rows) {
+      out += QStringLiteral("  %1  %2\n")
+                 .arg(QString::fromUtf8(row.keys), -22)
+                 .arg(QString::fromUtf8(row.what));
+    }
+    out += QLatin1Char('\n');
+  }
+  return out.trimmed();
 }
 
 QString CommandPalette::stripSigil(const QString &text) {

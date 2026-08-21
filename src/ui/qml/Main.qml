@@ -427,22 +427,117 @@ Window {
             }
         }
 
+        // Split sections into two balanced columns by row weight.
+        function helpColumns() {
+            var secs = root.keys ? root.keys.helpModel : []
+            var total = 0
+            var i
+            for (i = 0; i < secs.length; ++i)
+                total += secs[i].rows.length + 2
+            var acc = 0
+            var split = secs.length
+            for (i = 0; i < secs.length; ++i) {
+                acc += secs[i].rows.length + 2
+                if (acc >= total / 2) {
+                    split = i + 1
+                    break
+                }
+            }
+            return [secs.slice(0, split), secs.slice(split)]
+        }
+
         Rectangle {
+            id: helpPanel
+            readonly property int keyColW: Math.round(Theme.fontBody * 12.5)
+            readonly property int colW: keyColW + Math.round(Theme.fontBody * 19)
+            readonly property bool twoCol: helpOverlay.width >=
+                                           colW * 2 + Theme.space(96)
             anchors.centerIn: parent
-            width: Math.min(parent.width - Theme.space(48), 560)
-            height: Math.min(parent.height - Theme.space(48), 280)
+            width: (twoCol ? colW * 2 + Theme.space(32) : colW) +
+                   Theme.space(40)
+            height: Math.min(parent.height - Theme.space(40),
+                             helpFlick.contentHeight + Theme.space(36))
             color: Theme.background
             border.color: Theme.normalBorder
             border.width: 1
 
-            Text {
+            Flickable {
+                id: helpFlick
                 anchors.fill: parent
-                anchors.margins: Theme.space(16)
-                text: root.keys ? root.keys.helpText : ""
-                color: Theme.foreground
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontBody
-                wrapMode: Text.WordWrap
+                anchors.margins: Theme.space(18)
+                contentHeight: helpBody.height
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                Row {
+                    id: helpBody
+                    spacing: Theme.space(32)
+
+                    Repeater {
+                        model: helpPanel.twoCol ? 2 : 1
+
+                        Column {
+                            id: helpCol
+                            required property int index
+                            spacing: Theme.space(14)
+
+                            Repeater {
+                                model: helpPanel.twoCol
+                                       ? helpOverlay.helpColumns()[helpCol.index]
+                                       : (root.keys ? root.keys.helpModel : [])
+
+                                Column {
+                                    id: helpSection
+                                    required property var modelData
+                                    spacing: Theme.space(3)
+
+                                    Text {
+                                        text: helpSection.modelData.title
+                                        color: Theme.accent
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontBody
+                                        font.bold: true
+                                    }
+
+                                    Repeater {
+                                        model: helpSection.modelData.rows
+
+                                        Item {
+                                            id: helpRowItem
+                                            required property var modelData
+                                            width: helpPanel.colW
+                                            height: Theme.fontBody +
+                                                    Theme.space(5)
+
+                                            Text {
+                                                width: helpPanel.keyColW
+                                                anchors.verticalCenter:
+                                                    parent.verticalCenter
+                                                text: helpRowItem.modelData.keys
+                                                color: Theme.foreground
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontBody
+                                                elide: Text.ElideRight
+                                            }
+                                            Text {
+                                                x: helpPanel.keyColW +
+                                                   Theme.space(10)
+                                                width: parent.width - x
+                                                anchors.verticalCenter:
+                                                    parent.verticalCenter
+                                                text: helpRowItem.modelData.what
+                                                color: Theme.muted
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontBody
+                                                elide: Text.ElideRight
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

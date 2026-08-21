@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QVariantList>
 #include <QVector>
 
 // Colon-command table. Builtins win over action :id / :title (K7).
@@ -14,6 +15,7 @@ class CommandPalette {
 public:
   static QVector<CommandSpec> builtins();
   static QString helpText();
+  static QVariantList helpModel();
   static QString stripSigil(const QString &text);
   static QString lastSegment(const QString &id);
 

@@ -6,6 +6,7 @@
 #include <QObject>
 #include <QString>
 #include <QTimer>
+#include <QVariantList>
 
 #include <functional>
 
@@ -44,6 +45,7 @@ class KeyMachine : public QObject {
                  gridStrideChanged)
   Q_PROPERTY(bool helpOpen READ helpOpen NOTIFY helpOpenChanged)
   Q_PROPERTY(QString helpText READ helpText CONSTANT)
+  Q_PROPERTY(QVariantList helpModel READ helpModel CONSTANT)
   Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
   Q_PROPERTY(QString promptText READ promptText WRITE setPromptText NOTIFY
                  promptChanged)
@@ -107,6 +109,7 @@ public:
   int gridStride() const { return m_gridStride; }
   bool helpOpen() const { return m_helpOpen; }
   QString helpText() const { return CommandPalette::helpText(); }
+  QVariantList helpModel() const { return CommandPalette::helpModel(); }
   QString statusMessage() const { return m_status; }
   QString promptText() const { return m_promptText; }
   QString promptKind() const { return m_promptKind; }
