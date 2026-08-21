@@ -1,9 +1,12 @@
 #include "HostApi.h"
 
 #include <QCryptographicHash>
+#include <QLibraryInfo>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
+
+#include <dlfcn.h>
 
 #include "DirectoryModel.h"
 #include "FileOpEngine.h"
@@ -339,6 +342,39 @@ QHash<QString, QString> readOmarchyTerminalPalette(const QString &themeDir) {
 
 } // namespace
 
+// qmltermwidget's name lookup only ever checks the FIRST scheme directory
+// (findColorSchemePath uses dirs.first()), so registered custom dirs are
+// unreachable by name. ColorSchemeManager::loadCustomColorScheme(path) is
+// also exported and loads a file straight into the manager's registry —
+// resolve it dynamically (the plugin is in-process once the panel QML
+// imported it) and feed it our generated scheme.
+bool loadSchemeFile(const QString &path) {
+  using InstanceFn = void *(*)();
+  using LoadFn = bool (*)(void *, const QString &);
+  static InstanceFn instanceFn = nullptr;
+  static LoadFn loadFn = nullptr;
+  static bool resolved = [] {
+    const QString plugin =
+        QLibraryInfo::path(QLibraryInfo::QmlImportsPath) +
+        QStringLiteral("/QMLTermWidget/libqmltermwidget.so");
+    void *handle = dlopen(QFile::encodeName(plugin).constData(),
+                          RTLD_LAZY | RTLD_NOLOAD);
+    if (!handle)
+      handle = dlopen("libqmltermwidget.so", RTLD_LAZY);
+    if (!handle)
+      return false;
+    instanceFn = reinterpret_cast<InstanceFn>(
+        dlsym(handle, "_ZN7Konsole18ColorSchemeManager8instanceEv"));
+    loadFn = reinterpret_cast<LoadFn>(dlsym(
+        handle, "_ZN7Konsole18ColorSchemeManager21loadCustomColorSchemeERK7QString"));
+    return instanceFn && loadFn;
+  }();
+  if (!resolved)
+    return false;
+  void *manager = instanceFn();
+  return manager && loadFn(manager, path);
+}
+
 // Generate a qtermwidget color scheme from the active omarchy theme and
 // return its name. The file name carries a content hash: a theme switch
 // yields a new name, which sidesteps qtermwidget's per-name scheme cache.
@@ -383,7 +419,7 @@ QString HostApi::terminalColorScheme() const {
   const QString name = QStringLiteral("omarchy-") + hash;
   const QString dir =
       QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
-      QStringLiteral("/QMLTermWidget/color-schemes");
+      QStringLiteral("/synchro/term-schemes");
   const QString file = dir + QLatin1Char('/') + name +
                        QStringLiteral(".colorscheme");
   if (!QFileInfo::exists(file)) {
@@ -401,6 +437,8 @@ QString HostApi::terminalColorScheme() const {
     if (!out.commit())
       return fallback;
   }
+  if (!loadSchemeFile(file))
+    return fallback;
   return name;
 }
 
