@@ -87,7 +87,8 @@ void Config::applyDefaults() {
 }
 
 static QString normalizePanelSide(const QString &side) {
-  if (side == QLatin1String("left") || side == QLatin1String("right"))
+  if (side == QLatin1String("left") || side == QLatin1String("right") ||
+      side == QLatin1String("top"))
     return side;
   return QStringLiteral("bottom");
 }

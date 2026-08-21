@@ -1328,10 +1328,15 @@ void CommandFieldTest::termPanelCommands() {
   QCOMPARE(keys.panelId(), QStringLiteral("synchro.panel.terminal"));
 
   keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":term top"));
+  keys.acceptField();
+  QCOMPARE(keys.panelSide(), QStringLiteral("top"));
+
+  keys.focusCommand();
   keys.setFieldText(QStringLiteral(":term off"));
   keys.acceptField();
   QVERIFY(keys.panelId().isEmpty());
-  QCOMPARE(keys.panelSide(), QStringLiteral("right"));
+  QCOMPARE(keys.panelSide(), QStringLiteral("top"));
 
   // bare :term toggles
   keys.focusCommand();
@@ -1348,7 +1353,7 @@ void CommandFieldTest::termPanelCommands() {
   keys.setFieldText(QStringLiteral(":term sideways"));
   keys.acceptField();
   QVERIFY(keys.panelId().isEmpty());
-  QCOMPARE(keys.statusMessage(), QStringLiteral(":term [bottom|left|right|off]"));
+  QCOMPARE(keys.statusMessage(), QStringLiteral(":term [top|bottom|left|right|off]"));
 
   // chooser windows refuse the panel
   QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));

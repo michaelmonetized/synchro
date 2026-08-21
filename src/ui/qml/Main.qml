@@ -61,8 +61,16 @@ Window {
     readonly property string panelSide: root.keys ? root.keys.panelSide
                                                   : "bottom"
     readonly property bool panelBottom: panelSide === "bottom"
+    readonly property bool panelTopSide: panelSide === "top"
     readonly property bool panelLeft: panelSide === "left"
     readonly property bool panelRight: panelSide === "right"
+    readonly property bool panelHorizontal: panelBottom || panelTopSide
+
+    // Grip-drag re-docking state (the gesture only starts from the grip,
+    // so panel content keeps its own drag and drop untouched).
+    property bool panelDragging: false
+    property real panelDragX: 0
+    property real panelDragY: 0
 
     function focusPanel() {
         if (panelDock.panelItem && panelDock.panelItem.focusContent)
@@ -86,7 +94,16 @@ Window {
 
     Loader {
         id: listingLoader
-        anchors.top: commandField.bottom
+
+        HoverHandler {
+            enabled: root.hoverFocusAllowed
+            onHoveredChanged: {
+                if (hovered && panelDock.activeFocus)
+                    root.focusListingForce()
+            }
+        }
+        anchors.top: root.panelOpen && root.panelTopSide ? panelDock.bottom
+                                                          : commandField.bottom
         anchors.left: root.panelOpen && root.panelLeft ? panelDock.right
                                                        : parent.left
         anchors.right: root.panelOpen && root.panelRight ? panelDock.left
@@ -195,8 +212,9 @@ Window {
         readonly property var panelItem: panelLoader.item
         readonly property int span: appConfig
                                     ? Math.min(appConfig.panelSize,
-                                               (root.panelBottom ? root.height
-                                                                 : root.width) * 0.7)
+                                               (root.panelHorizontal
+                                                ? root.height
+                                                : root.width) * 0.7)
                                     : 260
         visible: root.panelOpen
         z: 2
@@ -210,12 +228,15 @@ Window {
                     root.focusPanel()
             }
         }
-        anchors.left: root.panelRight ? undefined : parent.left
-        anchors.right: root.panelLeft ? undefined : parent.right
-        anchors.top: root.panelBottom ? undefined : commandField.bottom
-        anchors.bottom: statusLine.top
-        width: span
-        height: span
+        // Plain positional bindings: conditional anchors that flip to
+        // `undefined` at runtime do not reliably un-anchor, which left the
+        // dock stretched across stale edges after a grip re-dock.
+        readonly property real areaTop: commandField.y + commandField.height
+        readonly property real areaBottom: statusLine.y
+        x: root.panelRight ? root.width - span : 0
+        y: root.panelBottom ? areaBottom - span : areaTop
+        width: root.panelHorizontal ? root.width : span
+        height: root.panelHorizontal ? span : areaBottom - areaTop
 
         Rectangle {
             anchors.fill: parent
@@ -226,6 +247,7 @@ Window {
             id: panelLoader
             anchors.fill: parent
             anchors.topMargin: root.panelBottom ? 6 : 0
+            anchors.bottomMargin: root.panelTopSide ? 6 : 0
             anchors.leftMargin: root.panelRight ? 6 : 0
             anchors.rightMargin: root.panelLeft ? 6 : 0
             source: panelDock.loadedUrl
@@ -267,15 +289,23 @@ Window {
             width: panelDock.activeFocus ? 2 : 1
             color: panelDock.activeFocus ? Theme.accent : Theme.normalBorder
         }
+        Rectangle {
+            visible: root.panelTopSide
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: panelDock.activeFocus ? 2 : 1
+            color: panelDock.activeFocus ? Theme.accent : Theme.normalBorder
+        }
 
         MouseArea {
             id: panelResizeH
-            visible: root.panelBottom
+            visible: root.panelHorizontal
             z: 5
             cursorShape: Qt.SplitVCursor
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
+            x: 0
+            width: parent.width
+            y: root.panelBottom ? 0 : parent.height - 6
             height: 6
             preventStealing: true
             property real startSize: 0
@@ -288,18 +318,92 @@ Window {
                 if (!pressed || !appConfig)
                     return
                 var y = mapToItem(null, mouse.x, mouse.y).y
-                appConfig.panelSize = Math.round(startSize + (startY - y))
+                var delta = root.panelBottom ? (startY - y) : (y - startY)
+                appConfig.panelSize = Math.round(startSize + delta)
             }
         }
+        Item {
+            id: panelGrip
+            z: 7
+            width: root.panelHorizontal ? 72 : 16
+            height: root.panelHorizontal ? 16 : 72
+            // Inset past the 6px resize strip so the two gestures never
+            // overlap: the edge resizes, the pill moves.
+            x: root.panelHorizontal ? (parent.width - width) / 2
+                                    : (root.panelRight ? 7
+                                                       : parent.width - width - 7)
+            y: root.panelHorizontal ? (root.panelBottom ? 7
+                                                        : parent.height - height - 7)
+                                    : (parent.height - height) / 2
+
+            Rectangle {
+                anchors.fill: parent
+                radius: height / 2
+                color: gripArea.pressed || gripArea.containsMouse
+                       ? Theme.hoverFill : "transparent"
+                border.color: gripArea.pressed || gripArea.containsMouse
+                              ? Theme.accent : Theme.normalBorder
+                border.width: 1
+                opacity: 0.9
+            }
+
+            Grid {
+                anchors.centerIn: parent
+                columns: root.panelHorizontal ? 3 : 1
+                spacing: 3
+                Repeater {
+                    model: 3
+                    Rectangle {
+                        width: 4
+                        height: 4
+                        radius: 2
+                        color: gripArea.pressed || gripArea.containsMouse
+                               ? Theme.accent : Theme.muted
+                    }
+                }
+            }
+
+            MouseArea {
+                id: gripArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.SizeAllCursor
+                preventStealing: true
+                onPressed: function (mouse) {
+                    var g = mapToItem(null, mouse.x, mouse.y)
+                    root.panelDragX = g.x
+                    root.panelDragY = g.y
+                    root.panelDragging = true
+                }
+                onPositionChanged: function (mouse) {
+                    if (!pressed)
+                        return
+                    var g = mapToItem(null, mouse.x, mouse.y)
+                    root.panelDragX = g.x
+                    root.panelDragY = g.y
+                }
+                onReleased: {
+                    var z = panelDropZones.zone
+                    root.panelDragging = false
+                    if (!root.keys)
+                        return
+                    if (z === "close")
+                        root.keys.panelId = ""
+                    else if (z.length)
+                        root.keys.panelSide = z
+                }
+                onCanceled: root.panelDragging = false
+            }
+        }
+
         MouseArea {
             id: panelResizeV
-            visible: !root.panelBottom
+            visible: !root.panelHorizontal
             z: 5
             cursorShape: Qt.SplitHCursor
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            anchors.left: root.panelRight ? parent.left : undefined
-            anchors.right: root.panelLeft ? parent.right : undefined
+            y: 0
+            height: parent.height
+            x: root.panelRight ? 0 : parent.width - 6
             width: 6
             preventStealing: true
             property real startSize: 0
@@ -324,25 +428,126 @@ Window {
         onActivated: root.toggleTerminalPanel()
     }
 
+    Item {
+        id: panelDropZones
+        visible: root.panelDragging
+        z: 150
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: commandField.bottom
+        anchors.bottom: statusLine.top
+
+        readonly property string zone: {
+            if (!root.panelDragging)
+                return ""
+            var p = mapFromItem(null, root.panelDragX, root.panelDragY)
+            if (p.x < 0 || p.y < 0 || p.x > width || p.y > height)
+                return "close"
+            if (p.y < height * 0.30)
+                return "top"
+            if (p.y > height * 0.70)
+                return "bottom"
+            if (p.x < width * 0.30)
+                return "left"
+            if (p.x > width * 0.70)
+                return "right"
+            return "close"
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            color: Theme.background
+            opacity: 0.55
+        }
+
+        component DropZone: Rectangle {
+            required property string side
+            readonly property bool hot: panelDropZones.zone === side
+            color: hot ? Theme.selectedFill : "transparent"
+            border.color: hot ? Theme.accent : Theme.normalBorder
+            border.width: 1
+
+            Text {
+                anchors.centerIn: parent
+                text: parent.side
+                color: parent.hot ? Theme.accent : Theme.muted
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontBody
+            }
+        }
+
+        DropZone {
+            side: "top"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: parent.height * 0.30
+        }
+        DropZone {
+            side: "bottom"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: parent.height * 0.30
+        }
+        DropZone {
+            side: "left"
+            anchors.left: parent.left
+            y: parent.height * 0.30
+            height: parent.height * 0.40
+            width: parent.width * 0.30
+        }
+        DropZone {
+            side: "right"
+            anchors.right: parent.right
+            y: parent.height * 0.30
+            height: parent.height * 0.40
+            width: parent.width * 0.30
+        }
+
+        Text {
+            anchors.centerIn: parent
+            text: panelDropZones.zone === "close" ? "release to close"
+                                                  : "drop on an edge to dock"
+            color: panelDropZones.zone === "close" ? Theme.urgent : Theme.muted
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontBody
+        }
+    }
+
+    Rectangle {
+        visible: root.panelDragging
+        z: 151
+        x: root.panelDragX + 14
+        y: root.panelDragY + 12
+        width: ghostLabel.implicitWidth + Theme.space(16)
+        height: ghostLabel.implicitHeight + Theme.space(8)
+        radius: Theme.radius
+        color: Theme.background
+        border.color: Theme.accent
+        border.width: 1
+        opacity: 0.92
+
+        Text {
+            id: ghostLabel
+            anchors.centerIn: parent
+            text: "terminal"
+            color: Theme.foreground
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontBody
+        }
+    }
+
     // Focus follows the pointer between browser and terminal, Hyprland
     // style — but never steals from the command field or overlays.
     readonly property bool hoverFocusAllowed: panelOpen && keys &&
+                                              !panelDragging &&
                                               !keys.fieldFocused &&
                                               !keys.peekOpen &&
                                               !keys.actionOpen &&
                                               !keys.helpOpen
 
-    Item {
-        anchors.fill: listingLoader
-        z: 3
-        HoverHandler {
-            enabled: root.hoverFocusAllowed
-            onHoveredChanged: {
-                if (hovered && panelDock.activeFocus)
-                    root.focusListingForce()
-            }
-        }
-    }
+
 
     Connections {
         target: root.keys

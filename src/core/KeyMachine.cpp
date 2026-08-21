@@ -234,7 +234,8 @@ void KeyMachine::setPanelId(const QString &id) {
 
 void KeyMachine::setPanelSide(const QString &side) {
   QString next = QStringLiteral("bottom");
-  if (side == QLatin1String("left") || side == QLatin1String("right"))
+  if (side == QLatin1String("left") || side == QLatin1String("right") ||
+      side == QLatin1String("top"))
     next = side;
   if (m_panelSide == next)
     return;
@@ -954,13 +955,13 @@ void KeyMachine::runCommand(const QString &text) {
       if (fsnToks.size() > 1) {
         const QString arg = fsnToks.at(1).toLower();
         if (arg == QLatin1String("bottom") || arg == QLatin1String("left") ||
-            arg == QLatin1String("right")) {
+            arg == QLatin1String("right") || arg == QLatin1String("top")) {
           setPanelSide(arg);
           setPanelId(id);
         } else if (arg == QLatin1String("off")) {
           setPanelId(QString());
         } else {
-          setStatusMessage(QStringLiteral(":term [bottom|left|right|off]"));
+          setStatusMessage(QStringLiteral(":term [top|bottom|left|right|off]"));
           return;
         }
       } else {
