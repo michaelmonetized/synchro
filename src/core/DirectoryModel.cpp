@@ -68,6 +68,8 @@ QString formatPerm(int mode, bool isDir, bool isSymlink) {
 DirectoryModel::DirectoryModel(QObject *parent) : QAbstractListModel(parent) {
   qRegisterMetaType<DirectoryEntry>();
   qRegisterMetaType<QVector<DirectoryEntry>>();
+  m_collator.setCaseSensitivity(Qt::CaseInsensitive);
+  m_collator.setNumericMode(true); // natural sort: file2 before file10
 
   m_lister = new DirectoryLister;
   m_lister->moveToThread(&m_thread);
@@ -255,7 +257,9 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const {
   case PathRole:
     return e->path;
   case UriRole:
-    return e->uri;
+    return e->uri.isEmpty() && !e->path.isEmpty()
+               ? QUrl::fromLocalFile(e->path)
+               : e->uri;
   case IsDirRole:
     return e->isDir;
   case SizeRole:
@@ -308,6 +312,26 @@ const DirectoryEntry *DirectoryModel::entryAt(int visibleRow) const {
   return &m_all.at(all);
 }
 
+int DirectoryModel::compareNamesForRows(int leftVisibleRow,
+                                        int rightVisibleRow) const {
+  if (searching()) {
+    const DirectoryEntry *l = entryAt(leftVisibleRow);
+    const DirectoryEntry *r = entryAt(rightVisibleRow);
+    if (!l || !r)
+      return 0;
+    return QString::compare(l->name, r->name, Qt::CaseInsensitive);
+  }
+  if (leftVisibleRow < 0 || leftVisibleRow >= m_visible.size() ||
+      rightVisibleRow < 0 || rightVisibleRow >= m_visible.size())
+    return 0;
+  const int la = m_visible.at(leftVisibleRow);
+  const int ra = m_visible.at(rightVisibleRow);
+  if (la < m_sortKeys.size() && ra < m_sortKeys.size())
+    return m_sortKeys.at(la).compare(m_sortKeys.at(ra));
+  return QString::compare(m_all.at(la).name, m_all.at(ra).name,
+                          Qt::CaseInsensitive);
+}
+
 QString DirectoryModel::normalizePath(const QString &path) {
   if (isSearchPath(path))
     return path;
@@ -337,6 +361,7 @@ QString DirectoryModel::normalizePath(const QString &path) {
 void DirectoryModel::resetListing() {
   beginResetModel();
   m_all.clear();
+  m_sortKeys.clear();
   m_visible.clear();
   m_indexByName.clear();
   m_indexByPath.clear();
@@ -581,7 +606,9 @@ QVariantMap DirectoryModel::entryToMap(const DirectoryEntry &e) const {
   QVariantMap m;
   m.insert(QStringLiteral("name"), e.name);
   m.insert(QStringLiteral("path"), e.path);
-  m.insert(QStringLiteral("uri"), e.uri);
+  m.insert(QStringLiteral("uri"),
+           e.uri.isEmpty() && !e.path.isEmpty() ? QUrl::fromLocalFile(e.path)
+                                                : e.uri);
   m.insert(QStringLiteral("isDir"), e.isDir);
   m.insert(QStringLiteral("size"), e.size);
   m.insert(QStringLiteral("mtime"), e.mtime);
@@ -1024,6 +1051,7 @@ void DirectoryModel::onBatchReady(quint64 generation,
     }
     const int allIndex = m_all.size();
     m_all.append(e);
+    m_sortKeys.append(m_collator.sortKey(e.name));
     m_indexByName.insert(e.name, allIndex);
     if (!e.path.isEmpty())
       m_indexByPath.insert(e.path, allIndex);
@@ -1053,16 +1081,15 @@ void DirectoryModel::onBatchReady(quint64 generation,
                  m_lastFirstRowsMs > 80 ? " SLOW" : "");
     emit firstRowsInserted(m_lastFirstRowsMs, m_visible.size());
   }
-  emitCurrentStat();
 }
 
-void DirectoryModel::applyEntry(const DirectoryEntry &entry) {
+int DirectoryModel::applyEntry(const DirectoryEntry &entry) {
   const auto it = m_indexByName.constFind(entry.name);
   if (it == m_indexByName.cend())
-    return;
+    return -1;
   const int allIndex = it.value();
   if (allIndex < 0 || allIndex >= m_all.size())
-    return;
+    return -1;
   const QString oldThumb = m_all[allIndex].thumbnail;
   const QString oldPath = m_all[allIndex].path;
   m_all[allIndex] = entry;
@@ -1072,14 +1099,7 @@ void DirectoryModel::applyEntry(const DirectoryEntry &entry) {
     m_indexByPath.remove(oldPath);
   if (!entry.path.isEmpty())
     m_indexByPath.insert(entry.path, allIndex);
-
-  const auto vis = m_visibleRowByAll.constFind(allIndex);
-  if (vis == m_visibleRowByAll.cend())
-    return;
-  const QModelIndex idx = index(vis.value());
-  emit dataChanged(idx, idx);
-  if (vis.value() == m_currentIndex)
-    emitCurrentStat();
+  return m_visibleRowByAll.value(allIndex, -1);
 }
 
 void DirectoryModel::onStatsReady(quint64 generation,
@@ -1090,23 +1110,31 @@ void DirectoryModel::onStatsReady(quint64 generation,
     return;
   QStringList thumbs;
   thumbs.reserve(batch.size());
+  QStringList applied;
+  applied.reserve(batch.size());
+  QVector<int> changedRows;
+  changedRows.reserve(batch.size());
+  bool currentTouched = false;
   for (const DirectoryEntry &e : batch) {
     qint64 oldMtime = 0;
     bool hadThumb = false;
-    int visRow = -1;
     const auto it = m_indexByName.constFind(e.name);
     if (it != m_indexByName.cend()) {
       const int allIndex = it.value();
       if (allIndex >= 0 && allIndex < m_all.size()) {
         oldMtime = m_all.at(allIndex).mtime;
         hadThumb = !m_all.at(allIndex).thumbnail.isEmpty();
-        visRow = m_visibleRowByAll.value(allIndex, -1);
       }
     }
-    applyEntry(e);
-    emit entryStatReady(e.path, entryToMap(e));
+    const int visRow = applyEntry(e);
+    if (visRow >= 0) {
+      changedRows.append(visRow);
+      if (visRow == m_currentIndex)
+        currentTouched = true;
+    }
     if (e.path.isEmpty())
       continue;
+    applied.append(e.path);
     const bool dirTouched =
         e.isDir && oldMtime > 0 && e.mtime != oldMtime && hadThumb;
     const bool pending = m_pendingThumbs.remove(e.path);
@@ -1114,6 +1142,26 @@ void DirectoryModel::onStatsReady(quint64 generation,
     if (dirTouched || pending || (!hadThumb && onScreen))
       thumbs.append(e.path);
   }
+  // One dataChanged per contiguous run instead of one per entry: 50k
+  // per-entry signals made the sort proxy re-place rows one at a time.
+  if (!changedRows.isEmpty()) {
+    std::sort(changedRows.begin(), changedRows.end());
+    int runStart = changedRows.first();
+    int prev = runStart;
+    for (int i = 1; i <= changedRows.size(); ++i) {
+      const int row = i < changedRows.size() ? changedRows.at(i) : -2;
+      if (row == prev || row == prev + 1) {
+        prev = row;
+        continue;
+      }
+      emit dataChanged(index(runStart), index(prev));
+      runStart = prev = row;
+    }
+  }
+  if (currentTouched)
+    emitCurrentStat();
+  if (!applied.isEmpty())
+    emit statsApplied(applied);
   maybeActivatePending();
   if (!thumbs.isEmpty())
     refreshThumbs(thumbs);
@@ -1172,7 +1220,6 @@ DirectoryEntry DirectoryModel::makePlaceholder(const QString &name,
   DirectoryEntry e;
   e.name = name;
   e.path = QDir(m_path).filePath(name);
-  e.uri = QUrl::fromLocalFile(e.path);
   e.isHidden = !name.isEmpty() && name[0] == QLatin1Char('.');
   e.size = -1;
   e.mtime = 0;
@@ -1231,6 +1278,7 @@ void DirectoryModel::insertPlaceholder(const QString &name, bool isDir) {
   const DirectoryEntry e = makePlaceholder(name, isDir);
   const int allIndex = m_all.size();
   m_all.append(e);
+  m_sortKeys.append(m_collator.sortKey(name));
   m_indexByName.insert(name, allIndex);
   if (!e.path.isEmpty())
     m_indexByPath.insert(e.path, allIndex);

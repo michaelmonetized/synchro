@@ -146,6 +146,7 @@ private slots:
   void enterHelpOpensOverlay();
   void tabTogglesSearchFromList();
   void enterSortChangesRoleAndFlips();
+  void naturalSortOrdersDirsFirst();
   void escCommandSingleStep();
   void colonDoesNotReplaceListVerbs();
   void unknownAndAmbiguousStayInField();
@@ -1299,6 +1300,43 @@ void CommandFieldTest::successfulCommandClearsStatus() {
   keys.setFieldText(QStringLiteral(":hidden"));
   keys.acceptField();
   QCOMPARE(keys.statusMessage(), QStringLiteral("hidden on"));
+}
+
+// Name sort is collation-based: case-insensitive, numeric-aware (file2
+// before file10), directories ahead of files.
+void CommandFieldTest::naturalSortOrdersDirsFirst() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("zeta-dir")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("file10.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("file2.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("Alpha.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("beta.txt"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QTRY_COMPARE(proxy.rowCount(), 5);
+
+  QStringList order;
+  for (int i = 0; i < proxy.rowCount(); ++i)
+    order << proxy.data(proxy.index(i, 0), DirectoryModel::NameRole).toString();
+  const QStringList expected{
+      QStringLiteral("zeta-dir"), QStringLiteral("Alpha.txt"),
+      QStringLiteral("beta.txt"), QStringLiteral("file2.txt"),
+      QStringLiteral("file10.txt")};
+  QCOMPARE(order, expected);
+
+  // Descending flips names but keeps the dir pinned first.
+  proxy.setSortOrder(QStringLiteral("desc"));
+  QTRY_COMPARE(proxy.data(proxy.index(0, 0), DirectoryModel::NameRole)
+                   .toString(),
+               QStringLiteral("zeta-dir"));
+  QCOMPARE(proxy.data(proxy.index(1, 0), DirectoryModel::NameRole).toString(),
+           QStringLiteral("file10.txt"));
 }
 
 void CommandFieldTest::enterSortChangesRoleAndFlips() {

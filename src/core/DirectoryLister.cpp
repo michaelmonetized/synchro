@@ -51,11 +51,13 @@ struct RawEntry {
 
 bool isPendingType(unsigned char t) { return t == DT_LNK || t == DT_UNKNOWN; }
 
-DirectoryEntry fromDirent(const QString &dirPath, const RawEntry &raw) {
+// basePath must end with '/'. The uri stays empty here: QUrl::fromLocalFile
+// costs ~0.4us per entry and is rarely needed, so the model computes it on
+// demand instead.
+DirectoryEntry fromDirent(const QString &basePath, const RawEntry &raw) {
   DirectoryEntry e;
   e.name = QFile::decodeName(raw.rawName);
-  e.path = QDir(dirPath).filePath(e.name);
-  e.uri = QUrl::fromLocalFile(e.path);
+  e.path = basePath + e.name;
   e.isHidden = !e.name.isEmpty() && e.name[0] == QLatin1Char('.');
   e.size = -1;
   e.mtime = 0;
@@ -83,16 +85,29 @@ DirectoryEntry fromDirent(const QString &dirPath, const RawEntry &raw) {
   return e;
 }
 
-void applyMime(DirectoryEntry &e, QMimeDatabase &db) {
+// Never sniff file contents while listing: MatchContent opens and reads
+// every suffix-less file, which turns /usr/bin into a >1s crawl (measured
+// 0.26ms/file). Extension matching plus the executable bit covers the
+// listing; on-demand consumers (peek, open) still content-sniff via MimeMap.
+void applyMime(DirectoryEntry &e, QMimeDatabase &db, bool executable) {
   if (e.isDir) {
     e.mime = QStringLiteral("inode/directory");
     e.iconName = QStringLiteral("folder");
     return;
   }
-  QMimeType mime = db.mimeTypeForFile(e.path, QMimeDatabase::MatchExtension);
-  const QFileInfo fi(e.name);
-  if (fi.suffix().isEmpty())
-    mime = db.mimeTypeForFile(e.path, QMimeDatabase::MatchContent);
+  if (!e.name.contains(QLatin1Char('.'))) {
+    if (executable) {
+      e.mime = QStringLiteral("application/x-executable");
+      e.iconName = QStringLiteral("application-x-executable");
+    } else {
+      e.mime = QStringLiteral("application/octet-stream");
+      e.iconName = e.isSymlink ? QStringLiteral("emblem-symbolic-link")
+                               : QStringLiteral("text-x-generic");
+    }
+    return;
+  }
+  const QMimeType mime =
+      db.mimeTypeForFile(e.name, QMimeDatabase::MatchExtension);
   e.mime = mime.name();
   e.iconName = mime.genericIconName();
   if (e.iconName.isEmpty())
@@ -102,9 +117,9 @@ void applyMime(DirectoryEntry &e, QMimeDatabase &db) {
                              : QStringLiteral("text-x-generic");
 }
 
-DirectoryEntry enrich(int dirfd, const QString &dirPath, const RawEntry &raw,
+DirectoryEntry enrich(int dirfd, const QString &basePath, const RawEntry &raw,
                       QMimeDatabase &db) {
-  DirectoryEntry e = fromDirent(dirPath, raw);
+  DirectoryEntry e = fromDirent(basePath, raw);
 
   struct stat lst{};
   if (fstatat(dirfd, raw.rawName.constData(), &lst, AT_SYMLINK_NOFOLLOW) != 0) {
@@ -134,7 +149,7 @@ DirectoryEntry enrich(int dirfd, const QString &dirPath, const RawEntry &raw,
   else
     e.size = static_cast<qint64>(st.st_size);
   e.dirKind = QStringLiteral("posix");
-  applyMime(e, db);
+  applyMime(e, db, (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0);
   return e;
 }
 
@@ -191,6 +206,9 @@ void DirectoryLister::listPath(quint64 generation, const QString &path) {
   }
 
   const int dirfd = ::dirfd(dir);
+  QString base = path;
+  if (!base.endsWith(QLatin1Char('/')))
+    base += QLatin1Char('/');
   QVector<RawEntry> pending;
   QVector<RawEntry> rest;
   QVector<DirectoryEntry> batch;
@@ -231,7 +249,7 @@ void DirectoryLister::listPath(quint64 generation, const QString &path) {
     else
       rest.append(raw);
 
-    batch.append(fromDirent(path, raw));
+    batch.append(fromDirent(base, raw));
     if (batch.size() >= kFirstBatch) {
       emit batchReady(generation, batch);
       batch.clear();
@@ -262,7 +280,7 @@ void DirectoryLister::listPath(quint64 generation, const QString &path) {
       closedir(dir);
       return;
     }
-    stats.append(enrich(dirfd, path, raw, db));
+    stats.append(enrich(dirfd, base, raw, db));
     if (stats.size() >= kStatBatch)
       flushStats(stats, true);
   }
@@ -273,7 +291,7 @@ void DirectoryLister::listPath(quint64 generation, const QString &path) {
       closedir(dir);
       return;
     }
-    stats.append(enrich(dirfd, path, raw, db));
+    stats.append(enrich(dirfd, base, raw, db));
     if (stats.size() >= kStatBatch)
       flushStats(stats, false);
   }
@@ -297,6 +315,9 @@ void DirectoryLister::requestStatNames(quint64 generation,
     return;
 
   QMimeDatabase db;
+  QString base = dirPath;
+  if (!base.endsWith(QLatin1Char('/')))
+    base += QLatin1Char('/');
   QVector<DirectoryEntry> stats;
   stats.reserve(names.size());
   for (const QString &name : names) {
@@ -307,7 +328,7 @@ void DirectoryLister::requestStatNames(quint64 generation,
     RawEntry raw;
     raw.rawName = QFile::encodeName(name);
     raw.dType = DT_UNKNOWN;
-    stats.append(enrich(fd, dirPath, raw, db));
+    stats.append(enrich(fd, base, raw, db));
   }
   ::close(fd);
   if (!abandoned(generation) && !stats.isEmpty())

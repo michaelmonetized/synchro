@@ -6,6 +6,7 @@
 
 #include <QAbstractItemModel>
 #include <QAbstractListModel>
+#include <QCollator>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QSet>
@@ -133,12 +134,16 @@ public:
   Q_INVOKABLE void refreshThumbs(const QStringList &paths);
   void requestSourceThumbs(const QVector<int> &sourceRows, int sizePx);
   QVariantMap cachedStat(const QString &path) const;
+  // Direct entry access for FilterProxy's sort/filter hot path: no QVariant
+  // boxing, and name ordering via precomputed collation keys (locale-aware,
+  // numeric, case-insensitive).
+  const DirectoryEntry *entryAt(int visibleRow) const;
+  int compareNamesForRows(int leftVisibleRow, int rightVisibleRow) const;
   void requestStatPath(const QString &path);
 
 signals:
   void fileActivated(const QString &path, const QString &mime);
   void restoreRequested(const QStringList &files);
-  void entryStatReady(const QString &path, const QVariantMap &st);
   void pathChanged();
   void showHiddenChanged();
   void currentIndexChanged();
@@ -154,6 +159,8 @@ signals:
   void searchQueryChanged();
   void folderGroupsChanged();
   void volumeHintChanged();
+  // Once per stat batch: the paths whose size/mtime/mime just landed.
+  void statsApplied(const QStringList &paths);
   void fsnBoxesChanged();
   void fsnListingChanged();
 
@@ -174,7 +181,7 @@ private:
   bool searching() const { return m_searching && m_search; }
   void resetListing();
   void rebuildVisible();
-  void applyEntry(const DirectoryEntry &entry);
+  int applyEntry(const DirectoryEntry &entry); // returns touched visible row
   void maybeActivatePending();
   void maybeSelectPending();
   void insertPlaceholder(const QString &name, bool isDir);
@@ -192,7 +199,6 @@ private:
   void updateVolumeRoot(const QString &previous, const QString &next);
   void navigateToExistingParent();
   void reload();
-  const DirectoryEntry *entryAt(int visibleRow) const;
   QVariantMap entryToMap(const DirectoryEntry &e) const;
   void emitCurrentStat();
 
@@ -232,6 +238,8 @@ private:
   bool m_loggedFirst = false;
   qint64 m_lastFirstRowsMs = -1;
   QElapsedTimer m_listTimer;
+  QCollator m_collator;
+  QVector<QCollatorSortKey> m_sortKeys; // parallel to m_all
   QVariantList m_fsnBoxes;
   quint64 m_fsnGen = 0;
   bool m_fsnListing = false;

@@ -144,22 +144,32 @@ Item {
             sourceSize.height: listing.cellInner
         }
 
-        FolderMark {
+        Loader {
             anchors.fill: parent
-            visible: cell.thumbnail.length === 0 && cell.isDir
+            active: cell.thumbnail.length === 0
+            sourceComponent: cell.isDir ? folderMarkComp : fileMarkComp
         }
 
-        FileMark {
-            anchors.centerIn: parent
-            width: Math.round(parent.width * 0.72)
-            height: Math.round(parent.height * 0.84)
-            visible: cell.thumbnail.length === 0 && !cell.isDir
-            suffix: {
-                var n = cell.name
-                var i = n.lastIndexOf(".")
-                if (i <= 0 || i === n.length - 1)
-                    return ""
-                return n.slice(i + 1).toUpperCase()
+        Component {
+            id: folderMarkComp
+            FolderMark {}
+        }
+
+        Component {
+            id: fileMarkComp
+            Item {
+                FileMark {
+                    anchors.centerIn: parent
+                    width: Math.round(parent.width * 0.72)
+                    height: Math.round(parent.height * 0.84)
+                    suffix: {
+                        var n = cell.name
+                        var i = n.lastIndexOf(".")
+                        if (i <= 0 || i === n.length - 1)
+                            return ""
+                        return n.slice(i + 1).toUpperCase()
+                    }
+                }
             }
         }
 

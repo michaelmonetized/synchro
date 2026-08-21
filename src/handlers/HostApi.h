@@ -224,7 +224,7 @@ private:
   void destroyPreview();
   void destroyAction();
   void refreshOpenCandidates();
-  void onEntryStat(const QString &path, const QVariantMap &st);
+  void onStatsApplied(const QStringList &paths);
   void destroyActionItem();
   void rebuildDoVerbs();
   void mountDoParams();

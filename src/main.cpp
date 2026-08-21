@@ -267,7 +267,9 @@ int main(int argc, char *argv[]) {
                    &HostApi::runTerminal);
   QObject::connect(&keyMachine, &KeyMachine::openWithRequested, &hostApi,
                    &HostApi::openWithPalette);
-  VolumeStore::instance().startWatching();
+  // Volume watching talks to UDisks over DBus; keep it off the critical
+  // path so the first frame and first rows land sooner.
+  QTimer::singleShot(0, &app, [] { VolumeStore::instance().startWatching(); });
   engine.rootContext()->setContextProperty(QStringLiteral("hostApi"),
                                            &hostApi);
   engine.rootContext()->setContextProperty(QStringLiteral("selectionModel"),

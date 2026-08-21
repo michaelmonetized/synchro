@@ -42,18 +42,27 @@ HostApi::HostApi(DirectoryModel *model, FilterProxy *proxy, NavStack *nav,
       closeAction();
       refreshListingChrome();
     });
-    connect(m_model, &DirectoryModel::entryStatReady, this,
-            &HostApi::onEntryStat);
+    connect(m_model, &DirectoryModel::statsApplied, this,
+            &HostApi::onStatsApplied);
     connect(m_model, &DirectoryModel::searchQueryChanged, this,
             &HostApi::peekFindQueryChanged);
   }
   refreshListingChrome();
 }
 
-void HostApi::onEntryStat(const QString &path, const QVariantMap &st) {
-  emit statReady(QUrl::fromLocalFile(path), st);
-  if (m_open && currentItem().path == path && !m_previewItem)
-    reloadPreview();
+void HostApi::onStatsApplied(const QStringList &paths) {
+  // Handlers only exist inside an open preview; with nothing open there is
+  // nobody to notify, and skipping keeps big listings cheap (the old
+  // per-entry path built 50k QVariantMaps per directory).
+  if (!m_open && !m_previewItem)
+    return;
+  for (const QString &path : paths)
+    emit statReady(QUrl::fromLocalFile(path), m_model->cachedStat(path));
+  if (m_open && !m_previewItem) {
+    const QString current = currentItem().path;
+    if (paths.contains(current))
+      reloadPreview();
+  }
 }
 
 Manifest::Item HostApi::itemAt(int proxyRow) const {

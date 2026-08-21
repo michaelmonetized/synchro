@@ -25,6 +25,9 @@ ListView {
     readonly property var rows: filterProxy ? filterProxy : fileModel
     readonly property bool showCursorChrome: !keyMachine || keyMachine.listFocused
 
+    readonly property Component folderMarkComp: Component { FolderMark {} }
+    readonly property Component fileMarkComp: Component { FileMark {} }
+
     model: list.visible ? list.rows : null
     clip: true
     reuseItems: !list.searching
@@ -223,44 +226,47 @@ ListView {
             color: Theme.opaqueBackground
         }
 
-        Item {
+        Loader {
             id: folderHead
             width: parent.width
             height: row.showFolderHead ? list.sectionH : 0
+            active: list.searching
             visible: row.showFolderHead
-            clip: true
+            sourceComponent: Item {
+                clip: true
 
-            Rectangle {
-                anchors.fill: parent
-                color: Theme.opaqueBackground
-            }
+                Rectangle {
+                    anchors.fill: parent
+                    color: Theme.opaqueBackground
+                }
 
-            Rectangle {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: 1
-                color: Theme.normalBorder
-            }
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: 1
+                    color: Theme.normalBorder
+                }
 
-            Text {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.leftMargin: Theme.space(8)
-                anchors.rightMargin: Theme.space(8)
-                text: list.folderLabel(row.parentPath)
-                color: Theme.accent
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontBody
-                elide: Text.ElideMiddle
-            }
+                Text {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.leftMargin: Theme.space(8)
+                    anchors.rightMargin: Theme.space(8)
+                    text: list.folderLabel(row.parentPath)
+                    color: Theme.accent
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontBody
+                    elide: Text.ElideMiddle
+                }
 
-            MouseArea {
-                anchors.fill: parent
-                enabled: row.parentPath.length > 0 && list.navStack
-                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                onClicked: list.navStack.navigate(row.parentPath)
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: row.parentPath.length > 0 && list.navStack
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: list.navStack.navigate(row.parentPath)
+                }
             }
         }
 
@@ -324,14 +330,11 @@ ListView {
                 sourceSize.height: iconBox.height
             }
 
-            FolderMark {
+            Loader {
                 anchors.fill: parent
-                visible: row.thumbnail.length === 0 && row.isDir
-            }
-
-            FileMark {
-                anchors.fill: parent
-                visible: row.thumbnail.length === 0 && !row.isDir
+                active: row.thumbnail.length === 0
+                sourceComponent: row.isDir ? list.folderMarkComp
+                                           : list.fileMarkComp
             }
         }
 
