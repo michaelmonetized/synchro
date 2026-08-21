@@ -6,7 +6,9 @@
   "author": "Omarchy",
   "license": "MIT",
   "description": "Dockable table workbench: follows the cursor across DuckDB, Parquet, and CSV files, keeping its state while you browse. Needs duckdb on PATH for tables.",
-  "kinds": ["panel"],
+  "kinds": [
+    "panel"
+  ],
   "priority": 60,
   "match": {
     "matchMode": "any",
@@ -16,7 +18,14 @@
       "application/vnd.apache.parquet",
       "text/csv"
     ],
-    "suffix": [".duckdb", ".ddb", ".parquet", ".pq", ".csv", ".tsv"],
+    "suffix": [
+      ".duckdb",
+      ".ddb",
+      ".parquet",
+      ".pq",
+      ".csv",
+      ".tsv"
+    ],
     "minItems": 1,
     "maxItems": 1,
     "host": "posix-local"
@@ -25,7 +34,11 @@
     "panel": "Panel.qml"
   },
   "panel": {
-    "relevance": "match"
+    "relevance": "match",
+    "glyph": "▤"
   },
-  "permissions": ["fs-read", "exec"]
+  "permissions": [
+    "fs-read",
+    "exec"
+  ]
 }

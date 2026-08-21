@@ -23,6 +23,7 @@
     "shell"
   ],
   "panel": {
-    "relevance": "always"
+    "relevance": "always",
+    "glyph": "❯"
   }
 }

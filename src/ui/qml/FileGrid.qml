@@ -18,9 +18,10 @@ Item {
                                     !fileModel.isSearch && !fileModel.isVolumes
     readonly property bool searching: fileModel && fileModel.isSearch
     readonly property var rows: filterProxy ? filterProxy : fileModel
-    readonly property bool showCursorChrome: !keyMachine ||
-                                             (keyMachine.listFocused &&
-                                              !keyMachine.panelFocused)
+    readonly property bool showCursorChrome: !keyMachine || keyMachine.listFocused
+    // Keys belong to a panel: keep the cursor visible (panel apps target
+    // the selected file) but dimmed so focus stays legible.
+    readonly property bool cursorDim: keyMachine && keyMachine.panelFocused
     readonly property int thumbSizePx: 256
     readonly property int preferredInner: 96
     readonly property int cellPad: Theme.space(16)
@@ -210,6 +211,7 @@ Item {
                 color: Theme.selectedFill
                 radius: Theme.radius
                 visible: grid.showCursorChrome
+                opacity: grid.cursorDim ? 0.45 : 1
             }
 
             delegate: FileGridCell {

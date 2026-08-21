@@ -260,6 +260,8 @@ QVariantList HostApi::relevantPanels() const {
     QVariantMap m;
     m.insert(QStringLiteral("id"), rec.manifest.id);
     m.insert(QStringLiteral("name"), rec.manifest.name);
+    m.insert(QStringLiteral("glyph"),
+             rec.manifest.panel.value(QStringLiteral("glyph")).toString());
     out.append(m);
   };
   for (const HandlerRegistry::Record &rec : m_registry->handlers()) {

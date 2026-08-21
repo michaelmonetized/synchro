@@ -17,9 +17,10 @@ Item {
     property var fileOps: null
     readonly property var rows: filterProxy ? filterProxy : fileModel
     readonly property int selectionEpoch: selection ? selection.epoch : 0
-    readonly property bool showCursorChrome: !keyMachine ||
-                                             (keyMachine.listFocused &&
-                                              !keyMachine.panelFocused)
+    readonly property bool showCursorChrome: !keyMachine || keyMachine.listFocused
+    // Keys belong to a panel: keep the cursor visible (panel apps target
+    // the selected file) but dimmed so focus stays legible.
+    readonly property bool cursorDim: keyMachine && keyMachine.panelFocused
     readonly property bool treeView: !keyMachine || keyMachine.fsnTreeView
 
     signal viewToggleRequested()
@@ -515,6 +516,7 @@ Item {
         var edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],
                      [0,4],[1,5],[2,6],[3,7]]
         ctx.strokeStyle = "#FFFF33"
+        ctx.globalAlpha = fsn.cursorDim ? 0.5 : 1
         ctx.lineWidth = 1.5
         ctx.beginPath()
         for (i = 0; i < edges.length; ++i) {
@@ -527,6 +529,7 @@ Item {
             ctx.lineTo(b.x + (a.x - b.x) * f, b.y + (a.y - b.y) * f)
         }
         ctx.stroke()
+        ctx.globalAlpha = 1
     }
 
     // ------------------------------------------------------------- flight

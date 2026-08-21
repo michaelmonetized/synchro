@@ -82,16 +82,31 @@ Window {
     function refreshRelevantPanels() {
         if (typeof hostApi === "undefined" || !hostApi)
             return
-        root.relevantPanels = hostApi.relevantPanels()
+        var list = hostApi.relevantPanels()
+        for (var i = 0; i < list.length; ++i)
+            root.panelMeta[list[i].id] = { name: list[i].name,
+                                           glyph: list[i].glyph }
+        root.relevantPanels = list
     }
 
+    // Remember name/glyph for every app we have seen, so pills for
+    // opened-but-no-longer-relevant apps stay labeled.
+    property var panelMeta: ({})
+
     function panelNameFor(id) {
-        for (var i = 0; i < root.relevantPanels.length; ++i) {
-            if (root.relevantPanels[i].id === id)
-                return root.relevantPanels[i].name
-        }
+        var m = root.panelMeta[id]
+        if (m && m.name)
+            return m.name
         var dot = id.lastIndexOf(".")
         return dot >= 0 ? id.substring(dot + 1) : id
+    }
+
+    function panelGlyphFor(id) {
+        var m = root.panelMeta[id]
+        if (m && m.glyph && m.glyph.length)
+            return m.glyph
+        var n = root.panelNameFor(id)
+        return n.length ? n.charAt(0).toUpperCase() : "?"
     }
 
     // Parked pills: relevant + opened apps, minus the one on the dock.
@@ -415,20 +430,13 @@ Window {
                 opacity: 0.9
             }
 
-            Grid {
+            Text {
                 anchors.centerIn: parent
-                columns: root.panelHorizontal ? 3 : 1
-                spacing: 3
-                Repeater {
-                    model: 3
-                    Rectangle {
-                        width: 4
-                        height: 4
-                        radius: 2
-                        color: gripArea.pressed || gripArea.containsMouse
-                               ? Theme.accent : Theme.muted
-                    }
-                }
+                text: root.panelGlyphFor(root.panelId)
+                color: gripArea.pressed || gripArea.containsMouse
+                       ? Theme.accent : Theme.muted
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontBody - 1
             }
 
             MouseArea {
@@ -525,20 +533,13 @@ Window {
                 opacity: 0.9
             }
 
-            Grid {
+            Text {
                 anchors.centerIn: parent
-                columns: root.panelHorizontal ? 3 : 1
-                spacing: 3
-                Repeater {
-                    model: 3
-                    Rectangle {
-                        width: 4
-                        height: 4
-                        radius: 2
-                        color: pillArea.pressed || pillArea.containsMouse
-                               ? Theme.accent : Theme.muted
-                    }
-                }
+                text: root.panelGlyphFor(parkedPill.modelData.id)
+                color: pillArea.pressed || pillArea.containsMouse
+                       ? Theme.accent : Theme.muted
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontBody - 1
             }
 
             // name chip on hover

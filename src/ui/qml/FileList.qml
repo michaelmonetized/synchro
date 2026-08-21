@@ -23,9 +23,10 @@ ListView {
     signal doRequested()
 
     readonly property var rows: filterProxy ? filterProxy : fileModel
-    readonly property bool showCursorChrome: !keyMachine ||
-                                             (keyMachine.listFocused &&
-                                              !keyMachine.panelFocused)
+    readonly property bool showCursorChrome: !keyMachine || keyMachine.listFocused
+    // Keys belong to a panel: keep the cursor visible (panel apps target
+    // the selected file) but dimmed so focus stays legible.
+    readonly property bool cursorDim: keyMachine && keyMachine.panelFocused
 
     readonly property Component folderMarkComp: Component { FolderMark {} }
     readonly property Component fileMarkComp: Component { FileMark {} }
@@ -440,6 +441,7 @@ ListView {
             anchors.fill: parent
             visible: list.showCursorChrome && row.ListView.isCurrentItem
             color: Theme.selectedFill
+            opacity: list.cursorDim ? 0.45 : 1
         }
 
         Rectangle {
