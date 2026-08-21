@@ -79,9 +79,7 @@ Item {
                 if (!result || !result.url)
                     return
                 item.Drag.imageSource = result.url
-                item.Drag.imageSourceSize = Qt.size(dragGhost.width,
-                                                    dragGhost.height)
-            })
+            }, Qt.size(dragGhost.width, dragGhost.height))
         })
     }
 

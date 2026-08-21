@@ -260,9 +260,7 @@ ListView {
                 if (!result || !result.url)
                     return
                 item.Drag.imageSource = result.url
-                item.Drag.imageSourceSize = Qt.size(dragGhost.width,
-                                                    dragGhost.height)
-            })
+            }, Qt.size(dragGhost.width, dragGhost.height))
         })
     }
 
@@ -435,6 +433,12 @@ ListView {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             height: list.rowInner
+
+        Rectangle {
+            anchors.fill: parent
+            visible: list.showCursorChrome && row.ListView.isCurrentItem
+            color: Theme.selectedFill
+        }
 
         Rectangle {
             anchors.fill: parent
