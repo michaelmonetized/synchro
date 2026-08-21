@@ -1,5 +1,10 @@
 #include "HostApi.h"
 
+#include <QCryptographicHash>
+#include <QRegularExpression>
+#include <QSaveFile>
+#include <QStandardPaths>
+
 #include "DirectoryModel.h"
 #include "FileOpEngine.h"
 #include "FilterProxy.h"
@@ -246,6 +251,157 @@ QString HostApi::processCwd(int pid) const {
 QString HostApi::defaultShell() const {
   const QString env = qEnvironmentVariable("SHELL");
   return env.isEmpty() ? QStringLiteral("/bin/bash") : env;
+}
+
+namespace {
+
+QString rgbLine(const QString &hex) {
+  // "#RRGGBB" -> "r,g,b"
+  bool ok = false;
+  const int v = hex.mid(1).toInt(&ok, 16);
+  if (!ok || hex.size() != 7)
+    return QString();
+  return QStringLiteral("%1,%2,%3")
+      .arg((v >> 16) & 0xff)
+      .arg((v >> 8) & 0xff)
+      .arg(v & 0xff);
+}
+
+// The current omarchy theme's terminal palette. alacritty.toml first,
+// kitty.conf as fallback; keys: background foreground n0..n7 b0..b7.
+QHash<QString, QString> readOmarchyTerminalPalette(const QString &themeDir) {
+  QHash<QString, QString> out;
+  static const char *names[] = {"black", "red",     "green", "yellow",
+                                "blue",  "magenta", "cyan",  "white"};
+
+  QFile ala(themeDir + QStringLiteral("/alacritty.toml"));
+  if (ala.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    QString section;
+    static const QRegularExpression sectionRe(
+        QStringLiteral("^\\s*\\[([^\\]]+)\\]"));
+    static const QRegularExpression kvRe(QStringLiteral(
+        "^\\s*([a-z]+)\\s*=\\s*[\"']?(#[0-9a-fA-F]{6})"));
+    while (!ala.atEnd()) {
+      const QString line = QString::fromUtf8(ala.readLine());
+      const auto sm = sectionRe.match(line);
+      if (sm.hasMatch()) {
+        section = sm.captured(1);
+        continue;
+      }
+      const auto km = kvRe.match(line);
+      if (!km.hasMatch())
+        continue;
+      const QString key = km.captured(1);
+      const QString hex = km.captured(2);
+      if (section == QLatin1String("colors.primary")) {
+        out.insert(key, hex); // background / foreground
+      } else if (section == QLatin1String("colors.normal") ||
+                 section == QLatin1String("colors.bright")) {
+        const bool bright = section == QLatin1String("colors.bright");
+        for (int i = 0; i < 8; ++i) {
+          if (key == QLatin1String(names[i])) {
+            out.insert((bright ? QStringLiteral("b%1")
+                               : QStringLiteral("n%1")).arg(i), hex);
+            break;
+          }
+        }
+      }
+    }
+  }
+  if (out.contains(QStringLiteral("background")) &&
+      out.contains(QStringLiteral("n7")))
+    return out;
+
+  out.clear();
+  QFile kitty(themeDir + QStringLiteral("/kitty.conf"));
+  if (kitty.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    static const QRegularExpression kittyRe(QStringLiteral(
+        "^\\s*(background|foreground|color([0-9]+))\\s+(#[0-9a-fA-F]{6})"));
+    while (!kitty.atEnd()) {
+      const QString line = QString::fromUtf8(kitty.readLine());
+      const auto m = kittyRe.match(line);
+      if (!m.hasMatch())
+        continue;
+      const QString hex = m.captured(3);
+      if (m.captured(2).isEmpty()) {
+        out.insert(m.captured(1), hex);
+      } else {
+        const int idx = m.captured(2).toInt();
+        if (idx >= 0 && idx < 8)
+          out.insert(QStringLiteral("n%1").arg(idx), hex);
+        else if (idx >= 8 && idx < 16)
+          out.insert(QStringLiteral("b%1").arg(idx - 8), hex);
+      }
+    }
+  }
+  return out;
+}
+
+} // namespace
+
+// Generate a qtermwidget color scheme from the active omarchy theme and
+// return its name. The file name carries a content hash: a theme switch
+// yields a new name, which sidesteps qtermwidget's per-name scheme cache.
+QString HostApi::terminalColorScheme() const {
+  const QString fallback = QStringLiteral("Linux");
+  const QString themeDir =
+      QDir::homePath() + QStringLiteral("/.local/state/omarchy/current/theme");
+  const QHash<QString, QString> pal = readOmarchyTerminalPalette(themeDir);
+  if (!pal.contains(QStringLiteral("background")) ||
+      !pal.contains(QStringLiteral("foreground")))
+    return fallback;
+
+  auto color = [&pal](const QString &key, const QString &fallbackKey) {
+    return rgbLine(pal.value(key, pal.value(fallbackKey)));
+  };
+
+  QString body;
+  body += QStringLiteral("[Background]\nColor=%1\n\n")
+              .arg(color(QStringLiteral("background"), QString()));
+  body += QStringLiteral("[BackgroundIntense]\nColor=%1\n\n")
+              .arg(color(QStringLiteral("b0"), QStringLiteral("background")));
+  body += QStringLiteral("[Foreground]\nColor=%1\n\n")
+              .arg(color(QStringLiteral("foreground"), QString()));
+  body += QStringLiteral("[ForegroundIntense]\nColor=%1\n\n")
+              .arg(color(QStringLiteral("b7"), QStringLiteral("foreground")));
+  for (int i = 0; i < 8; ++i) {
+    const QString n = color(QStringLiteral("n%1").arg(i),
+                            QStringLiteral("foreground"));
+    const QString b = color(QStringLiteral("b%1").arg(i),
+                            QStringLiteral("n%1").arg(i));
+    if (n.isEmpty() || b.isEmpty())
+      return fallback;
+    body += QStringLiteral("[Color%1]\nColor=%2\n\n").arg(i).arg(n);
+    body += QStringLiteral("[Color%1Intense]\nColor=%2\n\n").arg(i).arg(b);
+  }
+  body += QStringLiteral("[General]\nDescription=Omarchy\nOpacity=1\n");
+
+  const QString hash = QString::fromLatin1(
+      QCryptographicHash::hash(body.toUtf8(), QCryptographicHash::Md5)
+          .toHex()
+          .left(8));
+  const QString name = QStringLiteral("omarchy-") + hash;
+  const QString dir =
+      QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
+      QStringLiteral("/QMLTermWidget/color-schemes");
+  const QString file = dir + QLatin1Char('/') + name +
+                       QStringLiteral(".colorscheme");
+  if (!QFileInfo::exists(file)) {
+    if (!QDir().mkpath(dir))
+      return fallback;
+    // Retire stale generated schemes so they don't pile up.
+    const QStringList old = QDir(dir).entryList(
+        {QStringLiteral("omarchy-*.colorscheme")}, QDir::Files);
+    for (const QString &o : old)
+      QFile::remove(dir + QLatin1Char('/') + o);
+    QSaveFile out(file);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
+      return fallback;
+    out.write(body.toUtf8());
+    if (!out.commit())
+      return fallback;
+  }
+  return name;
 }
 
 void HostApi::reloadPreview() {

@@ -19,6 +19,15 @@ Item {
     property string lastSeenCwd: ""
     property bool shellDead: false
     property bool started: false
+    property string schemeName: "Linux"
+
+    function refreshScheme() {
+        if (!surface.host)
+            return
+        var s = surface.host.terminalColorScheme()
+        if (s.length)
+            surface.schemeName = s
+    }
 
     // The dock injects host/fileModel after creation; the shell must not
     // spawn until they exist (else it launches as the fallback shell in the
@@ -27,6 +36,7 @@ Item {
         if (surface.started || !surface.host || !surface.fileModel)
             return
         surface.started = true
+        surface.refreshScheme()
         session.shellProgram = surface.host.defaultShell()
         var p = surface.browsePath()
         if (p.length) {
@@ -68,7 +78,7 @@ Item {
         anchors.fill: parent
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody + 1
-        colorScheme: "Linux"
+        colorScheme: surface.schemeName
         enableBold: true
         fullCursorHeight: true
 
@@ -125,6 +135,12 @@ Item {
                 term.forceActiveFocus()
             }
         }
+    }
+
+    // live theme switches re-theme the shell
+    Connections {
+        target: Theme.impl
+        function onThemeChanged() { surface.refreshScheme() }
     }
 
     // browser -> shell

@@ -123,6 +123,7 @@ public:
   Q_INVOKABLE QUrl panelSource(const QString &id) const;
   Q_INVOKABLE QString processCwd(int pid) const;
   Q_INVOKABLE QString defaultShell() const;
+  Q_INVOKABLE QString terminalColorScheme() const;
   Q_INVOKABLE void registerSurface(QObject *surface);
   Q_INVOKABLE bool openFile(const QString &path, const QString &mime);
   Q_INVOKABLE bool runOpen(const QString &handlerId);
