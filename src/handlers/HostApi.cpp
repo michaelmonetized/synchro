@@ -245,6 +245,46 @@ QUrl HostApi::panelSource(const QString &id) const {
   return QUrl::fromLocalFile(path);
 }
 
+// Panels whose pills should be parked right now: "always" panels plus
+// any whose manifest match rules hit the current selection. Relevance
+// gates the affordance only — an open panel is never closed by this.
+QVariantList HostApi::relevantPanels() const {
+  QVariantList out;
+  if (!m_registry)
+    return out;
+  QStringList added;
+  auto push = [&](const HandlerRegistry::Record &rec) {
+    if (added.contains(rec.manifest.id))
+      return;
+    added.append(rec.manifest.id);
+    QVariantMap m;
+    m.insert(QStringLiteral("id"), rec.manifest.id);
+    m.insert(QStringLiteral("name"), rec.manifest.name);
+    out.append(m);
+  };
+  for (const HandlerRegistry::Record &rec : m_registry->handlers()) {
+    if (!rec.enabled ||
+        !rec.manifest.kinds.contains(QStringLiteral("panel")))
+      continue;
+    if (rec.manifest.panel.value(QStringLiteral("relevance")).toString() ==
+        QLatin1String("always"))
+      push(rec);
+  }
+  const int row = m_proxy ? m_proxy->currentIndex()
+                          : (m_model ? m_model->currentIndex() : -1);
+  const Manifest::Item item = itemAt(row);
+  if (!item.path.isEmpty()) {
+    const auto matches =
+        m_registry->resolve(QStringLiteral("panel"), {item});
+    for (const HandlerRegistry::Match &match : matches) {
+      const HandlerRegistry::Record rec = m_registry->handler(match.id);
+      if (rec.enabled)
+        push(rec);
+    }
+  }
+  return out;
+}
+
 QString HostApi::processCwd(int pid) const {
   if (pid <= 0)
     return QString();

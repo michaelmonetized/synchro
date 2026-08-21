@@ -1348,6 +1348,16 @@ void CommandFieldTest::termPanelCommands() {
   keys.acceptField();
   QVERIFY(keys.panelId().isEmpty());
 
+  // :panel <name> completes the id prefix and toggles
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":panel duckdb"));
+  keys.acceptField();
+  QCOMPARE(keys.panelId(), QStringLiteral("synchro.panel.duckdb"));
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":panel off"));
+  keys.acceptField();
+  QVERIFY(keys.panelId().isEmpty());
+
   // bad argument hints without changing state
   keys.focusCommand();
   keys.setFieldText(QStringLiteral(":term sideways"));

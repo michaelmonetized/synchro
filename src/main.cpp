@@ -198,7 +198,7 @@ int main(int argc, char *argv[]) {
   KeyMachine keyMachine(&directoryModel, &filterProxy, &navStack);
   keyMachine.setPanelSide(config.panelSide());
   if (config.panelOpen())
-    keyMachine.setPanelId(QStringLiteral("synchro.panel.terminal"));
+    keyMachine.setPanelId(config.panelApp());
   keyMachine.setSelection(&selectionModel);
   keyMachine.setFileOps(&fileOpEngine);
   keyMachine.setSearchModel(&searchModel);
@@ -331,6 +331,8 @@ int main(int argc, char *argv[]) {
   });
   QObject::connect(&keyMachine, &KeyMachine::panelChanged, &config, [&] {
     config.setPanelOpen(!keyMachine.panelId().isEmpty());
+    if (!keyMachine.panelId().isEmpty())
+      config.setPanelApp(keyMachine.panelId());
     config.setPanelSide(keyMachine.panelSide());
     schedulePersist();
   });

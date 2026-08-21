@@ -6,7 +6,9 @@
   "author": "Omarchy",
   "license": "MIT",
   "description": "Embedded shell panel ($SHELL in qmltermwidget). Follows the browser's directory and leads it back: cd in either side moves both.",
-  "kinds": ["panel"],
+  "kinds": [
+    "panel"
+  ],
   "priority": 50,
   "match": {
     "minItems": 1,
@@ -16,5 +18,11 @@
   "entryPoints": {
     "panel": "Panel.qml"
   },
-  "permissions": ["fs-read", "shell"]
+  "permissions": [
+    "fs-read",
+    "shell"
+  ],
+  "panel": {
+    "relevance": "always"
+  }
 }

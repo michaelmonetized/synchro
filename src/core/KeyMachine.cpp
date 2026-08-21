@@ -944,6 +944,29 @@ void KeyMachine::runCommand(const QString &text) {
       stripped.split(QLatin1Char(' '), Qt::SkipEmptyParts);
   if (!fsnToks.isEmpty()) {
     const QString head = fsnToks.first().toLower();
+    if (head == QLatin1String("panel")) {
+      if (m_chooserMode) {
+        setStatusMessage(QStringLiteral("no panels in picker windows"));
+        return;
+      }
+      if (fsnToks.size() < 2) {
+        setStatusMessage(QStringLiteral(":panel <id> — e.g. :panel duckdb"));
+        return;
+      }
+      QString id = fsnToks.at(1);
+      if (id == QLatin1String("off")) {
+        setPanelId(QString());
+        finishCommand();
+        return;
+      }
+      if (!id.contains(QLatin1Char('.')))
+        id = QStringLiteral("synchro.panel.") + id;
+      togglePanel(id);
+      finishCommand();
+      if (!m_panelId.isEmpty())
+        emit panelFocusRequested();
+      return;
+    }
     // ":term" is the embedded panel; ":terminal" stays the external
     // terminal action handler.
     if (head == QLatin1String("term")) {

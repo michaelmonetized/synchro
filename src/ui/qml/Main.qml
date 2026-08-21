@@ -71,26 +71,77 @@ Window {
     property bool panelDragging: false
     property real panelDragX: 0
     property real panelDragY: 0
+    property string panelDragTargetId: ""
+    property string panelDragLabel: ""
+
+    // Panel apps: which are relevant to the current selection (parked
+    // pills) and which have been opened this session (kept alive).
+    property var relevantPanels: []
+    property var openedPanels: []
+
+    function refreshRelevantPanels() {
+        if (typeof hostApi === "undefined" || !hostApi)
+            return
+        root.relevantPanels = hostApi.relevantPanels()
+    }
+
+    function panelNameFor(id) {
+        for (var i = 0; i < root.relevantPanels.length; ++i) {
+            if (root.relevantPanels[i].id === id)
+                return root.relevantPanels[i].name
+        }
+        var dot = id.lastIndexOf(".")
+        return dot >= 0 ? id.substring(dot + 1) : id
+    }
+
+    // Parked pills: relevant + opened apps, minus the one on the dock.
+    readonly property var parkedPanels: {
+        var out = []
+        var seen = {}
+        var cur = root.panelOpen ? root.panelId : ""
+        var i
+        for (i = 0; i < root.relevantPanels.length; ++i) {
+            var rp = root.relevantPanels[i]
+            if (rp.id !== cur && !seen[rp.id]) {
+                seen[rp.id] = true
+                out.push({ id: rp.id, name: rp.name })
+            }
+        }
+        for (i = 0; i < root.openedPanels.length; ++i) {
+            var oid = root.openedPanels[i]
+            if (oid !== cur && !seen[oid]) {
+                seen[oid] = true
+                out.push({ id: oid, name: root.panelNameFor(oid) })
+            }
+        }
+        return out
+    }
+
 
     function focusPanel() {
-        if (panelDock.panelItem && panelDock.panelItem.focusContent)
-            panelDock.panelItem.focusContent()
-        else if (panelDock.panelItem)
-            panelDock.panelItem.forceActiveFocus()
+        var it = panelDock.panelItems[root.panelId]
+        if (it && it.focusContent)
+            it.focusContent()
+        else if (it)
+            it.forceActiveFocus()
     }
 
     // Shared drop rule for both grip gestures: an edge zone docks (and
     // opens) the panel there; center/outside closes or cancels.
     function applyPanelDrop() {
         var z = panelDropZones.zone
+        var target = root.panelDragTargetId
         root.panelDragging = false
-        if (!root.keys)
+        root.panelDragTargetId = ""
+        if (!root.keys || !target.length)
             return
         if (z === "close") {
-            root.keys.panelId = ""
+            // dropping the docked app closes it; a parked pill just cancels
+            if (target === root.keys.panelId)
+                root.keys.panelId = ""
         } else if (z.length) {
             root.keys.panelSide = z
-            root.keys.panelId = "synchro.panel.terminal"
+            root.keys.panelId = target
             Qt.callLater(root.focusPanel)
         }
     }
@@ -212,20 +263,11 @@ Window {
     FocusScope {
         id: panelDock
         objectName: "panelDock"
-        // Keep-alive: once a panel has loaded it stays loaded while hidden,
-        // so the terminal's shell survives Ctrl+` toggles.
-        property url loadedUrl: ""
         readonly property url sourceUrl: root.panelId.length &&
                                          typeof hostApi !== "undefined" && hostApi
                                          ? hostApi.panelSource(root.panelId)
                                          : ""
-        function latchSource() {
-            if (sourceUrl.toString().length > 0)
-                loadedUrl = sourceUrl
-        }
-        onSourceUrlChanged: latchSource()
-        Component.onCompleted: latchSource() // change handlers skip the initial value
-        readonly property var panelItem: panelLoader.item
+        property var panelItems: ({})
         readonly property int span: appConfig
                                     ? Math.min(appConfig.panelSize,
                                                (root.panelHorizontal
@@ -259,24 +301,34 @@ Window {
             color: Theme.opaqueBackground
         }
 
-        Loader {
-            id: panelLoader
-            anchors.fill: parent
-            anchors.topMargin: root.panelBottom ? 6 : 0
-            anchors.bottomMargin: root.panelTopSide ? 6 : 0
-            anchors.leftMargin: root.panelRight ? 6 : 0
-            anchors.rightMargin: root.panelLeft ? 6 : 0
-            source: panelDock.loadedUrl
-            focus: true
-            onLoaded: {
-                if (!item)
-                    return
-                if (item.host !== undefined)
-                    item.host = typeof hostApi !== "undefined" ? hostApi : null
-                if (item.fileModel !== undefined)
-                    item.fileModel = root.files
-                if (item.navStack !== undefined)
-                    item.navStack = root.history
+        // One keep-alive Loader per opened panel app: hidden panels stay
+        // running (the shell survives; the workbench keeps its table).
+        Repeater {
+            model: root.openedPanels
+
+            Loader {
+                required property string modelData
+                anchors.fill: parent
+                anchors.topMargin: root.panelBottom ? 6 : 0
+                anchors.bottomMargin: root.panelTopSide ? 6 : 0
+                anchors.leftMargin: root.panelRight ? 6 : 0
+                anchors.rightMargin: root.panelLeft ? 6 : 0
+                source: typeof hostApi !== "undefined" && hostApi
+                        ? hostApi.panelSource(modelData) : ""
+                visible: modelData === root.panelId
+                focus: visible
+                onLoaded: {
+                    if (!item)
+                        return
+                    if (item.host !== undefined)
+                        item.host = typeof hostApi !== "undefined" ? hostApi
+                                                                   : null
+                    if (item.fileModel !== undefined)
+                        item.fileModel = root.files
+                    if (item.navStack !== undefined)
+                        item.navStack = root.history
+                    panelDock.panelItems[modelData] = item
+                }
             }
         }
 
@@ -389,6 +441,8 @@ Window {
                     var g = mapToItem(null, mouse.x, mouse.y)
                     root.panelDragX = g.x
                     root.panelDragY = g.y
+                    root.panelDragTargetId = root.panelId
+                    root.panelDragLabel = root.panelNameFor(root.panelId)
                     root.panelDragging = true
                 }
                 onPositionChanged: function (mouse) {
@@ -435,84 +489,125 @@ Window {
         onActivated: root.toggleTerminalPanel()
     }
 
-    Item {
-        id: panelSummonGrip
-        visible: !root.panelOpen && root.keys && !root.keys.chooserMode &&
-                 root.panelId.length === 0
-        z: 4
-        width: root.panelHorizontal ? 72 : 16
-        height: root.panelHorizontal ? 16 : 72
-        x: root.panelHorizontal
-           ? (root.width - width) / 2
-           : (root.panelRight ? root.width - width - 2 : 2)
-        y: root.panelHorizontal
-           ? (root.panelBottom ? statusLine.y - height - 2
-                               : commandField.y + commandField.height + 2)
-           : (commandField.y + commandField.height + statusLine.y) / 2
-             - height / 2
+    // Parked pills: one per available panel app, side by side on the
+    // panel's edge. Click opens; drag summons to a chosen edge.
+    Repeater {
+        model: root.parkedPanels
 
-        Rectangle {
-            anchors.fill: parent
-            radius: height > width ? width / 2 : height / 2
-            color: summonArea.pressed || summonArea.containsMouse
-                   ? Theme.hoverFill : "transparent"
-            border.color: summonArea.pressed || summonArea.containsMouse
-                          ? Theme.accent : Theme.normalBorder
-            border.width: 1
-            opacity: 0.9
-        }
+        Item {
+            id: parkedPill
+            required property var modelData
+            required property int index
+            readonly property int slot: index
+            readonly property int count: root.parkedPanels.length
+            visible: root.keys && !root.keys.chooserMode
+            z: 4
+            width: root.panelHorizontal ? 72 : 16
+            height: root.panelHorizontal ? 16 : 72
+            x: root.panelHorizontal
+               ? (root.width - width) / 2 +
+                 (slot - (count - 1) / 2) * (width + 10)
+               : (root.panelRight ? root.width - width - 2 : 2)
+            y: root.panelHorizontal
+               ? (root.panelBottom ? statusLine.y - height - 2
+                                   : commandField.y + commandField.height + 2)
+               : (commandField.y + commandField.height + statusLine.y) / 2
+                 - height / 2 + (slot - (count - 1) / 2) * (height + 10)
 
-        Grid {
-            anchors.centerIn: parent
-            columns: root.panelHorizontal ? 3 : 1
-            spacing: 3
-            Repeater {
-                model: 3
-                Rectangle {
-                    width: 4
-                    height: 4
-                    radius: 2
-                    color: summonArea.pressed || summonArea.containsMouse
-                           ? Theme.accent : Theme.muted
+            Rectangle {
+                anchors.fill: parent
+                radius: height > width ? width / 2 : height / 2
+                color: pillArea.pressed || pillArea.containsMouse
+                       ? Theme.hoverFill : "transparent"
+                border.color: pillArea.pressed || pillArea.containsMouse
+                              ? Theme.accent : Theme.normalBorder
+                border.width: 1
+                opacity: 0.9
+            }
+
+            Grid {
+                anchors.centerIn: parent
+                columns: root.panelHorizontal ? 3 : 1
+                spacing: 3
+                Repeater {
+                    model: 3
+                    Rectangle {
+                        width: 4
+                        height: 4
+                        radius: 2
+                        color: pillArea.pressed || pillArea.containsMouse
+                               ? Theme.accent : Theme.muted
+                    }
                 }
             }
-        }
 
-        MouseArea {
-            id: summonArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.SizeAllCursor
-            preventStealing: true
-            property real pressX: 0
-            property real pressY: 0
-            onPressed: function (mouse) {
-                var g = mapToItem(null, mouse.x, mouse.y)
-                pressX = g.x
-                pressY = g.y
-                root.panelDragX = g.x
-                root.panelDragY = g.y
-            }
-            onPositionChanged: function (mouse) {
-                if (!pressed)
-                    return
-                var g = mapToItem(null, mouse.x, mouse.y)
-                root.panelDragX = g.x
-                root.panelDragY = g.y
-                if (!root.panelDragging &&
-                        Math.hypot(g.x - pressX, g.y - pressY) > 8)
-                    root.panelDragging = true
-            }
-            onReleased: {
-                if (root.panelDragging) {
-                    root.applyPanelDrop()
-                } else if (root.keys) {
-                    // plain click: reopen where it last lived
-                    root.keys.panelId = "synchro.panel.terminal"
-                    Qt.callLater(root.focusPanel)
+            // name chip on hover
+            Rectangle {
+                visible: pillArea.containsMouse && !root.panelDragging
+                x: root.panelHorizontal
+                   ? (parkedPill.width - width) / 2
+                   : (root.panelRight ? parkedPill.width + 6 : -width - 6)
+                y: root.panelHorizontal
+                   ? (root.panelBottom ? -height - 6 : parkedPill.height + 6)
+                   : (parkedPill.height - height) / 2
+                width: pillName.implicitWidth + Theme.space(12)
+                height: pillName.implicitHeight + Theme.space(6)
+                radius: Theme.radius
+                color: Theme.background
+                border.color: Theme.normalBorder
+                border.width: 1
+
+                Text {
+                    id: pillName
+                    anchors.centerIn: parent
+                    text: parkedPill.modelData.name
+                    color: Theme.foreground
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontBody
                 }
             }
-            onCanceled: root.panelDragging = false
+
+            MouseArea {
+                id: pillArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.SizeAllCursor
+                preventStealing: true
+                property real pressX: 0
+                property real pressY: 0
+                onPressed: function (mouse) {
+                    var g = mapToItem(null, mouse.x, mouse.y)
+                    pressX = g.x
+                    pressY = g.y
+                    root.panelDragX = g.x
+                    root.panelDragY = g.y
+                    root.panelDragTargetId = parkedPill.modelData.id
+                    root.panelDragLabel = parkedPill.modelData.name
+                }
+                onPositionChanged: function (mouse) {
+                    if (!pressed)
+                        return
+                    var g = mapToItem(null, mouse.x, mouse.y)
+                    root.panelDragX = g.x
+                    root.panelDragY = g.y
+                    if (!root.panelDragging &&
+                            Math.hypot(g.x - pressX, g.y - pressY) > 8)
+                        root.panelDragging = true
+                }
+                onReleased: {
+                    if (root.panelDragging) {
+                        root.applyPanelDrop()
+                    } else if (root.keys) {
+                        root.keys.panelId = parkedPill.modelData.id
+                        Qt.callLater(root.focusPanel)
+                    }
+                    root.panelDragTargetId = ""
+                }
+                onCanceled: {
+                    root.panelDragging = false
+                    root.panelDragTargetId = ""
+                }
+            }
         }
     }
 
@@ -620,7 +715,7 @@ Window {
         Text {
             id: ghostLabel
             anchors.centerIn: parent
-            text: "terminal"
+            text: root.panelDragLabel.length ? root.panelDragLabel : "panel"
             color: Theme.foreground
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontBody
@@ -641,6 +736,17 @@ Window {
     Connections {
         target: root.keys
         function onPanelFocusRequested() { Qt.callLater(root.focusPanel) }
+        function onPanelChanged() {
+            var id = root.keys.panelId
+            if (id.length && root.openedPanels.indexOf(id) < 0)
+                root.openedPanels = root.openedPanels.concat([id])
+        }
+    }
+
+    Connections {
+        target: root.files
+        function onCurrentStatChanged() { root.refreshRelevantPanels() }
+        function onPathChanged() { root.refreshRelevantPanels() }
     }
 
     PeekOverlay {
@@ -861,5 +967,12 @@ Window {
             Qt.callLater(root.focusListing)
     }
 
-    Component.onCompleted: Qt.callLater(root.focusListing)
+    Component.onCompleted: {
+        // A panel restored from config was set before QML loaded, so the
+        // panelChanged connection never saw it — seed the keep-alive list.
+        if (root.panelId.length)
+            root.openedPanels = [root.panelId]
+        Qt.callLater(root.focusListing)
+        Qt.callLater(root.refreshRelevantPanels)
+    }
 }

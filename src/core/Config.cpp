@@ -84,6 +84,7 @@ void Config::applyDefaults() {
   m_panelSide = QStringLiteral("bottom");
   m_panelSize = 260;
   m_panelOpen = false;
+  m_panelApp = QStringLiteral("synchro.panel.terminal");
 }
 
 static QString normalizePanelSide(const QString &side) {
@@ -132,6 +133,9 @@ bool Config::load() {
     const int px = panel.value(QStringLiteral("size")).toInt(260);
     m_panelSize = qBound(120, px, 2000);
     m_panelOpen = panel.value(QStringLiteral("open")).toBool(false);
+    const QString app = panel.value(QStringLiteral("app")).toString();
+    if (!app.isEmpty())
+      m_panelApp = app;
   }
   if (obj.contains(QStringLiteral("pins"))) {
     QStringList pins;
@@ -173,6 +177,7 @@ bool Config::save() const {
   panel.insert(QStringLiteral("side"), m_panelSide);
   panel.insert(QStringLiteral("size"), m_panelSize);
   panel.insert(QStringLiteral("open"), m_panelOpen);
+  panel.insert(QStringLiteral("app"), m_panelApp);
   obj.insert(QStringLiteral("panel"), panel);
   QSaveFile out(m_path);
   if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
@@ -276,5 +281,12 @@ void Config::setPanelOpen(bool open) {
   if (m_panelOpen == open)
     return;
   m_panelOpen = open;
+  emit panelChanged();
+}
+
+void Config::setPanelApp(const QString &id) {
+  if (m_panelApp == id || id.isEmpty())
+    return;
+  m_panelApp = id;
   emit panelChanged();
 }

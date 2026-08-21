@@ -475,6 +475,128 @@ QVariantMap inspectDuck(const QString &path, const QString &table, int offset,
   return out;
 }
 
+// A bare data file (parquet/csv) browsed through in-memory duckdb:
+// one pseudo-table named after the file.
+QJsonArray runDuckJsonMem(const QString &sql, QString *error) {
+  const QString bin = QStandardPaths::findExecutable(QStringLiteral("duckdb"));
+  if (bin.isEmpty()) {
+    if (error)
+      *error = QStringLiteral("missing");
+    return {};
+  }
+  QProcess proc;
+  proc.setProcessChannelMode(QProcess::SeparateChannels);
+  proc.start(bin, {QStringLiteral("-json"), QStringLiteral(":memory:"),
+                   QStringLiteral("-c"), sql});
+  if (!proc.waitForFinished(8000) ||
+      proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
+    if (proc.state() != QProcess::NotRunning)
+      proc.kill();
+    if (error)
+      *error = QString::fromUtf8(proc.readAllStandardError()).trimmed();
+    return {};
+  }
+  QJsonParseError err;
+  const QJsonDocument doc =
+      QJsonDocument::fromJson(proc.readAllStandardOutput(), &err);
+  if (!doc.isArray())
+    return {};
+  return doc.array();
+}
+
+QVariantMap inspectDuckFile(const QString &path, int offset, int limit) {
+  const QString local = localPath(path);
+  if (!QFileInfo::exists(local))
+    return fail(QStringLiteral("missing"));
+
+  QVariantMap out;
+  out.insert(QStringLiteral("engine"), QStringLiteral("duckfile"));
+  out.insert(QStringLiteral("path"), local);
+  out.insert(QStringLiteral("name"), QFileInfo(local).fileName());
+  out.insert(QStringLiteral("offset"), boundOffset(offset));
+  out.insert(QStringLiteral("limit"), boundLimit(limit));
+
+  if (QStandardPaths::findExecutable(QStringLiteral("duckdb")).isEmpty()) {
+    out.insert(QStringLiteral("ok"), true);
+    out.insert(QStringLiteral("tables"), QVariantList());
+    out.insert(QStringLiteral("columns"), QVariantList());
+    out.insert(QStringLiteral("sample"), QVariantList());
+    out.insert(QStringLiteral("sampleNote"),
+               QStringLiteral("install duckdb to browse this file"));
+    out.insert(QStringLiteral("duckdb"), false);
+    return out;
+  }
+  out.insert(QStringLiteral("duckdb"), true);
+
+  QString quoted = local;
+  quoted.replace(QLatin1Char('\''), QStringLiteral("''"));
+  const QString from = QStringLiteral("FROM '%1'").arg(quoted);
+
+  const QString display = QFileInfo(local).fileName();
+  QVariantList tableList;
+  QVariantMap trow;
+  trow.insert(QStringLiteral("name"), display);
+  trow.insert(QStringLiteral("type"), QStringLiteral("file"));
+  trow.insert(QStringLiteral("schema"), QString());
+  tableList.append(trow);
+
+  QString err;
+  const QJsonArray desc = runDuckJsonMem(
+      QStringLiteral("DESCRIBE SELECT * %1").arg(from), &err);
+  if (desc.isEmpty() && !err.isEmpty() && err != QLatin1String("missing"))
+    return fail(err);
+  QVariantList columns;
+  for (const QJsonValue &v : desc) {
+    if (!v.isObject())
+      continue;
+    const QJsonObject o = v.toObject();
+    QVariantMap col;
+    col.insert(QStringLiteral("name"),
+               o.value(QStringLiteral("column_name")).toString());
+    col.insert(QStringLiteral("type"),
+               o.value(QStringLiteral("column_type")).toString());
+    col.insert(QStringLiteral("notnull"), false);
+    col.insert(QStringLiteral("pk"), false);
+    columns.append(col);
+  }
+
+  const int lim = boundLimit(limit);
+  const int off = boundOffset(offset);
+  const QJsonArray rows = runDuckJsonMem(
+      QStringLiteral("SELECT COLUMNS(*)::VARCHAR %1 LIMIT %2 OFFSET %3")
+          .arg(from)
+          .arg(lim + 1)
+          .arg(off),
+      &err);
+  QVariantList sample;
+  bool truncated = false;
+  int got = 0;
+  for (const QJsonValue &v : rows) {
+    if (!v.isObject())
+      continue;
+    if (got >= lim) {
+      truncated = true;
+      break;
+    }
+    QVariantMap rec;
+    const QJsonObject o = v.toObject();
+    for (auto it = o.begin(); it != o.end(); ++it)
+      rec.insert(it.key(), jsonToVariant(it.value()));
+    sample.append(rec);
+    ++got;
+  }
+  if (sample.isEmpty() && !err.isEmpty())
+    out.insert(QStringLiteral("sampleNote"), err);
+
+  out.insert(QStringLiteral("ok"), true);
+  out.insert(QStringLiteral("tables"), tableList);
+  out.insert(QStringLiteral("table"), display);
+  out.insert(QStringLiteral("columns"), columns);
+  out.insert(QStringLiteral("sample"), sample);
+  out.insert(QStringLiteral("truncated"), truncated);
+  return out;
+}
+
 } // namespace
 
 bool DbPreview::looksLikeSqlite(const QString &path) {
@@ -504,5 +626,7 @@ QVariantMap DbPreview::inspect(const QString &path, const QString &engine,
     return inspectSqlite(path, table, offset, limit);
   if (e == QLatin1String("duckdb") || e == QLatin1String("duck"))
     return inspectDuck(path, table, offset, limit);
+  if (e == QLatin1String("duckfile"))
+    return inspectDuckFile(path, offset, limit);
   return fail(QStringLiteral("unknown engine"));
 }

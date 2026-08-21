@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.panel.duckdb",
+  "name": "Data browser",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Dockable table workbench: follows the cursor across DuckDB, Parquet, and CSV files, keeping its state while you browse. Needs duckdb on PATH for tables.",
+  "kinds": ["panel"],
+  "priority": 60,
+  "match": {
+    "matchMode": "any",
+    "mime": [
+      "application/x-duckdb",
+      "application/vnd.duckdb",
+      "application/vnd.apache.parquet",
+      "text/csv"
+    ],
+    "suffix": [".duckdb", ".ddb", ".parquet", ".pq", ".csv", ".tsv"],
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {
+    "panel": "Panel.qml"
+  },
+  "panel": {
+    "relevance": "match"
+  },
+  "permissions": ["fs-read", "exec"]
+}

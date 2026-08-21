@@ -193,6 +193,16 @@ void ManifestValidateTest::firstPartyPanelTerminalValid() {
   QVERIFY(panel.manifest.kinds.contains(QStringLiteral("panel")));
   QCOMPARE(panel.manifest.entryPoints.value(QStringLiteral("panel")),
            QStringLiteral("Panel.qml"));
+  QCOMPARE(panel.manifest.panel.value(QStringLiteral("relevance")).toString(),
+           QStringLiteral("always"));
+
+  const auto data = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.panel.duckdb")), true);
+  QVERIFY2(data.ok, qPrintable(data.errors.join(QLatin1Char(';'))));
+  QVERIFY(data.manifest.kinds.contains(QStringLiteral("panel")));
+  QVERIFY(data.manifest.match.suffix.contains(QStringLiteral(".parquet")));
+  QCOMPARE(data.manifest.panel.value(QStringLiteral("relevance")).toString(),
+           QStringLiteral("match"));
 }
 
 void ManifestValidateTest::actionCoreRequiresVerb() {

@@ -53,6 +53,7 @@ public:
   QJsonObject action;
   QJsonObject location;
   QJsonObject thumbnail;
+  QJsonObject panel;
   QStringList permissions;
   QString sourceDir;
   bool firstParty = false;

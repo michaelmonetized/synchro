@@ -34,6 +34,7 @@ class DbPreviewTest : public QObject {
   Q_OBJECT
 
 private slots:
+  void duckfileCsv();
   void rejectsPlainText();
   void inspectSqliteTablesAndSample();
   void quotedTableName();
@@ -140,6 +141,27 @@ void DbPreviewTest::inspectDuckDb() {
   QVERIFY(!sample.isEmpty());
   QCOMPARE(sample.at(0).toMap().value(QStringLiteral("name")).toString(),
            QStringLiteral("hi"));
+}
+
+
+// A bare csv browsed as a one-table database through in-memory duckdb.
+void DbPreviewTest::duckfileCsv() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString csv = tmp.filePath(QStringLiteral("t.csv"));
+  {
+    QFile f(csv);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("a,b\n1,x\n2,y\n3,z\n");
+  }
+  const QVariantMap out =
+      DbPreview::inspect(csv, QStringLiteral("duckfile"), QString(), 0, 10);
+  QVERIFY(out.value(QStringLiteral("ok")).toBool());
+  if (!out.value(QStringLiteral("duckdb")).toBool())
+    QSKIP("duckdb binary not installed");
+  QCOMPARE(out.value(QStringLiteral("tables")).toList().size(), 1);
+  QCOMPARE(out.value(QStringLiteral("columns")).toList().size(), 2);
+  QCOMPARE(out.value(QStringLiteral("sample")).toList().size(), 3);
 }
 
 int main(int argc, char **argv) {

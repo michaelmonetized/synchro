@@ -317,6 +317,7 @@ Manifest Manifest::fromJson(const QJsonObject &obj) {
   m.action = obj.value(QStringLiteral("action")).toObject();
   m.location = obj.value(QStringLiteral("location")).toObject();
   m.thumbnail = obj.value(QStringLiteral("thumbnail")).toObject();
+  m.panel = obj.value(QStringLiteral("panel")).toObject();
 
   const QJsonObject eps = obj.value(QStringLiteral("entryPoints")).toObject();
   for (auto it = eps.begin(); it != eps.end(); ++it) {

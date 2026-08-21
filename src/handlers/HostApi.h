@@ -121,6 +121,7 @@ public:
   Q_INVOKABLE QVariantMap stat(const QUrl &url) const;
   // Panel handler support (synchro.panel.*)
   Q_INVOKABLE QUrl panelSource(const QString &id) const;
+  Q_INVOKABLE QVariantList relevantPanels() const;
   Q_INVOKABLE QString processCwd(int pid) const;
   Q_INVOKABLE QString defaultShell() const;
   Q_INVOKABLE QString terminalColorScheme() const;

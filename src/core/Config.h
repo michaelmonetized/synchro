@@ -27,6 +27,8 @@ class Config : public QObject {
                  panelChanged)
   Q_PROPERTY(bool panelOpen READ panelOpen WRITE setPanelOpen NOTIFY
                  panelChanged)
+  Q_PROPERTY(QString panelApp READ panelApp WRITE setPanelApp NOTIFY
+                 panelChanged)
 
 public:
   explicit Config(QObject *parent = nullptr);
@@ -49,6 +51,7 @@ public:
   QString panelSide() const { return m_panelSide; }
   int panelSize() const { return m_panelSize; }
   bool panelOpen() const { return m_panelOpen; }
+  QString panelApp() const { return m_panelApp; }
 
   Q_INVOKABLE void setShowHidden(bool show);
   Q_INVOKABLE void setView(const QString &view);
@@ -60,6 +63,7 @@ public:
   Q_INVOKABLE void setPanelSide(const QString &side);
   Q_INVOKABLE void setPanelSize(int px);
   Q_INVOKABLE void setPanelOpen(bool open);
+  Q_INVOKABLE void setPanelApp(const QString &id);
   static QString normalizePin(const QString &path);
 
   bool load();
@@ -90,4 +94,5 @@ private:
   QString m_panelSide = QStringLiteral("bottom");
   int m_panelSize = 260;
   bool m_panelOpen = false;
+  QString m_panelApp = QStringLiteral("synchro.panel.terminal");
 };

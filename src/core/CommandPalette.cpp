@@ -46,6 +46,7 @@ QVector<CommandSpec> CommandPalette::builtins() {
       {QStringLiteral("park"), QStringLiteral("3D file browser (fsv)"), true},
       {QStringLiteral("nedry"), QStringLiteral("3D file browser (fsv)"), true},
       {QStringLiteral("term"), QStringLiteral("Terminal panel"), true},
+      {QStringLiteral("panel"), QStringLiteral("Toggle a dock panel"), true},
       {QStringLiteral("empty"), QStringLiteral("Empty trash"), true},
       {QStringLiteral("help"), QStringLiteral("Key reference"), true},
       {QStringLiteral("?"), QStringLiteral("Key reference"), true},
