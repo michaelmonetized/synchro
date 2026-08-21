@@ -223,6 +223,7 @@ QHash<int, QByteArray> SearchModel::roleNames() const {
       {PercentRole, "percent"},
       {ParentPathRole, "parentPath"},
       {ParentLabelRole, "parentLabel"},
+      {TypeLabelRole, "typeLabel"},
   };
 }
 
@@ -246,6 +247,10 @@ QVariant SearchModel::data(const QModelIndex &index, int role) const {
     return e->mtime;
   case MimeRole:
     return e->mime;
+  case TypeLabelRole:
+    if (!e->typeLabel.isEmpty())
+      return e->typeLabel;
+    return e->isDir ? QStringLiteral("Folder") : e->mime;
   case IconNameRole:
     return e->iconName;
   case ThumbnailRole:

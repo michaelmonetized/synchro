@@ -28,6 +28,95 @@ ListView {
     readonly property Component folderMarkComp: Component { FolderMark {} }
     readonly property Component fileMarkComp: Component { FileMark {} }
 
+    // ---- detail columns (Name | Size | Type | Modified) ----
+    readonly property real colScale: Math.max(0.6, Theme.fontBody / 12)
+    readonly property int sizeColW: Math.round(76 * colScale)
+    readonly property int typeColW: Math.round(150 * colScale)
+    readonly property int mtimeColW: Math.round(124 * colScale)
+    readonly property bool showSizeCol: width >= 360 * colScale
+    readonly property bool showTypeCol: width >= 640 * colScale
+    readonly property bool showMtimeCol: width >= 480 * colScale
+    readonly property bool showColumns: !searching
+    readonly property bool headerVisible: showColumns && filterProxy &&
+                                          fileModel && count > 0
+    // Recents and search keep their own order; headers stay informative
+    // but stop offering sort there.
+    readonly property bool headerSortable: fileModel && !fileModel.isRecent &&
+                                           !fileModel.isSearch
+
+    function fmtSize(n) {
+        if (n === undefined || n === null || n < 0)
+            return "—"
+        if (n < 1024)
+            return n + " B"
+        var units = ["KB", "MB", "GB", "TB", "PB"]
+        var v = n
+        for (var i = 0; i < units.length; ++i) {
+            v /= 1024
+            if (v < 1024 || i === units.length - 1)
+                return (v < 10 ? v.toFixed(1) : Math.round(v)) + " " + units[i]
+        }
+        return ""
+    }
+
+    function fmtMtime(ms) {
+        if (!ms || ms <= 0)
+            return ""
+        return Qt.formatDateTime(new Date(ms), "yyyy-MM-dd hh:mm")
+    }
+
+    function headerClicked(role) {
+        if (!list.filterProxy || !list.headerSortable)
+            return
+        if (list.filterProxy.sortRoleName === role)
+            list.filterProxy.sortOrder =
+                    list.filterProxy.sortOrder === "desc" ? "asc" : "desc"
+        else {
+            list.filterProxy.sortRoleName = role
+            list.filterProxy.sortOrder = "asc"
+        }
+    }
+
+    component SortHeader: Item {
+        id: head
+        property string role
+        property string label
+        property int align: Text.AlignLeft
+        readonly property bool active: list.filterProxy &&
+                                       list.filterProxy.sortRoleName === role
+
+        Rectangle {
+            anchors.fill: parent
+            color: Theme.hoverFill
+            visible: headHover.hovered && list.headerSortable
+        }
+
+        Text {
+            anchors.fill: parent
+            anchors.leftMargin: Theme.space(4)
+            anchors.rightMargin: Theme.space(4)
+            verticalAlignment: Text.AlignVCenter
+            horizontalAlignment: head.align
+            text: head.active
+                  ? head.label + (list.filterProxy.sortOrder === "desc"
+                                  ? " ▾" : " ▴")
+                  : head.label
+            color: head.active ? Theme.accent : Theme.muted
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontBody
+            elide: Text.ElideRight
+        }
+
+        HoverHandler { id: headHover }
+
+        MouseArea {
+            anchors.fill: parent
+            enabled: list.headerSortable
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: list.headerClicked(head.role)
+        }
+    }
+
     model: list.visible ? list.rows : null
     clip: true
     reuseItems: !list.searching
@@ -41,11 +130,78 @@ ListView {
     focus: true
     activeFocusOnTab: true
     cacheBuffer: Math.max(0, Theme.fontBody + Theme.space(8)) * 8
+    topMargin: headerVisible ? sectionH : 0
 
     Rectangle {
         anchors.fill: parent
         z: -2
         color: Theme.opaqueBackground
+    }
+
+    Item {
+        id: colHeader
+        objectName: "listColumnHeader"
+        visible: list.headerVisible
+        z: 3
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: list.sectionH
+
+        Rectangle {
+            anchors.fill: parent
+            color: Theme.opaqueBackground
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: 1
+            color: Theme.normalBorder
+        }
+
+        SortHeader {
+            role: "name"
+            label: "Name"
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.space(8) + Theme.fontBody + Theme.space(4)
+            anchors.right: headerCols.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+        }
+
+        Row {
+            id: headerCols
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.space(8)
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            spacing: Theme.space(6)
+
+            SortHeader {
+                role: "size"
+                label: "Size"
+                align: Text.AlignRight
+                width: list.sizeColW
+                height: parent.height
+                visible: list.showSizeCol
+            }
+            SortHeader {
+                role: "type"
+                label: "Type"
+                width: list.typeColW
+                height: parent.height
+                visible: list.showTypeCol
+            }
+            SortHeader {
+                role: "mtime"
+                label: "Modified"
+                width: list.mtimeColW
+                height: parent.height
+                visible: list.showMtimeCol
+            }
+        }
     }
 
     highlight: Item {
@@ -193,6 +349,9 @@ ListView {
         // properties once a delegate uses that style.
         required property string path
         required property string detail
+        required property double size
+        required property double mtime
+        required property string typeLabel
         required property var used
         required property var total
         required property int percent
@@ -340,7 +499,9 @@ ListView {
 
         Text {
             anchors.left: iconBox.right
-            anchors.right: chrome.visible ? chrome.left : parent.right
+            anchors.right: cols.visible ? cols.left
+                                        : (chrome.visible ? chrome.left
+                                                          : parent.right)
             anchors.leftMargin: Theme.space(8)
             anchors.rightMargin: Theme.space(8)
             anchors.verticalCenter: parent.verticalCenter
@@ -349,6 +510,45 @@ ListView {
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontBody
             elide: Text.ElideMiddle
+        }
+
+        Row {
+            id: cols
+            anchors.right: chrome.visible ? chrome.left : parent.right
+            anchors.rightMargin: Theme.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Theme.space(6)
+            visible: list.showColumns &&
+                     (list.showSizeCol || list.showTypeCol || list.showMtimeCol)
+
+            Text {
+                width: list.sizeColW
+                visible: list.showSizeCol
+                horizontalAlignment: Text.AlignRight
+                text: row.isDir ? "—" : list.fmtSize(row.size)
+                color: Theme.muted
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontBody
+                elide: Text.ElideRight
+            }
+            Text {
+                width: list.typeColW
+                visible: list.showTypeCol
+                text: row.typeLabel
+                color: Theme.muted
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontBody
+                elide: Text.ElideRight
+            }
+            Text {
+                width: list.mtimeColW
+                visible: list.showMtimeCol
+                text: list.fmtMtime(row.mtime)
+                color: Theme.muted
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontBody
+                elide: Text.ElideRight
+            }
         }
 
         ListingChrome {

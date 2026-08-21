@@ -224,6 +224,7 @@ QHash<int, QByteArray> DirectoryModel::roleNames() const {
       {PercentRole, "percent"},
       {ParentPathRole, "parentPath"},
       {ParentLabelRole, "parentLabel"},
+      {TypeLabelRole, "typeLabel"},
   };
 }
 
@@ -242,6 +243,7 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const {
       return -1;
     case ParentPathRole:
     case ParentLabelRole:
+    case TypeLabelRole:
       return QString();
     default:
       return v;
@@ -296,6 +298,10 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const {
                : e->parentPath;
   case ParentLabelRole:
     return e->parentPath;
+  case TypeLabelRole:
+    if (!e->typeLabel.isEmpty())
+      return e->typeLabel;
+    return e->isDir ? QStringLiteral("Folder") : e->mime;
   default:
     return {};
   }
@@ -616,6 +622,10 @@ QVariantMap DirectoryModel::entryToMap(const DirectoryEntry &e) const {
   m.insert(QStringLiteral("isSymlink"), e.isSymlink);
   m.insert(QStringLiteral("origPath"), e.origPath);
   m.insert(QStringLiteral("perm"), formatPerm(e.perm, e.isDir, e.isSymlink));
+  m.insert(QStringLiteral("typeLabel"),
+           !e.typeLabel.isEmpty()
+               ? e.typeLabel
+               : (e.isDir ? QStringLiteral("Folder") : e.mime));
   m.insert(QStringLiteral("mode"), e.perm);
   m.insert(QStringLiteral("detail"), e.detail);
   m.insert(QStringLiteral("used"), e.used);
@@ -1228,6 +1238,7 @@ DirectoryEntry DirectoryModel::makePlaceholder(const QString &name,
     e.dirKind = QStringLiteral("posix");
     e.iconName = QStringLiteral("folder");
     e.mime = QStringLiteral("inode/directory");
+    e.typeLabel = QStringLiteral("Folder");
   } else {
     e.dirKind = QStringLiteral("pending");
     e.iconName = QStringLiteral("text-x-generic");

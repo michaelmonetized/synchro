@@ -147,6 +147,7 @@ private slots:
   void tabTogglesSearchFromList();
   void enterSortChangesRoleAndFlips();
   void naturalSortOrdersDirsFirst();
+  void typeLabelsForColumns();
   void escCommandSingleStep();
   void colonDoesNotReplaceListVerbs();
   void unknownAndAmbiguousStayInField();
@@ -1300,6 +1301,37 @@ void CommandFieldTest::successfulCommandClearsStatus() {
   keys.setFieldText(QStringLiteral(":hidden"));
   keys.acceptField();
   QCOMPARE(keys.statusMessage(), QStringLiteral("hidden on"));
+}
+
+// The Type column shows friendly labels: Folder for dirs, the mime
+// description for suffixed files, Program/File for suffix-less ones.
+void CommandFieldTest::typeLabelsForColumns() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("subdir")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("notes.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("LICENSE"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QTRY_COMPARE(proxy.rowCount(), 3);
+
+  auto labelOf = [&](const QString &name) {
+    for (int i = 0; i < proxy.rowCount(); ++i) {
+      if (proxy.data(proxy.index(i, 0), DirectoryModel::NameRole).toString() ==
+          name)
+        return proxy.data(proxy.index(i, 0), DirectoryModel::TypeLabelRole)
+            .toString();
+    }
+    return QString();
+  };
+  QCOMPARE(labelOf(QStringLiteral("subdir")), QStringLiteral("Folder"));
+  QTRY_VERIFY(!labelOf(QStringLiteral("notes.txt")).isEmpty());
+  QVERIFY(labelOf(QStringLiteral("notes.txt")) != QLatin1String("text/plain"));
+  QTRY_COMPARE(labelOf(QStringLiteral("LICENSE")), QStringLiteral("File"));
 }
 
 // Name sort is collation-based: case-insensitive, numeric-aware (file2

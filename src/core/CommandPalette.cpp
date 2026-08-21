@@ -61,7 +61,7 @@ QString CommandPalette::helpText() {
       "Esc  pop      F1  help\n"
       "\n"
       ":trash :recent :volumes :home :hidden :pin :unpin :sort :grid :list :fsn :empty :agent :help :?\n"
-      ":sort name|size|mtime|type [asc|desc]   :sort  flip order\n"
+      ":sort name|size|mtime|type [asc|desc]   :sort  flip order   list headers click-sort\n"
       ":fsv tree|map / Ctrl+M  3D browser\n"
       "in fsv: click fly-to   WASD drive   drag orbit   wheel zoom   M map/tree");
 }

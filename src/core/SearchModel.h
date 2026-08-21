@@ -89,6 +89,7 @@ public:
     PercentRole,
     ParentPathRole,
     ParentLabelRole,
+    TypeLabelRole,
   };
   Q_ENUM(Role)
 

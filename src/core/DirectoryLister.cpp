@@ -92,15 +92,18 @@ DirectoryEntry fromDirent(const QString &basePath, const RawEntry &raw) {
 void applyMime(DirectoryEntry &e, QMimeDatabase &db, bool executable) {
   if (e.isDir) {
     e.mime = QStringLiteral("inode/directory");
+    e.typeLabel = QStringLiteral("Folder");
     e.iconName = QStringLiteral("folder");
     return;
   }
   if (!e.name.contains(QLatin1Char('.'))) {
     if (executable) {
       e.mime = QStringLiteral("application/x-executable");
+      e.typeLabel = QStringLiteral("Program");
       e.iconName = QStringLiteral("application-x-executable");
     } else {
       e.mime = QStringLiteral("application/octet-stream");
+      e.typeLabel = QStringLiteral("File");
       e.iconName = e.isSymlink ? QStringLiteral("emblem-symbolic-link")
                                : QStringLiteral("text-x-generic");
     }
@@ -109,6 +112,19 @@ void applyMime(DirectoryEntry &e, QMimeDatabase &db, bool executable) {
   const QMimeType mime =
       db.mimeTypeForFile(e.name, QMimeDatabase::MatchExtension);
   e.mime = mime.name();
+  // comment() walks the shared-mime XML; cache per mime name. The lister
+  // owns one thread, so a thread_local map is uncontended.
+  static thread_local QHash<QString, QString> labelCache;
+  const auto it = labelCache.constFind(e.mime);
+  if (it != labelCache.cend()) {
+    e.typeLabel = it.value();
+  } else {
+    QString label = mime.comment();
+    if (label.isEmpty())
+      label = e.mime;
+    labelCache.insert(e.mime, label);
+    e.typeLabel = label;
+  }
   e.iconName = mime.genericIconName();
   if (e.iconName.isEmpty())
     e.iconName = mime.iconName();

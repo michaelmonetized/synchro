@@ -16,6 +16,7 @@ struct DirectoryEntry {
   qint64 size = -1;
   qint64 mtime = 0;
   QString mime;
+  QString typeLabel; // human-readable kind, e.g. "PNG image", "Folder"
   QString iconName;
   QString thumbnail;
   bool isHidden = false;

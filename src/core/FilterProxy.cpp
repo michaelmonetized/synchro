@@ -283,7 +283,10 @@ bool FilterProxy::lessThan(const QModelIndex &left,
     if (l->mtime != r->mtime)
       return l->mtime < r->mtime;
   } else if (role == DirectoryModel::MimeRole) {
-    const int cmp = QString::compare(l->mime, r->mime, Qt::CaseInsensitive);
+    // Sort the Type column by what the user reads, not the raw mime id.
+    const QString &la = l->typeLabel.isEmpty() ? l->mime : l->typeLabel;
+    const QString &ra = r->typeLabel.isEmpty() ? r->mime : r->typeLabel;
+    const int cmp = QString::compare(la, ra, Qt::CaseInsensitive);
     if (cmp != 0)
       return cmp < 0;
   }
