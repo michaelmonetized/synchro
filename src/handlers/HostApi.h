@@ -119,6 +119,10 @@ public:
   Q_INVOKABLE void navigate(const QUrl &url);
   Q_INVOKABLE void setTitle(const QString &title);
   Q_INVOKABLE QVariantMap stat(const QUrl &url) const;
+  // Panel handler support (synchro.panel.*)
+  Q_INVOKABLE QUrl panelSource(const QString &id) const;
+  Q_INVOKABLE QString processCwd(int pid) const;
+  Q_INVOKABLE QString defaultShell() const;
   Q_INVOKABLE void registerSurface(QObject *surface);
   Q_INVOKABLE bool openFile(const QString &path, const QString &mime);
   Q_INVOKABLE bool runOpen(const QString &handlerId);

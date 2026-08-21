@@ -41,6 +41,7 @@ QVector<CommandSpec> CommandPalette::builtins() {
       {QStringLiteral("fsv"), QStringLiteral("3D file browser (tree|map)"), true},
       {QStringLiteral("park"), QStringLiteral("3D file browser (fsv)"), true},
       {QStringLiteral("nedry"), QStringLiteral("3D file browser (fsv)"), true},
+      {QStringLiteral("term"), QStringLiteral("Terminal panel"), true},
       {QStringLiteral("empty"), QStringLiteral("Empty trash"), true},
       {QStringLiteral("help"), QStringLiteral("Key reference"), true},
       {QStringLiteral("?"), QStringLiteral("Key reference"), true},
@@ -65,6 +66,7 @@ QString CommandPalette::helpText() {
       "\n"
       ":trash :recent :volumes :home :hidden :pin :unpin :sort :grid :list :fsn :empty :agent :help :?\n"
       ":all :files :folders  show everything / files only / folders only\n"
+      ":term [bottom|left|right|off] / Ctrl+`  terminal panel (follows cwd)\n"
       ":sort name|size|mtime|type [asc|desc]   :sort  flip order   list headers click-sort\n"
       ":fsv tree|map / Ctrl+M  3D browser\n"
       "in fsv: click fly-to   WASD drive   drag orbit   wheel zoom   M map/tree");

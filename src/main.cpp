@@ -196,6 +196,9 @@ int main(int argc, char *argv[]) {
   fileOpEngine.setSelection(&selectionModel);
   fileOpEngine.setDirectoryModel(&directoryModel);
   KeyMachine keyMachine(&directoryModel, &filterProxy, &navStack);
+  keyMachine.setPanelSide(config.panelSide());
+  if (config.panelOpen())
+    keyMachine.setPanelId(QStringLiteral("synchro.panel.terminal"));
   keyMachine.setSelection(&selectionModel);
   keyMachine.setFileOps(&fileOpEngine);
   keyMachine.setSearchModel(&searchModel);
@@ -326,6 +329,13 @@ int main(int argc, char *argv[]) {
     config.setSortOrder(filterProxy.sortOrder());
     schedulePersist();
   });
+  QObject::connect(&keyMachine, &KeyMachine::panelChanged, &config, [&] {
+    config.setPanelOpen(!keyMachine.panelId().isEmpty());
+    config.setPanelSide(keyMachine.panelSide());
+    schedulePersist();
+  });
+  QObject::connect(&config, &Config::panelChanged, &config,
+                   [&] { schedulePersist(); });
   QObject::connect(&config, &Config::pinsChanged, &config,
                    [&] { schedulePersist(); });
   QObject::connect(&app, &QCoreApplication::aboutToQuit, &config, [&] {

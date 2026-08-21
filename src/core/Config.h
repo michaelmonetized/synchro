@@ -21,6 +21,12 @@ class Config : public QObject {
   Q_PROPERTY(QStringList pins READ pins WRITE setPins NOTIFY pinsChanged)
   Q_PROPERTY(QString lastPath READ lastPath WRITE setLastPath NOTIFY
                  lastPathChanged)
+  Q_PROPERTY(QString panelSide READ panelSide WRITE setPanelSide NOTIFY
+                 panelChanged)
+  Q_PROPERTY(int panelSize READ panelSize WRITE setPanelSize NOTIFY
+                 panelChanged)
+  Q_PROPERTY(bool panelOpen READ panelOpen WRITE setPanelOpen NOTIFY
+                 panelChanged)
 
 public:
   explicit Config(QObject *parent = nullptr);
@@ -40,6 +46,9 @@ public:
   QStringList locationChips() const { return m_chips; }
   QStringList pins() const { return m_pins; }
   QString lastPath() const { return m_lastPath; }
+  QString panelSide() const { return m_panelSide; }
+  int panelSize() const { return m_panelSize; }
+  bool panelOpen() const { return m_panelOpen; }
 
   Q_INVOKABLE void setShowHidden(bool show);
   Q_INVOKABLE void setView(const QString &view);
@@ -48,6 +57,9 @@ public:
   Q_INVOKABLE void setLocationChips(const QStringList &ids);
   Q_INVOKABLE void setPins(const QStringList &paths);
   Q_INVOKABLE void setLastPath(const QString &path);
+  Q_INVOKABLE void setPanelSide(const QString &side);
+  Q_INVOKABLE void setPanelSize(int px);
+  Q_INVOKABLE void setPanelOpen(bool open);
   static QString normalizePin(const QString &path);
 
   bool load();
@@ -60,6 +72,7 @@ signals:
   void locationChipsChanged();
   void pinsChanged();
   void lastPathChanged();
+  void panelChanged();
 
 private:
   void applyDefaults();
@@ -74,4 +87,7 @@ private:
   QStringList m_chips;
   QStringList m_pins;
   QString m_lastPath;
+  QString m_panelSide = QStringLiteral("bottom");
+  int m_panelSize = 260;
+  bool m_panelOpen = false;
 };

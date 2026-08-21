@@ -149,6 +149,7 @@ private slots:
   void naturalSortOrdersDirsFirst();
   void typeLabelsForColumns();
   void kindFilterFilesFoldersAll();
+  void termPanelCommands();
   void escCommandSingleStep();
   void colonDoesNotReplaceListVerbs();
   void unknownAndAmbiguousStayInField();
@@ -1302,6 +1303,64 @@ void CommandFieldTest::successfulCommandClearsStatus() {
   keys.setFieldText(QStringLiteral(":hidden"));
   keys.acceptField();
   QCOMPARE(keys.statusMessage(), QStringLiteral("hidden on"));
+}
+
+// :term toggles the terminal panel; arguments pick the side or close it.
+void CommandFieldTest::termPanelCommands() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  QVERIFY(keys.panelId().isEmpty());
+  QCOMPARE(keys.panelSide(), QStringLiteral("bottom"));
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":term"));
+  keys.acceptField();
+  QCOMPARE(keys.panelId(), QStringLiteral("synchro.panel.terminal"));
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":term right"));
+  keys.acceptField();
+  QCOMPARE(keys.panelSide(), QStringLiteral("right"));
+  QCOMPARE(keys.panelId(), QStringLiteral("synchro.panel.terminal"));
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":term off"));
+  keys.acceptField();
+  QVERIFY(keys.panelId().isEmpty());
+  QCOMPARE(keys.panelSide(), QStringLiteral("right"));
+
+  // bare :term toggles
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":term"));
+  keys.acceptField();
+  QCOMPARE(keys.panelId(), QStringLiteral("synchro.panel.terminal"));
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":term"));
+  keys.acceptField();
+  QVERIFY(keys.panelId().isEmpty());
+
+  // bad argument hints without changing state
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":term sideways"));
+  keys.acceptField();
+  QVERIFY(keys.panelId().isEmpty());
+  QCOMPARE(keys.statusMessage(), QStringLiteral(":term [bottom|left|right|off]"));
+
+  // chooser windows refuse the panel
+  QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
+  QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
+  keys.setChooserMode(true);
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":term"));
+  keys.acceptField();
+  QVERIFY(keys.panelId().isEmpty());
+  QCOMPARE(keys.statusMessage(),
+           QStringLiteral("no terminal in picker windows"));
+  keys.setChooserMode(false);
 }
 
 // :files / :folders / :all hide the kind you are not hunting for; the

@@ -41,6 +41,7 @@ private slots:
   void firstPartyOmawriteValid();
   void firstPartyActionHandlersValid();
   void firstPartyPreviewHandlersValid();
+  void firstPartyPanelTerminalValid();
   void actionCoreRequiresVerb();
   void schemaVersionMustBeNumberOne();
   void requiredFields();
@@ -182,6 +183,16 @@ void ManifestValidateTest::firstPartyPreviewHandlersValid() {
   QVERIFY(text.manifest.hasKind(QStringLiteral("thumbnail")));
   QCOMPARE(text.manifest.runtime(QStringLiteral("thumbnail")),
            QStringLiteral("core"));
+}
+
+void ManifestValidateTest::firstPartyPanelTerminalValid() {
+  const QString root = QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR);
+  const auto panel = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.panel.terminal")), true);
+  QVERIFY2(panel.ok, qPrintable(panel.errors.join(QLatin1Char(';'))));
+  QVERIFY(panel.manifest.kinds.contains(QStringLiteral("panel")));
+  QCOMPARE(panel.manifest.entryPoints.value(QStringLiteral("panel")),
+           QStringLiteral("Panel.qml"));
 }
 
 void ManifestValidateTest::actionCoreRequiresVerb() {

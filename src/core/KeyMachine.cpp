@@ -224,6 +224,28 @@ void KeyMachine::setFsnTreeView(bool tree) {
   emit fsnTreeViewChanged();
 }
 
+void KeyMachine::setPanelId(const QString &id) {
+  const QString next = m_chooserMode ? QString() : id;
+  if (m_panelId == next)
+    return;
+  m_panelId = next;
+  emit panelChanged();
+}
+
+void KeyMachine::setPanelSide(const QString &side) {
+  QString next = QStringLiteral("bottom");
+  if (side == QLatin1String("left") || side == QLatin1String("right"))
+    next = side;
+  if (m_panelSide == next)
+    return;
+  m_panelSide = next;
+  emit panelChanged();
+}
+
+void KeyMachine::togglePanel(const QString &id) {
+  setPanelId(m_panelId == id ? QString() : id);
+}
+
 void KeyMachine::setGridStride(int columns) {
   const int next = qMax(1, columns);
   if (m_gridStride == next)
@@ -914,6 +936,34 @@ void KeyMachine::runCommand(const QString &text) {
       stripped.split(QLatin1Char(' '), Qt::SkipEmptyParts);
   if (!fsnToks.isEmpty()) {
     const QString head = fsnToks.first().toLower();
+    // ":term" is the embedded panel; ":terminal" stays the external
+    // terminal action handler.
+    if (head == QLatin1String("term")) {
+      if (m_chooserMode) {
+        setStatusMessage(QStringLiteral("no terminal in picker windows"));
+        return;
+      }
+      const QString id = QStringLiteral("synchro.panel.terminal");
+      if (fsnToks.size() > 1) {
+        const QString arg = fsnToks.at(1).toLower();
+        if (arg == QLatin1String("bottom") || arg == QLatin1String("left") ||
+            arg == QLatin1String("right")) {
+          setPanelSide(arg);
+          setPanelId(id);
+        } else if (arg == QLatin1String("off")) {
+          setPanelId(QString());
+        } else {
+          setStatusMessage(QStringLiteral(":term [bottom|left|right|off]"));
+          return;
+        }
+      } else {
+        togglePanel(id);
+      }
+      finishCommand();
+      if (!m_panelId.isEmpty())
+        emit panelFocusRequested();
+      return;
+    }
     if (head == QLatin1String("fsn") || head == QLatin1String("fsv") ||
         head == QLatin1String("park") || head == QLatin1String("nedry")) {
       if (fsnToks.size() > 1) {

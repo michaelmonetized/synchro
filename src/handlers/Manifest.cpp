@@ -19,7 +19,8 @@ const QStringList kLegalKinds = {QStringLiteral("preview"),
                                  QStringLiteral("folder"),
                                  QStringLiteral("action"),
                                  QStringLiteral("location"),
-                                 QStringLiteral("thumbnail")};
+                                 QStringLiteral("thumbnail"),
+                                 QStringLiteral("panel")};
 
 const QStringList kCoreAdapters = {QStringLiteral("trash"),
                                    QStringLiteral("recent"),
@@ -141,6 +142,8 @@ void validateKindRequirements(const Manifest &m, QStringList *errors) {
                                       "or open.exec"));
     } else if (kind == QLatin1String("folder")) {
       requireEntry(m, kind, QStringLiteral("folder"), errors);
+    } else if (kind == QLatin1String("panel")) {
+      requireEntry(m, kind, QStringLiteral("panel"), errors);
     } else if (kind == QLatin1String("action")) {
       const bool hasEp = m.entryPoints.contains(QStringLiteral("action")) &&
                          !m.entryPoints.value(QStringLiteral("action")).isEmpty();

@@ -221,6 +221,33 @@ void HostApi::applyPeekSelection(const Manifest::Item &item) {
   }
 }
 
+QUrl HostApi::panelSource(const QString &id) const {
+  if (!m_registry || !m_registry->contains(id))
+    return QUrl();
+  const HandlerRegistry::Record rec = m_registry->handler(id);
+  if (!rec.enabled || !rec.manifest.kinds.contains(QStringLiteral("panel")))
+    return QUrl();
+  const QString entry =
+      rec.manifest.entryPoints.value(QStringLiteral("panel"));
+  if (entry.isEmpty())
+    return QUrl();
+  const QString path = QDir(rec.sourceDir).filePath(entry);
+  if (!QFileInfo::exists(path))
+    return QUrl();
+  return QUrl::fromLocalFile(path);
+}
+
+QString HostApi::processCwd(int pid) const {
+  if (pid <= 0)
+    return QString();
+  return QFile::symLinkTarget(QStringLiteral("/proc/%1/cwd").arg(pid));
+}
+
+QString HostApi::defaultShell() const {
+  const QString env = qEnvironmentVariable("SHELL");
+  return env.isEmpty() ? QStringLiteral("/bin/bash") : env;
+}
+
 void HostApi::reloadPreview() {
   Manifest::Item item;
   if (!m_folderStack.isEmpty() && m_filePeekFromFolder)

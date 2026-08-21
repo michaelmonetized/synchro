@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.panel.terminal",
+  "name": "Terminal",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Embedded shell panel ($SHELL in qmltermwidget). Follows the browser's directory and leads it back: cd in either side moves both.",
+  "kinds": ["panel"],
+  "priority": 50,
+  "match": {
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {
+    "panel": "Panel.qml"
+  },
+  "permissions": ["fs-read", "shell"]
+}

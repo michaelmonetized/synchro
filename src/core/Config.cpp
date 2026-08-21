@@ -81,6 +81,15 @@ void Config::applyDefaults() {
   m_chips = defaultLocationChips();
   m_pins.clear();
   m_lastPath.clear();
+  m_panelSide = QStringLiteral("bottom");
+  m_panelSize = 260;
+  m_panelOpen = false;
+}
+
+static QString normalizePanelSide(const QString &side) {
+  if (side == QLatin1String("left") || side == QLatin1String("right"))
+    return side;
+  return QStringLiteral("bottom");
 }
 
 bool Config::load() {
@@ -115,6 +124,14 @@ bool Config::load() {
   }
   if (obj.contains(QStringLiteral("lastPath")))
     m_lastPath = sanitizeLastPath(obj.value(QStringLiteral("lastPath")).toString());
+  const QJsonObject panel = obj.value(QStringLiteral("panel")).toObject();
+  if (!panel.isEmpty()) {
+    m_panelSide =
+        normalizePanelSide(panel.value(QStringLiteral("side")).toString());
+    const int px = panel.value(QStringLiteral("size")).toInt(260);
+    m_panelSize = qBound(120, px, 2000);
+    m_panelOpen = panel.value(QStringLiteral("open")).toBool(false);
+  }
   if (obj.contains(QStringLiteral("pins"))) {
     QStringList pins;
     for (const QString &raw :
@@ -151,6 +168,11 @@ bool Config::save() const {
     pins.append(path);
   obj.insert(QStringLiteral("pins"), pins);
   obj.insert(QStringLiteral("lastPath"), m_lastPath);
+  QJsonObject panel;
+  panel.insert(QStringLiteral("side"), m_panelSide);
+  panel.insert(QStringLiteral("size"), m_panelSize);
+  panel.insert(QStringLiteral("open"), m_panelOpen);
+  obj.insert(QStringLiteral("panel"), panel);
   QSaveFile out(m_path);
   if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
     return false;
@@ -231,4 +253,27 @@ void Config::setLastPath(const QString &path) {
     return;
   m_lastPath = next;
   emit lastPathChanged();
+}
+
+void Config::setPanelSide(const QString &side) {
+  const QString next = normalizePanelSide(side);
+  if (m_panelSide == next)
+    return;
+  m_panelSide = next;
+  emit panelChanged();
+}
+
+void Config::setPanelSize(int px) {
+  const int next = qBound(120, px, 2000);
+  if (m_panelSize == next)
+    return;
+  m_panelSize = next;
+  emit panelChanged();
+}
+
+void Config::setPanelOpen(bool open) {
+  if (m_panelOpen == open)
+    return;
+  m_panelOpen = open;
+  emit panelChanged();
 }

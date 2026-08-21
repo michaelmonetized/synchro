@@ -54,12 +54,46 @@ Window {
         z: 0
     }
 
+    // ---- dock panel (synchro.panel.*), e.g. the terminal ----
+    readonly property string panelId: root.keys ? root.keys.panelId : ""
+    readonly property bool panelOpen: panelId.length > 0 &&
+                                      panelDock.sourceUrl.toString().length > 0
+    readonly property string panelSide: root.keys ? root.keys.panelSide
+                                                  : "bottom"
+    readonly property bool panelBottom: panelSide === "bottom"
+    readonly property bool panelLeft: panelSide === "left"
+    readonly property bool panelRight: panelSide === "right"
+
+    function focusPanel() {
+        if (panelDock.panelItem && panelDock.panelItem.focusContent)
+            panelDock.panelItem.focusContent()
+        else if (panelDock.panelItem)
+            panelDock.panelItem.forceActiveFocus()
+    }
+
+    function toggleTerminalPanel() {
+        if (!root.keys)
+            return
+        if (!root.panelOpen) {
+            root.keys.panelId = "synchro.panel.terminal"
+            Qt.callLater(root.focusPanel)
+        } else if (panelDock.activeFocus) {
+            root.keys.panelId = ""
+            root.focusListing()
+        } else {
+            root.focusPanel()
+        }
+    }
+
     Loader {
         id: listingLoader
         anchors.top: commandField.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: statusLine.top
+        anchors.left: root.panelOpen && root.panelLeft ? panelDock.right
+                                                       : parent.left
+        anchors.right: root.panelOpen && root.panelRight ? panelDock.left
+                                                         : parent.right
+        anchors.bottom: root.panelOpen && root.panelBottom ? panelDock.top
+                                                           : statusLine.top
         z: 1
         sourceComponent: root.fsnMode ? fsnComp
                                       : (root.gridMode ? gridComp : listComp)
@@ -143,6 +177,149 @@ Window {
         keyMachine: root.keys
     }
 
+    FocusScope {
+        id: panelDock
+        objectName: "panelDock"
+        // Keep-alive: once a panel has loaded it stays loaded while hidden,
+        // so the terminal's shell survives Ctrl+` toggles.
+        property url loadedUrl: ""
+        readonly property url sourceUrl: root.panelId.length &&
+                                         typeof hostApi !== "undefined" && hostApi
+                                         ? hostApi.panelSource(root.panelId)
+                                         : ""
+        function latchSource() {
+            if (sourceUrl.toString().length > 0)
+                loadedUrl = sourceUrl
+        }
+        onSourceUrlChanged: latchSource()
+        Component.onCompleted: latchSource() // change handlers skip the initial value
+        readonly property var panelItem: panelLoader.item
+        readonly property int span: appConfig
+                                    ? Math.min(appConfig.panelSize,
+                                               (root.panelBottom ? root.height
+                                                                 : root.width) * 0.7)
+                                    : 260
+        visible: root.panelOpen
+        z: 2
+        anchors.left: root.panelRight ? undefined : parent.left
+        anchors.right: root.panelLeft ? undefined : parent.right
+        anchors.top: root.panelBottom ? undefined : commandField.bottom
+        anchors.bottom: statusLine.top
+        width: span
+        height: span
+
+        Rectangle {
+            anchors.fill: parent
+            color: Theme.opaqueBackground
+        }
+
+        Loader {
+            id: panelLoader
+            anchors.fill: parent
+            anchors.topMargin: root.panelBottom ? 6 : 0
+            anchors.leftMargin: root.panelRight ? 6 : 0
+            anchors.rightMargin: root.panelLeft ? 6 : 0
+            source: panelDock.loadedUrl
+            focus: true
+            onLoaded: {
+                if (!item)
+                    return
+                if (item.host !== undefined)
+                    item.host = typeof hostApi !== "undefined" ? hostApi : null
+                if (item.fileModel !== undefined)
+                    item.fileModel = root.files
+                if (item.navStack !== undefined)
+                    item.navStack = root.history
+            }
+        }
+
+        // Inner-edge separator + drag-resize handle, one pair per side.
+        Rectangle {
+            visible: root.panelBottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: Theme.normalBorder
+        }
+        Rectangle {
+            visible: root.panelRight
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.left: parent.left
+            width: 1
+            color: Theme.normalBorder
+        }
+        Rectangle {
+            visible: root.panelLeft
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.right: parent.right
+            width: 1
+            color: Theme.normalBorder
+        }
+
+        MouseArea {
+            id: panelResizeH
+            visible: root.panelBottom
+            z: 5
+            cursorShape: Qt.SplitVCursor
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 6
+            preventStealing: true
+            property real startSize: 0
+            property real startY: 0
+            onPressed: function (mouse) {
+                startSize = appConfig ? appConfig.panelSize : 260
+                startY = mapToItem(null, mouse.x, mouse.y).y
+            }
+            onPositionChanged: function (mouse) {
+                if (!pressed || !appConfig)
+                    return
+                var y = mapToItem(null, mouse.x, mouse.y).y
+                appConfig.panelSize = Math.round(startSize + (startY - y))
+            }
+        }
+        MouseArea {
+            id: panelResizeV
+            visible: !root.panelBottom
+            z: 5
+            cursorShape: Qt.SplitHCursor
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.left: root.panelRight ? parent.left : undefined
+            anchors.right: root.panelLeft ? parent.right : undefined
+            width: 6
+            preventStealing: true
+            property real startSize: 0
+            property real startX: 0
+            onPressed: function (mouse) {
+                startSize = appConfig ? appConfig.panelSize : 300
+                startX = mapToItem(null, mouse.x, mouse.y).x
+            }
+            onPositionChanged: function (mouse) {
+                if (!pressed || !appConfig)
+                    return
+                var x = mapToItem(null, mouse.x, mouse.y).x
+                var delta = root.panelRight ? (startX - x) : (x - startX)
+                appConfig.panelSize = Math.round(startSize + delta)
+            }
+        }
+    }
+
+    Shortcut {
+        sequence: "Ctrl+`"
+        enabled: root.keys && !root.keys.chooserMode
+        onActivated: root.toggleTerminalPanel()
+    }
+
+    Connections {
+        target: root.keys
+        function onPanelFocusRequested() { Qt.callLater(root.focusPanel) }
+    }
+
     PeekOverlay {
         anchors.fill: parent
         host: typeof hostApi !== "undefined" ? hostApi : null
@@ -164,13 +341,15 @@ Window {
 
     Shortcut {
         sequence: "Ctrl+K"
-        enabled: root.keys && !root.keys.peekOpen && !root.keys.actionOpen
+        enabled: root.keys && !root.keys.peekOpen && !root.keys.actionOpen &&
+                 !panelDock.activeFocus
         onActivated: root.keys.focusFilter()
     }
 
     Shortcut {
         sequence: "Ctrl+L"
-        enabled: root.keys && !root.keys.peekOpen && !root.keys.actionOpen
+        enabled: root.keys && !root.keys.peekOpen && !root.keys.actionOpen &&
+                 !panelDock.activeFocus
         onActivated: root.keys.focusJump()
     }
 
