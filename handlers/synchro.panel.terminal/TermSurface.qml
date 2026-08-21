@@ -17,6 +17,11 @@ Item {
 
     property string lastSyncedPath: ""
     property string lastSeenCwd: ""
+    // A cd we sent but the shell has not executed yet. While it is in
+    // flight the poll must not treat the stale cwd as user intent, or the
+    // two sync directions ping-pong forever (worse with slow prompts).
+    property string pendingShellCwd: ""
+    property double pendingSince: 0
     property bool shellDead: false
     property bool started: false
     property string schemeName: "Linux"
@@ -70,6 +75,8 @@ Item {
         if (session.hasActiveProcess)
             return // a command is running; do not type into it
         surface.lastSyncedPath = p
+        surface.pendingShellCwd = p
+        surface.pendingSince = Date.now()
         session.sendText(" cd '" + p.replace(/'/g, "'\\''") + "'\n")
     }
 
@@ -161,7 +168,19 @@ Item {
             if (pid <= 0)
                 return
             var cwd = surface.host.processCwd(pid)
-            if (!cwd || cwd === surface.lastSeenCwd)
+            if (!cwd)
+                return
+            if (surface.pendingShellCwd.length) {
+                if (cwd === surface.pendingShellCwd) {
+                    surface.pendingShellCwd = ""
+                    surface.lastSeenCwd = cwd
+                    return
+                }
+                if (Date.now() - surface.pendingSince < 4000)
+                    return // our cd is still in flight; cwd is stale
+                surface.pendingShellCwd = "" // cd failed or was overridden
+            }
+            if (cwd === surface.lastSeenCwd)
                 return
             surface.lastSeenCwd = cwd
             var browsing = surface.browsePath()

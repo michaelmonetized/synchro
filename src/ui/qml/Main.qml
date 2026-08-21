@@ -202,6 +202,14 @@ Window {
         z: 2
         onActiveFocusChanged: if (root.keys)
                                   root.keys.panelFocused = activeFocus
+
+        HoverHandler {
+            enabled: root.hoverFocusAllowed
+            onHoveredChanged: {
+                if (hovered && !panelDock.activeFocus)
+                    root.focusPanel()
+            }
+        }
         anchors.left: root.panelRight ? undefined : parent.left
         anchors.right: root.panelLeft ? undefined : parent.right
         anchors.top: root.panelBottom ? undefined : commandField.bottom
@@ -314,6 +322,26 @@ Window {
         sequence: "Ctrl+`"
         enabled: root.keys && !root.keys.chooserMode
         onActivated: root.toggleTerminalPanel()
+    }
+
+    // Focus follows the pointer between browser and terminal, Hyprland
+    // style — but never steals from the command field or overlays.
+    readonly property bool hoverFocusAllowed: panelOpen && keys &&
+                                              !keys.fieldFocused &&
+                                              !keys.peekOpen &&
+                                              !keys.actionOpen &&
+                                              !keys.helpOpen
+
+    Item {
+        anchors.fill: listingLoader
+        z: 3
+        HoverHandler {
+            enabled: root.hoverFocusAllowed
+            onHoveredChanged: {
+                if (hovered && panelDock.activeFocus)
+                    root.focusListingForce()
+            }
+        }
     }
 
     Connections {
