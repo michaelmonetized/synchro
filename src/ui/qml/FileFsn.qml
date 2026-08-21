@@ -103,7 +103,8 @@ Item {
                 gateZ: Number(b.gateZ || 0),
                 exitX: Number(b.exitX || 0),
                 exitZ: Number(b.exitZ || 0),
-                parentPath: b.parentPath !== undefined ? b.parentPath : null
+                parentPath: b.parentPath !== undefined ? b.parentPath : null,
+                kids: []
             }
             var yTop = p.y0 + p.h
             if (yTop > maxY) maxY = yTop
@@ -125,6 +126,29 @@ Item {
             view.requestPaint()
             return
         }
+        // Parent/child links (via path parentage) drive a hierarchical
+        // painter: a parent always draws before its descendants, siblings
+        // sort by depth. A flat global depth sort mis-stacks huge parent
+        // slabs against the small boxes standing on them, so geometry
+        // popped in and out as the camera orbited.
+        var topLevel = []
+        for (i = 0; i < solids.length; ++i) {
+            var sp = solids[i]
+            if (sp === rootPrim) {
+                topLevel.push(sp)
+                continue
+            }
+            var parent = null
+            var slash = sp.path ? sp.path.lastIndexOf("/") : -1
+            if (slash > 0)
+                parent = platByPath[sp.path.substring(0, slash)] || null
+            if (!parent || parent === sp)
+                parent = rootPrim
+            if (parent && parent !== sp)
+                parent.kids.push(sp)
+            else
+                topLevel.push(sp)
+        }
         var ctrX = (minX + maxX) / 2
         var ctrZ = (minZ + maxZ) / 2
         var radius = Math.max(4, Math.hypot(maxX - minX, maxZ - minZ) / 2)
@@ -134,6 +158,7 @@ Item {
             isTree: isTree,
             rootPrim: rootPrim,
             platByPath: platByPath,
+            topLevel: topLevel,
             ctrX: ctrX, ctrZ: ctrZ, radius: radius, maxY: maxY,
             count: solids.length
         }
@@ -894,24 +919,14 @@ Item {
                 if (s.solids[i].hasLabel)
                     fsn.drawGroundLabel(ctx, s.solids[i])
             }
-            // Solid geometry, painter-sorted far to near.
-            var solids = s.solids.slice()
-            solids.sort(function (a, b) {
-                var da = fsn.viewDepth(a.cx, a.y0 + a.h * 0.5, a.cz)
-                var db = fsn.viewDepth(b.cx, b.y0 + b.h * 0.5, b.cz)
-                if (Math.abs(da - db) > 0.001)
-                    return db - da
-                return a.y0 - b.y0
-            })
-            var cursorPrim = null
-            for (i = 0; i < solids.length; ++i) {
-                var p = solids[i]
-                if (fsn.drawSolid(ctx, p) && p.name.length &&
-                        (p.kind === 1 || p.kind === 2 || (!s.isTree && p.kind === 0)))
-                    fsn.drawLeafLabel(ctx, p)
-                if (fsn.cursorPath.length && p.path === fsn.cursorPath && !p.root)
-                    cursorPrim = p
-            }
+            // Solid geometry: hierarchical painter — parents before their
+            // descendants, siblings far to near.
+            var found = { cursor: null }
+            var top = s.topLevel.slice()
+            top.sort(fsn.depthCompare)
+            for (i = 0; i < top.length; ++i)
+                fsn.drawNode(ctx, top[i], s, found)
+            var cursorPrim = found.cursor
             if (cursorPrim && fsn.showCursorChrome) {
                 fsn.drawCursor(ctx, cursorPrim)
                 var above = fsn.project(cursorPrim.cx,
@@ -927,33 +942,65 @@ Item {
         }
     }
 
+    function depthCompare(a, b) {
+        return fsn.viewDepth(b.cx, b.y0 + b.h * 0.5, b.cz) -
+               fsn.viewDepth(a.cx, a.y0 + a.h * 0.5, a.cz)
+    }
+
+    function drawNode(ctx, p, s, found) {
+        if (fsn.drawSolid(ctx, p) && p.name.length &&
+                (p.kind === 1 || p.kind === 2 || (!s.isTree && p.kind === 0)))
+            fsn.drawLeafLabel(ctx, p)
+        if (fsn.cursorPath.length && p.path === fsn.cursorPath && !p.root)
+            found.cursor = p
+        if (p.kids.length) {
+            var order = p.kids.slice()
+            order.sort(fsn.depthCompare)
+            for (var i = 0; i < order.length; ++i)
+                fsn.drawNode(ctx, order[i], s, found)
+        }
+    }
+
     // -------------------------------------------------------------- input
-    function pickAt(mx, my) {
+    function paintOrderList() {
         var s = fsn.scene
+        var out = []
         if (!s)
-            return null
-        var hits = []
-        for (var i = 0; i < s.solids.length; ++i) {
-            var p = s.solids[i]
+            return out
+        var rec = function (p) {
+            out.push(p)
+            var order = p.kids.slice()
+            order.sort(fsn.depthCompare)
+            for (var k = 0; k < order.length; ++k)
+                rec(order[k])
+        }
+        var top = s.topLevel.slice()
+        top.sort(fsn.depthCompare)
+        for (var i = 0; i < top.length; ++i)
+            rec(top[i])
+        return out
+    }
+
+    // Walk the paint order back to front so the visually topmost prim wins,
+    // exactly matching what the renderer put on screen.
+    function pickAt(mx, my) {
+        var order = fsn.paintOrderList()
+        var pt = { x: mx, y: my }
+        for (var i = order.length - 1; i >= 0; --i) {
+            var p = order[i]
             var pr = fsn.projectPrim(p)
             if (!pr)
                 continue
-            hits.push({ p: p, pr: pr,
-                        d: fsn.viewDepth(p.cx, p.y0 + p.h * 0.5, p.cz) })
-        }
-        hits.sort(function (a, b) { return a.d - b.d })
-        var pt = { x: mx, y: my }
-        for (i = 0; i < hits.length; ++i) {
-            if (fsn.pointInPoly(pt, hits[i].pr.pt))
-                return hits[i].p
+            if (fsn.pointInPoly(pt, pr.pt))
+                return p
             // Walls: check each front-facing side quad.
-            var pb = hits[i].pr.pb, tp = hits[i].pr.pt
+            var pb = pr.pb, tp = pr.pt
             var n = pb.length
             for (var e = 0; e < n; ++e) {
                 var j = (e + 1) % n
                 var quad = [pb[e], pb[j], tp[j], tp[e]]
                 if (fsn.shoelace(quad) < 0 && fsn.pointInPoly(pt, quad))
-                    return hits[i].p
+                    return p
             }
         }
         return null
