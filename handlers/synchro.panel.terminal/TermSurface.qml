@@ -25,6 +25,7 @@ Item {
     property bool shellDead: false
     property bool started: false
     property string schemeName: "Linux"
+    property color termBg: "#000000"
 
     function refreshScheme() {
         if (!surface.host)
@@ -32,6 +33,9 @@ Item {
         var s = surface.host.terminalColorScheme()
         if (s.length)
             surface.schemeName = s
+        var bg = surface.host.terminalBackground()
+        if (bg.length)
+            surface.termBg = bg
     }
 
     // The dock injects host/fileModel after creation; the shell must not
@@ -80,9 +84,15 @@ Item {
         session.sendText(" cd '" + p.replace(/'/g, "'\\''") + "'\n")
     }
 
+    Rectangle {
+        anchors.fill: parent
+        color: surface.termBg
+    }
+
     QMLTermWidget {
         id: term
         anchors.fill: parent
+        anchors.margins: Theme.space(8)
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody + 1
         colorScheme: surface.schemeName

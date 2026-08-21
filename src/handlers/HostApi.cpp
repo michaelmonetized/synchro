@@ -342,6 +342,15 @@ QHash<QString, QString> readOmarchyTerminalPalette(const QString &themeDir) {
 
 } // namespace
 
+// The terminal's own background from the active theme, so padding around
+// the term widget matches instead of reading as a seam.
+QString HostApi::terminalBackground() const {
+  const QString themeDir =
+      QDir::homePath() + QStringLiteral("/.local/state/omarchy/current/theme");
+  return readOmarchyTerminalPalette(themeDir)
+      .value(QStringLiteral("background"));
+}
+
 // qmltermwidget's name lookup only ever checks the FIRST scheme directory
 // (findColorSchemePath uses dirs.first()), so registered custom dirs are
 // unreachable by name. ColorSchemeManager::loadCustomColorScheme(path) is
