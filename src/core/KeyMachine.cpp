@@ -982,6 +982,21 @@ bool KeyMachine::runBuiltin(const QString &id, QString *info) {
   if (id == QLatin1String("sort")) {
     return applySortCommand(QStringLiteral("sort"), info);
   }
+  if (id == QLatin1String("all") || id == QLatin1String("files") ||
+      id == QLatin1String("folders")) {
+    if (m_proxy) {
+      m_proxy->setKindFilter(id);
+      if (info) {
+        if (id == QLatin1String("files"))
+          *info = QStringLiteral("files only");
+        else if (id == QLatin1String("folders"))
+          *info = QStringLiteral("folders only");
+        else
+          *info = QStringLiteral("showing all");
+      }
+    }
+    return true;
+  }
   if (id == QLatin1String("grid")) {
     setGridMode(true);
     return true;

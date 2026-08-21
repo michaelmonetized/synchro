@@ -148,6 +148,7 @@ private slots:
   void enterSortChangesRoleAndFlips();
   void naturalSortOrdersDirsFirst();
   void typeLabelsForColumns();
+  void kindFilterFilesFoldersAll();
   void escCommandSingleStep();
   void colonDoesNotReplaceListVerbs();
   void unknownAndAmbiguousStayInField();
@@ -1301,6 +1302,65 @@ void CommandFieldTest::successfulCommandClearsStatus() {
   keys.setFieldText(QStringLiteral(":hidden"));
   keys.acceptField();
   QCOMPARE(keys.statusMessage(), QStringLiteral("hidden on"));
+}
+
+// :files / :folders / :all hide the kind you are not hunting for; the
+// chips drive the same proxy property.
+void CommandFieldTest::kindFilterFilesFoldersAll() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("adir")));
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("bdir")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("one.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("two.txt"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QTRY_COMPARE(proxy.rowCount(), 4);
+  QCOMPARE(proxy.kindFilter(), QStringLiteral("all"));
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":files"));
+  keys.acceptField();
+  QCOMPARE(proxy.kindFilter(), QStringLiteral("files"));
+  QCOMPARE(keys.statusMessage(), QStringLiteral("files only"));
+  QCOMPARE(proxy.rowCount(), 2);
+  for (int i = 0; i < proxy.rowCount(); ++i)
+    QVERIFY(!proxy.data(proxy.index(i, 0), DirectoryModel::IsDirRole).toBool());
+  QVERIFY(proxy.currentIndex() >= 0); // cursor snapped to a surviving row
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":folders"));
+  keys.acceptField();
+  QCOMPARE(proxy.kindFilter(), QStringLiteral("folders"));
+  QCOMPARE(proxy.rowCount(), 2);
+  for (int i = 0; i < proxy.rowCount(); ++i)
+    QVERIFY(proxy.data(proxy.index(i, 0), DirectoryModel::IsDirRole).toBool());
+
+  // Kind filter composes with the name filter.
+  proxy.setFilter(QStringLiteral("adir"));
+  QCOMPARE(proxy.rowCount(), 1);
+  proxy.setFilter(QString());
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":all"));
+  keys.acceptField();
+  QCOMPARE(proxy.kindFilter(), QStringLiteral("all"));
+  QCOMPARE(keys.statusMessage(), QStringLiteral("showing all"));
+  QCOMPARE(proxy.rowCount(), 4);
+
+  // Direct property writes (the chip path) behave identically.
+  proxy.setKindFilter(QStringLiteral("folders"));
+  QCOMPARE(proxy.rowCount(), 2);
+  proxy.setKindFilter(QStringLiteral("bogus"));
+  QCOMPARE(proxy.kindFilter(), QStringLiteral("all"));
+  QCOMPARE(proxy.rowCount(), 4);
 }
 
 // The Type column shows friendly labels: Folder for dirs, the mime

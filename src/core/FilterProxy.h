@@ -16,6 +16,8 @@ struct PortalFilterRule {
 class FilterProxy : public QSortFilterProxyModel {
   Q_OBJECT
   Q_PROPERTY(QString filter READ filter WRITE setFilter NOTIFY filterChanged)
+  Q_PROPERTY(QString kindFilter READ kindFilter WRITE setKindFilter NOTIFY
+                 kindFilterChanged)
   Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY
                  currentIndexChanged)
   Q_PROPERTY(int count READ count NOTIFY countChanged)
@@ -32,6 +34,8 @@ public:
 
   QString filter() const { return m_filter; }
   Q_INVOKABLE void setFilter(const QString &filter);
+  QString kindFilter() const { return m_kindFilter; }
+  Q_INVOKABLE void setKindFilter(const QString &kind);
 
   int currentIndex() const;
   Q_INVOKABLE void setCurrentIndex(int proxyRow);
@@ -53,6 +57,7 @@ public:
 
 signals:
   void filterChanged();
+  void kindFilterChanged();
   void currentIndexChanged();
   void countChanged();
   void sortChanged();
@@ -75,6 +80,8 @@ private:
                      const QString &mime) const;
 
   QString m_filter;
+  QString m_kindFilter = QStringLiteral("all");
+  bool kindAccepts(bool isDir) const;
   QString m_sortRole = QStringLiteral("name");
   QString m_sortOrder = QStringLiteral("asc");
   bool m_syncing = false;

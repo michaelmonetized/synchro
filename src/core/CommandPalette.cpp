@@ -32,6 +32,9 @@ QVector<CommandSpec> CommandPalette::builtins() {
       {QStringLiteral("pin"), QStringLiteral("Pin this folder"), true},
       {QStringLiteral("unpin"), QStringLiteral("Unpin this folder"), true},
       {QStringLiteral("sort"), QStringLiteral("Sort listing"), true},
+      {QStringLiteral("all"), QStringLiteral("Show files and folders"), true},
+      {QStringLiteral("files"), QStringLiteral("Files only"), true},
+      {QStringLiteral("folders"), QStringLiteral("Folders only"), true},
       {QStringLiteral("grid"), QStringLiteral("Grid view"), true},
       {QStringLiteral("list"), QStringLiteral("List view"), true},
       {QStringLiteral("fsn"), QStringLiteral("3D file browser (fsv)"), true},
@@ -61,6 +64,7 @@ QString CommandPalette::helpText() {
       "Esc  pop      F1  help\n"
       "\n"
       ":trash :recent :volumes :home :hidden :pin :unpin :sort :grid :list :fsn :empty :agent :help :?\n"
+      ":all :files :folders  show everything / files only / folders only\n"
       ":sort name|size|mtime|type [asc|desc]   :sort  flip order   list headers click-sort\n"
       ":fsv tree|map / Ctrl+M  3D browser\n"
       "in fsv: click fly-to   WASD drive   drag orbit   wheel zoom   M map/tree");

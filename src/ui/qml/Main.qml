@@ -42,6 +42,7 @@ Window {
         anchors.right: parent.right
         keyMachine: root.keys
         fileModel: root.files
+        filterProxy: root.listing
     }
 
     Rectangle {

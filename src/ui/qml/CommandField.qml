@@ -6,6 +6,7 @@ Item {
 
     required property var keyMachine
     property var fileModel
+    property var filterProxy
 
     readonly property bool fieldActive: keyMachine && keyMachine.fieldFocused
     readonly property bool typingSearch: keyMachine && keyMachine.mode === "field-search"
@@ -140,6 +141,48 @@ Item {
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody
         elide: Text.ElideRight
+    }
+
+    // All / Files / Folders kind filter, Nautilus's missing feature:
+    // hide the kind you are not hunting for; sort acts on what remains.
+    Row {
+        id: kindChips
+        objectName: "kindChips"
+        anchors.right: hint.left
+        anchors.rightMargin: Theme.space(16)
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Theme.space(10)
+        visible: root.viewToggle && root.filterProxy &&
+                 !(root.keyMachine && root.keyMachine.fsnMode)
+
+        component KindChip: Text {
+            id: chip
+            required property string kind
+            readonly property bool active: root.filterProxy &&
+                                           root.filterProxy.kindFilter === kind
+            text: kind === "all" ? "All"
+                                 : (kind === "files" ? "Files" : "Folders")
+            color: active ? Theme.accent
+                          : (chipHover.hovered ? Theme.foreground : Theme.muted)
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontBody
+
+            HoverHandler { id: chipHover }
+
+            MouseArea {
+                anchors.fill: parent
+                anchors.margins: -Theme.space(2)
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    if (root.filterProxy)
+                        root.filterProxy.kindFilter = chip.kind
+                }
+            }
+        }
+
+        KindChip { kind: "all" }
+        KindChip { kind: "files" }
+        KindChip { kind: "folders" }
     }
 
     Text {

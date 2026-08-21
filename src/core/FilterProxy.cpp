@@ -99,6 +99,41 @@ void FilterProxy::setFilter(const QString &filter) {
   emit currentIndexChanged();
 }
 
+bool FilterProxy::kindAccepts(bool isDir) const {
+  if (m_kindFilter == QLatin1String("files"))
+    return !isDir;
+  if (m_kindFilter == QLatin1String("folders"))
+    return isDir;
+  return true;
+}
+
+// All / Files / Folders: session-sticky (never persisted), so a fresh
+// launch always shows everything.
+void FilterProxy::setKindFilter(const QString &kind) {
+  QString next = QStringLiteral("all");
+  if (kind == QLatin1String("files") || kind == QLatin1String("folders"))
+    next = kind;
+  if (m_kindFilter == next)
+    return;
+  auto *dm = directoryModel();
+  beginFilterChange();
+  m_kindFilter = next;
+  endFilterChange(QSortFilterProxyModel::Direction::Rows);
+  int nextRow = -1;
+  if (dm && dm->currentIndex() >= 0) {
+    const QModelIndex mapped = mapFromSource(dm->index(dm->currentIndex(), 0));
+    if (mapped.isValid())
+      nextRow = mapped.row();
+  }
+  if (nextRow >= 0)
+    setCurrentIndex(nextRow);
+  else if (rowCount() > 0)
+    setCurrentIndex(0);
+  emit kindFilterChanged();
+  emit countChanged();
+  emit currentIndexChanged();
+}
+
 int FilterProxy::currentIndex() const {
   auto *dm = directoryModel();
   if (!dm || dm->currentIndex() < 0)
@@ -333,6 +368,8 @@ bool FilterProxy::filterAcceptsRow(int sourceRow,
     // four roles through QVariant per row per keystroke.
     const DirectoryEntry *e = dm->entryAt(sourceRow);
     if (e) {
+      if (!kindAccepts(e->isDir))
+        return false;
       if (!matchesPortal(e->name, e->path, e->isDir, e->mime))
         return false;
       if (m_filter.isEmpty())
@@ -348,6 +385,8 @@ bool FilterProxy::filterAcceptsRow(int sourceRow,
   const bool isDir = src->data(idx, DirectoryModel::IsDirRole).toBool();
   const QString path = src->data(idx, DirectoryModel::PathRole).toString();
   const QString mime = src->data(idx, DirectoryModel::MimeRole).toString();
+  if (!kindAccepts(isDir))
+    return false;
   if (!matchesPortal(name, path, isDir, mime))
     return false;
   if (m_filter.isEmpty())

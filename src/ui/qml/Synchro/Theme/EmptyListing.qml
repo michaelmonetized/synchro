@@ -15,12 +15,24 @@ Text {
             return root.filterProxy.filter
         return ""
     }
+    readonly property string kindFilter: root.filterProxy &&
+                                         root.filterProxy.kindFilter
+                                         ? root.filterProxy.kindFilter : "all"
+    readonly property int totalCount: root.fileModel ? root.fileModel.count : 0
 
     objectName: "emptyListing"
     visible: root.count <= 0
     text: {
         if (root.listing || !root.fileModel)
             return "Opening folder…"
+        if (root.kindFilter !== "all" && root.totalCount > 0) {
+            var hidden = root.totalCount
+            if (root.kindFilter === "files")
+                return hidden + (hidden === 1 ? " folder" : " folders")
+                        + " hidden — files only"
+            return hidden + (hidden === 1 ? " file" : " files")
+                    + " hidden — folders only"
+        }
         if (root.filter.length > 0 || (root.fileModel && root.fileModel.isSearch))
             return "no matches"
         return "empty folder"
