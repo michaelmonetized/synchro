@@ -154,13 +154,17 @@ Item {
         var wantTx, wantTy, wantTz, wantPitch, wantYaw, wantDist
         if (s.isTree) {
             var rp = s.rootPrim
-            // fsn framing: root platform low and close, children fanning away.
-            wantTx = rp ? rp.cx : s.ctrX
-            wantTz = (rp ? rp.cz : s.ctrZ) + 10
+            // fsn framing: root platform low in frame, children fanning away,
+            // aimed between the root and the scene's center so the whole
+            // tree sits centered in the viewport.
+            var rx = rp ? rp.cx : s.ctrX
+            var rz = rp ? rp.cz : s.ctrZ
+            wantTx = (rx + s.ctrX) / 2
+            wantTz = (rz + s.ctrZ) / 2
             wantTy = 0
             wantYaw = 0
             wantPitch = 0.50
-            wantDist = Math.min(120, Math.max(26, s.radius * 0.55 + 14))
+            wantDist = Math.min(130, Math.max(16, s.radius * 0.85 + 8))
         } else {
             wantTx = s.ctrX
             wantTz = s.ctrZ
@@ -519,9 +523,12 @@ Item {
     onFlightTChanged: fsn.applyFlight()
 
     function cancelFlight() {
+        flightDelay.stop()
+        fsn.pendingHit = null
         if (flightAnim.running)
             flightAnim.stop()
         fsn.flight = null
+        fsn.cancelDive()
         fsn.camAnim = true
     }
 
@@ -724,6 +731,74 @@ Item {
             if (z > maxZ) maxZ = z
         }
         return { minX: minX, maxX: maxX, minZ: minZ, maxZ: maxZ }
+    }
+
+    // --------------------------------------------------------------- dive
+    // Double-clicking a folder punches the camera into its platform first;
+    // navigation (and the new scene's establishing fly-in) follows.
+    property var dive: null
+    property real diveT: 0
+
+    NumberAnimation {
+        id: diveAnim
+        target: fsn
+        property: "diveT"
+        from: 0
+        to: 1
+        duration: 420
+        easing.type: Easing.InCubic
+        onStopped: fsn.finishDive()
+    }
+
+    onDiveTChanged: fsn.applyDive()
+
+    function startDive(prim, index) {
+        if (flightAnim.running)
+            flightAnim.stop()
+        fsn.flight = null
+        fsn.cancelDive()
+        fsn.dive = {
+            path: prim.path, index: index,
+            fromTx: fsn.tx, fromTy: fsn.ty, fromTz: fsn.tz,
+            fromDist: fsn.dist, fromPitch: fsn.pitch,
+            toTx: prim.cx, toTy: prim.y0 + prim.h, toTz: prim.cz,
+            toDist: 2.0, toPitch: Math.max(0.30, fsn.pitch * 0.75)
+        }
+        fsn.glideBlockUntil = Date.now() + 3000
+        fsn.diveT = 0
+        diveAnim.start()
+    }
+
+    function applyDive() {
+        var d = fsn.dive
+        if (!d)
+            return
+        var t = fsn.diveT
+        fsn.camAnim = false
+        fsn.tx = fsn.lerp(d.fromTx, d.toTx, t)
+        fsn.ty = fsn.lerp(d.fromTy, d.toTy, t)
+        fsn.tz = fsn.lerp(d.fromTz, d.toTz, t)
+        fsn.dist = fsn.lerp(d.fromDist, d.toDist, t)
+        fsn.pitch = fsn.lerp(d.fromPitch, d.toPitch, t)
+        fsn.camAnim = true
+    }
+
+    function finishDive() {
+        var d = fsn.dive
+        fsn.dive = null
+        fsn.camAnim = true
+        if (!d || fsn.diveT < 1)
+            return // cancelled mid-zoom
+        if (d.index >= 0)
+            fsn.activate()
+        else if (fsn.navStack)
+            fsn.navStack.navigate(d.path)
+    }
+
+    function cancelDive() {
+        if (diveAnim.running)
+            diveAnim.stop()
+        fsn.dive = null
     }
 
     // ------------------------------------------------------------ cursor
@@ -948,6 +1023,17 @@ Item {
         if (!path)
             return
         var i = fsn.listingIndexFor(path)
+        // TreeV folders get a quick punch-in before the actual navigation;
+        // the new scene's establishing fly-in picks up from there.
+        if (isDir && fsn.scene && fsn.scene.isTree) {
+            var prim = fsn.findPrim(path)
+            if (prim) {
+                if (i >= 0)
+                    fsn.selectIndex(i, 0, false)
+                fsn.startDive(prim, i)
+                return
+            }
+        }
         if (i >= 0) {
             fsn.selectIndex(i, 0, false)
             fsn.activate()
@@ -962,6 +1048,29 @@ Item {
     function kickScan() {
         if (fsn.fileModel && fsn.fileModel.refreshFsn)
             fsn.fileModel.refreshFsn(fsn.treeView ? "tree" : "map")
+    }
+
+    // A plain click waits out the double-click window before its road
+    // flight starts, so a double-click dives into exactly what was first
+    // clicked (the flight would otherwise move the camera between clicks
+    // and re-pick a neighbor).
+    property var pendingHit: null
+
+    Timer {
+        id: flightDelay
+        interval: 260
+        onTriggered: {
+            var h = fsn.pendingHit
+            fsn.pendingHit = null
+            if (!h)
+                return
+            if (!fsn.flyAlongRoads(h) && fsn.scene) {
+                fsn.tx = h.cx
+                fsn.ty = h.y0
+                fsn.tz = h.cz
+            }
+            view.requestPaint()
+        }
     }
 
     MouseArea {
@@ -1017,20 +1126,20 @@ Item {
             if (mouse.button === Qt.RightButton) {
                 fsn.doRequested()
             } else if (mouse.modifiers === Qt.NoModifier) {
-                // Plain click: navigate there VR-style, riding the roads.
-                if (!fsn.flyAlongRoads(hit) && fsn.scene) {
-                    fsn.tx = hit.cx
-                    fsn.ty = hit.y0
-                    fsn.tz = hit.cz
-                }
+                // Plain click: navigate there VR-style, riding the roads —
+                // but only once the double-click window has passed.
+                fsn.pendingHit = hit
+                flightDelay.restart()
             }
             view.requestPaint()
         }
         onDoubleClicked: function (mouse) {
             if (didDrag)
                 return
+            flightDelay.stop()
+            var hit = fsn.pendingHit || fsn.pickAt(mouse.x, mouse.y)
+            fsn.pendingHit = null
             fsn.cancelFlight()
-            var hit = fsn.pickAt(mouse.x, mouse.y)
             if (hit)
                 fsn.activatePath(hit.path, hit.isDir)
             else
