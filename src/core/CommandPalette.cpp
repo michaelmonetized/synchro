@@ -113,7 +113,7 @@ const std::initializer_list<HelpSection> kHelp = {
      {{"Ctrl+`", "terminal — open / flip focus"},
       {":term", "top | bottom | left | right | off"},
       {"hover", "focus follows the pointer"},
-      {"grip drag", "re-dock the panel / drop mid to close"},
+      {"grip drag", "re-dock / close; parked pill summons"},
       {"t", "external terminal"},
       {"g", "reveal"}}},
     {"Commands",

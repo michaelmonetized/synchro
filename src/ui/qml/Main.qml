@@ -79,6 +79,22 @@ Window {
             panelDock.panelItem.forceActiveFocus()
     }
 
+    // Shared drop rule for both grip gestures: an edge zone docks (and
+    // opens) the panel there; center/outside closes or cancels.
+    function applyPanelDrop() {
+        var z = panelDropZones.zone
+        root.panelDragging = false
+        if (!root.keys)
+            return
+        if (z === "close") {
+            root.keys.panelId = ""
+        } else if (z.length) {
+            root.keys.panelSide = z
+            root.keys.panelId = "synchro.panel.terminal"
+            Qt.callLater(root.focusPanel)
+        }
+    }
+
     function toggleTerminalPanel() {
         if (!root.keys)
             return
@@ -382,16 +398,7 @@ Window {
                     root.panelDragX = g.x
                     root.panelDragY = g.y
                 }
-                onReleased: {
-                    var z = panelDropZones.zone
-                    root.panelDragging = false
-                    if (!root.keys)
-                        return
-                    if (z === "close")
-                        root.keys.panelId = ""
-                    else if (z.length)
-                        root.keys.panelSide = z
-                }
+                onReleased: root.applyPanelDrop()
                 onCanceled: root.panelDragging = false
             }
         }
@@ -426,6 +433,87 @@ Window {
         sequence: "Ctrl+`"
         enabled: root.keys && !root.keys.chooserMode
         onActivated: root.toggleTerminalPanel()
+    }
+
+    Item {
+        id: panelSummonGrip
+        visible: !root.panelOpen && root.keys && !root.keys.chooserMode &&
+                 root.panelId.length === 0
+        z: 4
+        width: root.panelHorizontal ? 72 : 16
+        height: root.panelHorizontal ? 16 : 72
+        x: root.panelHorizontal
+           ? (root.width - width) / 2
+           : (root.panelRight ? root.width - width - 2 : 2)
+        y: root.panelHorizontal
+           ? (root.panelBottom ? statusLine.y - height - 2
+                               : commandField.y + commandField.height + 2)
+           : (commandField.y + commandField.height + statusLine.y) / 2
+             - height / 2
+
+        Rectangle {
+            anchors.fill: parent
+            radius: height > width ? width / 2 : height / 2
+            color: summonArea.pressed || summonArea.containsMouse
+                   ? Theme.hoverFill : "transparent"
+            border.color: summonArea.pressed || summonArea.containsMouse
+                          ? Theme.accent : Theme.normalBorder
+            border.width: 1
+            opacity: 0.9
+        }
+
+        Grid {
+            anchors.centerIn: parent
+            columns: root.panelHorizontal ? 3 : 1
+            spacing: 3
+            Repeater {
+                model: 3
+                Rectangle {
+                    width: 4
+                    height: 4
+                    radius: 2
+                    color: summonArea.pressed || summonArea.containsMouse
+                           ? Theme.accent : Theme.muted
+                }
+            }
+        }
+
+        MouseArea {
+            id: summonArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.SizeAllCursor
+            preventStealing: true
+            property real pressX: 0
+            property real pressY: 0
+            onPressed: function (mouse) {
+                var g = mapToItem(null, mouse.x, mouse.y)
+                pressX = g.x
+                pressY = g.y
+                root.panelDragX = g.x
+                root.panelDragY = g.y
+            }
+            onPositionChanged: function (mouse) {
+                if (!pressed)
+                    return
+                var g = mapToItem(null, mouse.x, mouse.y)
+                root.panelDragX = g.x
+                root.panelDragY = g.y
+                if (!root.panelDragging &&
+                        Math.hypot(g.x - pressX, g.y - pressY) > 8)
+                    root.panelDragging = true
+            }
+            onReleased: {
+                if (root.panelDragging) {
+                    root.applyPanelDrop()
+                } else if (root.keys) {
+                    // plain click: reopen where it last lived
+                    root.keys.panelId = "synchro.panel.terminal"
+                    Qt.callLater(root.focusPanel)
+                }
+            }
+            onCanceled: root.panelDragging = false
+        }
     }
 
     Item {
@@ -507,8 +595,9 @@ Window {
 
         Text {
             anchors.centerIn: parent
-            text: panelDropZones.zone === "close" ? "release to close"
-                                                  : "drop on an edge to dock"
+            text: panelDropZones.zone === "close"
+                  ? (root.panelOpen ? "release to close" : "release to cancel")
+                  : "drop on an edge to dock"
             color: panelDropZones.zone === "close" ? Theme.urgent : Theme.muted
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontBody
