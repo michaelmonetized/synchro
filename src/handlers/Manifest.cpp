@@ -24,7 +24,8 @@ const QStringList kLegalKinds = {QStringLiteral("preview"),
 const QStringList kCoreAdapters = {QStringLiteral("trash"),
                                    QStringLiteral("recent"),
                                    QStringLiteral("search"),
-                                   QStringLiteral("semantic")};
+                                   QStringLiteral("semantic"),
+                                   QStringLiteral("volumes")};
 
 QStringList jsonStringList(const QJsonValue &v) {
   QStringList out;
@@ -167,7 +168,7 @@ void validateKindRequirements(const Manifest &m, QStringList *errors) {
         if (adapter.isEmpty() || !kCoreAdapters.contains(adapter))
           errors->append(QStringLiteral("location.runtime core requires "
                                         "location.adapter "
-                                        "trash|recent|search|semantic"));
+                                        "trash|recent|search|semantic|volumes"));
       } else if (runtime == QLatin1String("chrome") || runtime.isEmpty()) {
         requireEntry(m, kind, QStringLiteral("location"), errors);
       } else {

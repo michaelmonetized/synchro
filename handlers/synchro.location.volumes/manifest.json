@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.location.volumes",
+  "name": "Volumes",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "User-facing mounts as a listing. Extra disks are root trees; Q at the mount root returns here.",
+  "kinds": ["location"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "row": "Row.qml",
+    "thumb": "Thumb.qml"
+  },
+  "location": { "runtime": "core", "adapter": "volumes" }
+}

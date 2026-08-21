@@ -6,6 +6,8 @@
 #include "KeyMachine.h"
 #include "MimeMap.h"
 #include "NavStack.h"
+#include "SearchModel.h"
+#include "SearchService.h"
 #include "ThumbImageProvider.h"
 #include "XdgOpen.h"
 
@@ -35,6 +37,26 @@ namespace {
 
 bool waitListingDone(DirectoryModel &model, int timeoutMs = 5000) {
   return QTest::qWaitFor([&] { return !model.listing(); }, timeoutMs);
+}
+
+void collectVisual(QQuickItem *root, QVector<QQuickItem *> *out) {
+  if (!root)
+    return;
+  out->append(root);
+  const auto kids = root->childItems();
+  for (QQuickItem *child : kids)
+    collectVisual(child, out);
+}
+
+QVector<QQuickItem *> visualNamed(QQuickItem *root, const QString &name) {
+  QVector<QQuickItem *> all;
+  collectVisual(root, &all);
+  QVector<QQuickItem *> hit;
+  for (QQuickItem *item : all) {
+    if (item->objectName() == name)
+      hit.append(item);
+  }
+  return hit;
 }
 
 int findProxy(const FilterProxy &proxy, const QString &name) {
@@ -90,7 +112,21 @@ private slots:
   void peekEnterCommitsFileAndFolder();
   void doLayerVerbsKeysAndCopyAs();
   void doLayerOverlaySplitChrome();
-  void doLayerShowsFilePreviewAndFolderMosaic();
+  void doLayerShowsFilePreviewAndFolderGrid();
+  void volumesListingChromeUrls();
+  void volumesListingChromeVisible();
+  void pathBarTabsSitAboveCommandField();
+  void fileGridCellsFillWidth();
+  void searchGridCellsMatchRows();
+  void searchGridDropsFolderTiles();
+  void searchGridVirtualizesGroups();
+  void fileGridFollowsProxySort();
+  void findInFilePastDefaultWindow();
+  void textPeekFindCyclesHits();
+  void textPeekFindJumpsPastWindow();
+  void textPeekFindKeepsNewlines();
+  void textPeekFindKeepsSyntaxColors();
+  void contentSearchPeekOpensFind();
 };
 
 void PeekOverlayTest::spaceTogglesImagePeekAndJSteps() {
@@ -1413,7 +1449,7 @@ void PeekOverlayTest::doLayerVerbsKeysAndCopyAs() {
   QVERIFY2(hostApi.doPreviewItem(),
            "markdown should mount a peek preview in the do content box");
   QVERIFY(!hostApi.doTargetIsDir());
-  QVERIFY(hostApi.doMosaicUrl().isEmpty());
+  QVERIFY(hostApi.doFolderProxy() == nullptr);
 
   const int listing = proxy.currentIndex();
   QVERIFY(keys.handleListKey(Qt::Key_S, Qt::NoModifier, QStringLiteral("s")));
@@ -1513,7 +1549,7 @@ void PeekOverlayTest::doLayerOverlaySplitChrome() {
       [&] { return hostApi.doPreviewItem()->parentItem() == content; }, 2000));
 }
 
-void PeekOverlayTest::doLayerShowsFilePreviewAndFolderMosaic() {
+void PeekOverlayTest::doLayerShowsFilePreviewAndFolderGrid() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   QVERIFY(QDir(tmp.path()).mkpath(QStringLiteral("album")));
@@ -1554,17 +1590,929 @@ void PeekOverlayTest::doLayerShowsFilePreviewAndFolderMosaic() {
   QVERIFY2(hostApi.openDoLayer(), qPrintable(hostApi.lastError()));
   QVERIFY(hostApi.doPreviewItem());
   QVERIFY(!hostApi.doTargetIsDir());
-  QVERIFY(hostApi.doMosaicUrl().isEmpty());
+  QVERIFY(hostApi.doFolderProxy() == nullptr);
   hostApi.closeAction();
 
   proxy.setCurrentIndex(findProxy(proxy, QStringLiteral("album")));
+  bool sawFolderProxy = false;
+  QObject::connect(&hostApi, &HostApi::doPreviewChanged, &hostApi, [&] {
+    if (hostApi.doFolderProxy())
+      sawFolderProxy = true;
+  });
   QVERIFY2(hostApi.openDoLayer(), qPrintable(hostApi.lastError()));
+  QVERIFY2(sawFolderProxy,
+           "doFolderProxy must be visible on doPreviewChanged so QML is not stuck");
   QVERIFY(hostApi.doTargetIsDir());
   QVERIFY(hostApi.doPreviewItem() == nullptr);
-  QVERIFY2(!hostApi.doMosaicUrl().isEmpty(),
-           "folder do-layer should paint a large mosaic, not a peek listing");
-  QVERIFY(hostApi.doMosaicUrl().startsWith(QStringLiteral("image://synchrothumb/")));
+  auto *folder = qobject_cast<FilterProxy *>(hostApi.doFolderProxy());
+  QVERIFY2(folder, "folder do-layer should list the folder, not a mosaic");
+  QVERIFY(QTest::qWaitFor([&] { return folder->rowCount() >= 2; }, 2000));
+  QVERIFY(findProxy(*folder, QStringLiteral("one.png")) >= 0);
+  QVERIFY(findProxy(*folder, QStringLiteral("two.png")) >= 0);
   QCOMPARE(hostApi.doTargetName(), QStringLiteral("album"));
+}
+
+void PeekOverlayTest::volumesListingChromeUrls() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user-handlers")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+  HandlerLoader loader;
+  XdgOpen xdg;
+  MimeMap mimeMap;
+  QQmlEngine engine;
+  HostApi hostApi(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+                  &engine);
+  QVERIFY(hostApi.listingRowUrl().isEmpty());
+  model.setPath(QStringLiteral("volumes://"));
+  QVERIFY(hostApi.listingRowUrl().isValid());
+  QVERIFY(hostApi.listingRowUrl().toLocalFile().endsWith(
+      QStringLiteral("Row.qml")));
+  QVERIFY(hostApi.listingThumbUrl().toLocalFile().endsWith(
+      QStringLiteral("Thumb.qml")));
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QVERIFY(hostApi.listingRowUrl().isEmpty());
+}
+
+void PeekOverlayTest::volumesListingChromeVisible() {
+  QCOMPARE(int(SearchModel::PercentRole), int(DirectoryModel::PercentRole));
+  QCOMPARE(int(SearchModel::DetailRole), int(DirectoryModel::DetailRole));
+
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  MimeMap mimeMap;
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user-handlers")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+  HandlerLoader loader;
+  XdgOpen xdg;
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  ThumbImageProvider::install(&engine);
+  HostApi hostApi(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+                  &engine);
+  keys.setPeekHost(&hostApi);
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), &hostApi);
+
+  QString errors;
+  QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
+                   &engine,
+                   [&]() { errors = QStringLiteral("create failed"); });
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY2(!engine.rootObjects().isEmpty(),
+           qPrintable(errors.isEmpty() ? QStringLiteral("Main.qml produced no "
+                                                        "root object")
+                                       : errors));
+
+  auto *window =
+      qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+  QVERIFY(window);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  model.setPath(QStringLiteral("volumes://"));
+  QVERIFY(hostApi.listingRowUrl().isValid());
+  QVERIFY(model.rowCount() > 0);
+
+  auto *list = window->findChild<QQuickItem *>(QStringLiteral("fileList"));
+  QVERIFY(list);
+  QVERIFY2(QTest::qWaitFor(
+               [&] {
+                 const auto chromes =
+                     visualNamed(list, QStringLiteral("listingRowChrome"));
+                 for (QQuickItem *chrome : chromes) {
+                   if (chrome->isVisible() &&
+                       chrome->property("percent").toInt() >= 0 &&
+                       chrome->property("detail")
+                           .toString()
+                           .contains(QStringLiteral("free")))
+                     return true;
+                 }
+                 return false;
+               },
+               2000),
+           "volumes:// rows must bind percent/detail so the bar paints");
+}
+
+void PeekOverlayTest::pathBarTabsSitAboveCommandField() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
+
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY(!engine.rootObjects().isEmpty());
+  auto *window =
+      qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+  QVERIFY(window);
+  window->resize(480, 360);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  auto *bar = window->findChild<QQuickItem *>(QStringLiteral("pathBar"));
+  auto *crumbs = window->findChild<QQuickItem *>(QStringLiteral("pathCrumbs"));
+  auto *tabs = window->findChild<QQuickItem *>(QStringLiteral("locationTabs"));
+  auto *field = window->findChild<QQuickItem *>(QStringLiteral("commandField"));
+  QVERIFY(bar);
+  QVERIFY(crumbs);
+  QVERIFY(tabs);
+  QVERIFY(field);
+  QVERIFY(crumbs->y() + crumbs->height() <= tabs->y() + 1);
+  QVERIFY(bar->y() + bar->height() <= field->y() + 1);
+  QVERIFY(tabs->y() + tabs->height() <= field->y() + 1);
+  QVERIFY(crumbs->width() > window->width() * 0.6);
+}
+
+void PeekOverlayTest::fileGridCellsFillWidth() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
+
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY(!engine.rootObjects().isEmpty());
+  auto *window =
+      qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+  QVERIFY(window);
+  window->resize(733, 500);
+  keys.setGridMode(true);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  auto *grid = window->findChild<QQuickItem *>(QStringLiteral("fileGrid"));
+  QVERIFY(grid);
+  QVERIFY(QTest::qWaitFor([&] { return grid->isVisible() && grid->width() > 0; },
+                          1000));
+  const int cols = grid->property("columns").toInt();
+  const qreal cell = grid->property("cellWidth").toReal();
+  QVERIFY(cols >= 1);
+  QVERIFY(cell > 0);
+  QCOMPARE(qRound(cell * cols), qRound(grid->width()));
+
+  window->resize(501, 500);
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return qAbs(grid->property("cellWidth").toReal() *
+                        grid->property("columns").toInt() -
+                    grid->width()) < 1.0;
+      },
+      1000));
+}
+
+void PeekOverlayTest::searchGridCellsMatchRows() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("b")));
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("a")));
+  QVERIFY(writePng(tmp.filePath(QStringLiteral("root.png"))));
+  QVERIFY(writePng(tmp.filePath(QStringLiteral("a/alpha.png"))));
+  QVERIFY(writePng(tmp.filePath(QStringLiteral("a/beta.png"))));
+  QVERIFY(writePng(tmp.filePath(QStringLiteral("b/zeta.png"))));
+
+  DirectoryModel model;
+  SearchModel search;
+  model.setSearchModel(&search);
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  keys.setSearchModel(&search);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
+
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY(!engine.rootObjects().isEmpty());
+  auto *window =
+      qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+  QVERIFY(window);
+  window->resize(800, 600);
+  keys.setGridMode(true);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  auto *grid = window->findChild<QQuickItem *>(QStringLiteral("fileGrid"));
+  QVERIFY(grid);
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return window->findChild<QQuickItem *>(QStringLiteral("fileGridTiles")) &&
+               visualNamed(grid, QStringLiteral("gridCell")).size() >= 3;
+      },
+      2000));
+
+  // Stream hits into an already-visible grouped grid (creation-order
+  // tiles used to stay stale while selection walked sorted indexes).
+  model.setPath(QStringLiteral("search://"));
+  search.start(QStringLiteral("png"), tmp.path(), false);
+
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        auto *groups = window->findChild<QQuickItem *>(
+            QStringLiteral("searchGridGroups"));
+        return !search.listing() && groups && groups->isVisible() &&
+               !window->findChild<QQuickItem *>(
+                   QStringLiteral("fileGridTiles")) &&
+               visualNamed(grid, QStringLiteral("gridCell")).size() == 4;
+      },
+      5000));
+  auto *groups =
+      window->findChild<QQuickItem *>(QStringLiteral("searchGridGroups"));
+  QVERIFY(groups);
+  QCOMPARE(model.count(), 4);
+
+  const auto cells = visualNamed(grid, QStringLiteral("gridCell"));
+  QCOMPARE(cells.size(), 4);
+  QVector<int> seen;
+  for (QQuickItem *cell : cells) {
+    const int row = cell->property("rowIndex").toInt();
+    QVERIFY(row >= 0 && row < model.count());
+    QVERIFY(!seen.contains(row));
+    seen.append(row);
+    QCOMPARE(cell->property("name").toString(),
+             model.data(model.index(row, 0), DirectoryModel::NameRole)
+                 .toString());
+    QCOMPARE(cell->property("path").toString(),
+             model.data(model.index(row, 0), DirectoryModel::PathRole)
+                 .toString());
+  }
+  std::sort(seen.begin(), seen.end());
+  QCOMPARE(seen, (QVector<int>{0, 1, 2, 3}));
+
+  const QString thumb =
+      QStringLiteral("image://synchrothumb/search-grid-test");
+  const QString path0 =
+      model.data(model.index(0, 0), DirectoryModel::PathRole).toString();
+  search.setThumbnail(path0, thumb);
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        for (QQuickItem *cell : visualNamed(grid, QStringLiteral("gridCell"))) {
+          if (cell->property("rowIndex").toInt() == 0)
+            return cell->property("thumbnail").toString() == thumb;
+        }
+        return false;
+      },
+      1000));
+
+  model.setCurrentIndex(2);
+  QCOMPARE(model.currentName(),
+           model.data(model.index(2, 0), DirectoryModel::NameRole).toString());
+}
+
+void PeekOverlayTest::searchGridDropsFolderTiles() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writePng(tmp.filePath(QStringLiteral("keep-me.png"))));
+  QVERIFY(writePng(tmp.filePath(QStringLiteral("unrelated-folder-tile.png"))));
+
+  DirectoryModel model;
+  SearchModel search;
+  model.setSearchModel(&search);
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  keys.setSearchModel(&search);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
+
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY(!engine.rootObjects().isEmpty());
+  auto *window =
+      qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+  QVERIFY(window);
+  window->resize(800, 600);
+  keys.setGridMode(true);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  auto *grid = window->findChild<QQuickItem *>(QStringLiteral("fileGrid"));
+  QVERIFY(grid);
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return window->findChild<QQuickItem *>(
+                   QStringLiteral("fileGridTiles")) &&
+               visualNamed(grid, QStringLiteral("gridCell")).size() == 2;
+      },
+      2000));
+
+  model.setPath(QStringLiteral("search://"));
+  search.start(QStringLiteral("keep-me"), tmp.path(), false);
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        const auto cells = visualNamed(grid, QStringLiteral("gridCell"));
+        return !search.listing() && model.count() == 1 &&
+               !window->findChild<QQuickItem *>(
+                   QStringLiteral("fileGridTiles")) &&
+               window->findChild<QQuickItem *>(
+                   QStringLiteral("searchGridGroups")) &&
+               cells.size() == 1 &&
+               cells.constFirst()->property("name").toString() ==
+                   QStringLiteral("keep-me.png");
+      },
+      5000));
+
+  const auto cells = visualNamed(grid, QStringLiteral("gridCell"));
+  QCOMPARE(cells.size(), 1);
+  QCOMPARE(cells.constFirst()->property("name").toString(),
+           QStringLiteral("keep-me.png"));
+  for (QQuickItem *cell : cells) {
+    QVERIFY(cell->property("name").toString() !=
+            QStringLiteral("unrelated-folder-tile.png"));
+  }
+}
+
+void PeekOverlayTest::searchGridVirtualizesGroups() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString listing = tmp.filePath(QStringLiteral("cwd"));
+  QVERIFY(QDir().mkpath(listing));
+  for (int i = 0; i < 48; ++i) {
+    const QString dir =
+        tmp.filePath(QStringLiteral("hits/g%1").arg(i, 2, 10, QChar('0')));
+    QVERIFY(QDir().mkpath(dir));
+    QFile f(dir + QStringLiteral("/synchrohit.txt"));
+    QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QVERIFY(f.write("x") == 1);
+  }
+
+  DirectoryModel model;
+  SearchModel search;
+  model.setSearchModel(&search);
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  keys.setSearchModel(&search);
+  model.setPath(listing);
+  QVERIFY(waitListingDone(model));
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
+
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY(!engine.rootObjects().isEmpty());
+  auto *window =
+      qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+  QVERIFY(window);
+  window->resize(800, 520);
+  keys.setGridMode(true);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  auto *grid = window->findChild<QQuickItem *>(QStringLiteral("fileGrid"));
+  QVERIFY(grid);
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return window->findChild<QQuickItem *>(QStringLiteral("fileGridTiles"));
+      },
+      2000));
+
+  model.setPath(QStringLiteral("search://"));
+  search.start(QStringLiteral("synchrohit"), tmp.path(), false);
+  QVERIFY2(QTest::qWaitFor(
+               [&] { return !search.listing() && model.count() == 48; }, 8000),
+           qPrintable(QStringLiteral("listing=%1 count=%2")
+                          .arg(search.listing())
+                          .arg(model.count())));
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return window->findChild<QQuickItem *>(
+                   QStringLiteral("searchGridGroups")) &&
+               !window->findChild<QQuickItem *>(
+                   QStringLiteral("fileGridTiles"));
+      },
+      2000));
+
+  auto *groups =
+      window->findChild<QQuickItem *>(QStringLiteral("searchGridGroups"));
+  QVERIFY(groups);
+  auto *content = groups->property("contentItem").value<QQuickItem *>();
+  QVERIFY(content);
+  int delegates = 0;
+  for (QQuickItem *child : content->childItems()) {
+    if (child && child->width() > 0 && child->height() > 0)
+      ++delegates;
+  }
+  QVERIFY2(delegates > 0 && delegates < 30,
+           qPrintable(QStringLiteral("search instantiated %1 group delegates "
+                                     "(expected viewport-sized)")
+                          .arg(delegates)));
+  QVERIFY(visualNamed(grid, QStringLiteral("gridCell")).size() < 30);
+}
+
+void PeekOverlayTest::fileGridFollowsProxySort() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writePng(tmp.filePath(QStringLiteral("z.png"))));
+  QVERIFY(writePng(tmp.filePath(QStringLiteral("a.png"))));
+
+  DirectoryModel model;
+  SearchModel search;
+  model.setSearchModel(&search);
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  proxy.setSortRoleName(QStringLiteral("name"));
+  proxy.setSortOrder(QStringLiteral("asc"));
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  keys.setSearchModel(&search);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(proxy.data(proxy.index(0, 0), DirectoryModel::NameRole).toString(),
+           QStringLiteral("a.png"));
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"),
+                                           &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
+
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY(!engine.rootObjects().isEmpty());
+  auto *window =
+      qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+  QVERIFY(window);
+  window->resize(800, 600);
+  keys.setGridMode(true);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  auto *grid = window->findChild<QQuickItem *>(QStringLiteral("fileGrid"));
+  QVERIFY(grid);
+  QVERIFY(QTest::qWaitFor(
+      [&] { return visualNamed(grid, QStringLiteral("gridCell")).size() == 2; },
+      2000));
+
+  QString name0;
+  for (QQuickItem *cell : visualNamed(grid, QStringLiteral("gridCell"))) {
+    if (cell->property("rowIndex").toInt() == 0)
+      name0 = cell->property("name").toString();
+  }
+  QCOMPARE(name0, QStringLiteral("a.png"));
+
+  proxy.selectRow(0);
+  QCOMPARE(proxy.currentName(), QStringLiteral("a.png"));
+  QCOMPARE(model.currentName(), QStringLiteral("a.png"));
+}
+
+void PeekOverlayTest::findInFilePastDefaultWindow() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString path = tmp.filePath(QStringLiteral("big.txt"));
+  {
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QVERIFY(f.write("head token\n") > 0);
+    QByteArray pad(70 * 1024, 'x');
+    QVERIFY(f.write(pad) == pad.size());
+    QVERIFY(f.write("\nFINDME_TOKEN in the tail\n") > 0);
+  }
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  HandlerLoader loader;
+  XdgOpen xdg;
+  MimeMap mimeMap;
+  QQmlApplicationEngine engine;
+  HostApi host(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+               &engine);
+
+  const QUrl url = QUrl::fromLocalFile(path);
+  const QVariantList hits = host.findInFile(url, QStringLiteral("FINDME_TOKEN"));
+  QCOMPARE(hits.size(), 1);
+  const QVariantMap hit = hits.at(0).toMap();
+  QVERIFY(hit.value(QStringLiteral("offset")).toLongLong() > 65536);
+  QCOMPARE(hit.value(QStringLiteral("line")).toInt(), 3);
+
+  const QVariantMap head = host.readPreview(url, 65536, 0);
+  QVERIFY(head.value(QStringLiteral("ok")).toBool());
+  QVERIFY(!head.value(QStringLiteral("text")).toString().contains(
+      QStringLiteral("FINDME_TOKEN")));
+
+  const QVariantMap mid = host.readPreview(
+      url, 65536, hit.value(QStringLiteral("offset")).toLongLong() - 64);
+  QVERIFY(mid.value(QStringLiteral("ok")).toBool());
+  QVERIFY(mid.value(QStringLiteral("text")).toString().contains(
+      QStringLiteral("FINDME_TOKEN")));
+  QVERIFY(mid.value(QStringLiteral("startByte")).toLongLong() > 0);
+
+  const QVariantList both = host.findInFile(url, QStringLiteral("token"));
+  QCOMPARE(both.size(), 2);
+}
+
+void PeekOverlayTest::textPeekFindCyclesHits() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  {
+    QFile f(tmp.filePath(QStringLiteral("notes.txt")));
+    QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QVERIFY(f.write("alpha zzhit\nbeta\nzzhit again\nnope\n") > 0);
+  }
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  MimeMap mimeMap;
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user-handlers")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+
+  HandlerLoader loader;
+  XdgOpen xdg;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const int row = findProxy(proxy, QStringLiteral("notes.txt"));
+  QVERIFY(row >= 0);
+  proxy.setCurrentIndex(row);
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  ThumbImageProvider::install(&engine);
+  HostApi hostApi(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+                  &engine);
+  keys.setPeekHost(&hostApi);
+
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(hostApi.isOpen());
+  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
+                          3000));
+  QVERIFY(keys.handleListKey(Qt::Key_D, Qt::NoModifier, QStringLiteral("d")));
+  QVERIFY(hostApi.peekPreviewFocused());
+
+  auto *preview = qobject_cast<QQuickItem *>(hostApi.previewItem());
+  QVERIFY(preview);
+  QVERIFY(QMetaObject::invokeMethod(preview, "openFind"));
+  QVERIFY(QTest::qWaitFor(
+      [&] { return preview->property("findOpen").toBool(); }, 1000));
+  preview->setProperty("findQuery", QStringLiteral("zzhit"));
+  QVERIFY(QMetaObject::invokeMethod(preview, "runFind"));
+  QVERIFY(QTest::qWaitFor(
+      [&] { return preview->property("findCount").toInt() >= 2; }, 1000));
+  QCOMPARE(preview->property("findCount").toInt(), 2);
+  QCOMPARE(preview->property("findIndex").toInt(), 0);
+
+  QVariant consumed;
+  QVERIFY(QMetaObject::invokeMethod(
+      preview, "peekKey", Qt::DirectConnection, Q_RETURN_ARG(QVariant, consumed),
+      Q_ARG(QVariant, int(Qt::Key_N)), Q_ARG(QVariant, int(Qt::NoModifier))));
+  QVERIFY(consumed.toBool());
+  QCOMPARE(preview->property("findIndex").toInt(), 1);
+
+  QVERIFY(QMetaObject::invokeMethod(
+      preview, "peekKey", Qt::DirectConnection, Q_RETURN_ARG(QVariant, consumed),
+      Q_ARG(QVariant, int(Qt::Key_N)),
+      Q_ARG(QVariant, int(Qt::ShiftModifier))));
+  QVERIFY(consumed.toBool());
+  QCOMPARE(preview->property("findIndex").toInt(), 0);
+
+  QVERIFY(keys.handleListKey(Qt::Key_N, Qt::NoModifier, QStringLiteral("n")));
+  QCOMPARE(preview->property("findIndex").toInt(), 1);
+
+  QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
+  QVERIFY(hostApi.isOpen());
+  QVERIFY(!preview->property("findOpen").toBool());
+  QCOMPARE(preview->property("findCount").toInt(), 0);
+}
+
+void PeekOverlayTest::textPeekFindJumpsPastWindow() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  {
+    QFile f(tmp.filePath(QStringLiteral("log.txt")));
+    QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QVERIFY(f.write("start\n") > 0);
+    QVERIFY(f.write(QByteArray(70 * 1024, 'x')) == 70 * 1024);
+    QVERIFY(f.write("\nTAIL_UNIQUE_HIT here\n") > 0);
+  }
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  MimeMap mimeMap;
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user-handlers")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+  HandlerLoader loader;
+  XdgOpen xdg;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  proxy.setCurrentIndex(findProxy(proxy, QStringLiteral("log.txt")));
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  ThumbImageProvider::install(&engine);
+  HostApi hostApi(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+                  &engine);
+  keys.setPeekHost(&hostApi);
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
+                          3000));
+  auto *preview = qobject_cast<QQuickItem *>(hostApi.previewItem());
+  QVERIFY(preview);
+  const QVariantMap head = preview->property("preview").toMap();
+  QVERIFY(!head.value(QStringLiteral("text")).toString().contains(
+      QStringLiteral("TAIL_UNIQUE_HIT")));
+
+  preview->setProperty("findQuery", QStringLiteral("TAIL_UNIQUE_HIT"));
+  QVERIFY(QMetaObject::invokeMethod(preview, "runFind"));
+  QVERIFY(QTest::qWaitFor(
+      [&] { return preview->property("findCount").toInt() == 1; }, 1000));
+  QCOMPARE(preview->property("findIndex").toInt(), 0);
+  QVERIFY(preview->property("viewStart").toInt() > 0);
+  const QVariantMap mid = preview->property("preview").toMap();
+  QVERIFY(mid.value(QStringLiteral("text")).toString().contains(
+      QStringLiteral("TAIL_UNIQUE_HIT")));
+}
+
+void PeekOverlayTest::textPeekFindKeepsNewlines() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  {
+    QFile f(tmp.filePath(QStringLiteral("lines.txt")));
+    QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QVERIFY(f.write("one\ntwo HIT\nthree\n") > 0);
+  }
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  MimeMap mimeMap;
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user-handlers")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+  HandlerLoader loader;
+  XdgOpen xdg;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  proxy.setCurrentIndex(findProxy(proxy, QStringLiteral("lines.txt")));
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  ThumbImageProvider::install(&engine);
+  HostApi hostApi(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+                  &engine);
+  keys.setPeekHost(&hostApi);
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
+                          3000));
+  auto *preview = qobject_cast<QQuickItem *>(hostApi.previewItem());
+  QVERIFY(preview);
+  QVERIFY(QMetaObject::invokeMethod(preview, "openFind"));
+  preview->setProperty("findQuery", QStringLiteral("HIT"));
+  QVERIFY(QMetaObject::invokeMethod(preview, "runFind"));
+  QVERIFY(QTest::qWaitFor(
+      [&] { return preview->property("findCount").toInt() == 1; }, 1000));
+  auto *body = preview->findChild<QQuickItem *>(QStringLiteral("textPeekBody"));
+  QVERIFY(body);
+  QVERIFY(QTest::qWaitFor(
+      [&] { return body->implicitHeight() > 48; }, 1000));
+  QVERIFY2(body->implicitHeight() > 48,
+           qPrintable(QString::number(body->implicitHeight())));
+}
+
+void PeekOverlayTest::textPeekFindKeepsSyntaxColors() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  {
+    QFile f(tmp.filePath(QStringLiteral("sample.py")));
+    QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QVERIFY(f.write("def foo():\n    return \"synchro_hl_token\"\n") > 0);
+  }
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  MimeMap mimeMap;
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user-handlers")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+  HandlerLoader loader;
+  XdgOpen xdg;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  proxy.setCurrentIndex(findProxy(proxy, QStringLiteral("sample.py")));
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  ThumbImageProvider::install(&engine);
+  HostApi hostApi(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+                  &engine);
+  keys.setPeekHost(&hostApi);
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
+                          3000));
+  auto *preview = qobject_cast<QQuickItem *>(hostApi.previewItem());
+  QVERIFY(preview);
+  const QVariantMap head = preview->property("preview").toMap();
+  if (!head.value(QStringLiteral("highlighted")).toBool())
+    QSKIP("preview has no syntax HTML");
+
+  QVERIFY(QMetaObject::invokeMethod(preview, "openFind"));
+  preview->setProperty("findQuery", QStringLiteral("synchro_hl_token"));
+  QVERIFY(QMetaObject::invokeMethod(preview, "runFind"));
+  QVERIFY(QTest::qWaitFor(
+      [&] { return preview->property("findCount").toInt() == 1; }, 1000));
+  auto *body = preview->findChild<QQuickItem *>(QStringLiteral("textPeekBody"));
+  QVERIFY(body);
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        const QString t = body->property("text").toString();
+        return t.contains(QStringLiteral("background-color:")) &&
+               t.contains(QStringLiteral("color:"));
+      },
+      1000));
+  const QString html = body->property("text").toString();
+  QVERIFY2(html.contains(QStringLiteral("color:")), qPrintable(html.left(240)));
+  QVERIFY2(html.contains(QStringLiteral("background-color:")),
+           qPrintable(html.left(240)));
+}
+
+void PeekOverlayTest::contentSearchPeekOpensFind() {
+  if (SearchService::executable(SearchService::Kind::Content).isEmpty())
+    QSKIP("rg is not available");
+
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  {
+    QFile f(tmp.filePath(QStringLiteral("notes.txt")));
+    QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QVERIFY(f.write("alpha\nsynchro_deeplink_token here\nbeta\n") > 0);
+  }
+
+  DirectoryModel model;
+  SearchModel search;
+  model.setSearchModel(&search);
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  keys.setSearchModel(&search);
+  MimeMap mimeMap;
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user-handlers")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+  HandlerLoader loader;
+  XdgOpen xdg;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+
+  search.start(QStringLiteral("synchro_deeplink_token"), tmp.path(), false,
+               true);
+  QVERIFY(QTest::qWaitFor(
+      [&] { return !search.listing() && search.count() == 1; }, 5000));
+  model.setPath(QStringLiteral("search://"));
+  QCOMPARE(model.isContentSearch(), true);
+  proxy.setCurrentIndex(0);
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  ThumbImageProvider::install(&engine);
+  HostApi hostApi(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+                  &engine);
+  keys.setPeekHost(&hostApi);
+  QCOMPARE(hostApi.peekFindQuery(), QStringLiteral("synchro_deeplink_token"));
+
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
+                          3000));
+  auto *preview = qobject_cast<QQuickItem *>(hostApi.previewItem());
+  QVERIFY(preview);
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return preview->property("findOpen").toBool() &&
+               preview->property("findQuery").toString() ==
+                   QStringLiteral("synchro_deeplink_token") &&
+               preview->property("findCount").toInt() >= 1;
+      },
+      3000));
+  QCOMPARE(preview->property("findIndex").toInt(), 0);
 }
 
 int main(int argc, char **argv) {

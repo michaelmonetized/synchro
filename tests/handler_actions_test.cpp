@@ -3,6 +3,7 @@
 #include "HandlerExec.h"
 #include "HandlerRegistry.h"
 #include "Manifest.h"
+#include "VolumeStore.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -49,6 +50,8 @@ private slots:
   void trashRefusesHome();
   void runActionById();
   void actionMatchesIncludesCopyAs();
+  void ejectRefusesSystemAndRunsHook();
+  void ejectOnlyMatchesRemovableVolume();
 };
 
 void HandlerActionsTest::terminalExecShape() {
@@ -257,6 +260,87 @@ void HandlerActionsTest::actionMatchesIncludesCopyAs() {
   QVERIFY(ids.contains(QStringLiteral("synchro.action.copy-as")));
   QVERIFY(ids.contains(QStringLiteral("synchro.action.open-with")));
   QVERIFY(ids.contains(QStringLiteral("synchro.action.trash")));
+  QVERIFY(!ids.contains(QStringLiteral("synchro.action.eject")));
+}
+
+void HandlerActionsTest::ejectRefusesSystemAndRunsHook() {
+  VolumeStore::Volume sys;
+  sys.label = QStringLiteral("system");
+  sys.mountPoint = QStringLiteral("/");
+  sys.extra = false;
+  VolumeStore::Volume usb;
+  usb.label = QStringLiteral("stick");
+  usb.mountPoint = QStringLiteral("/run/media/ryan/stick");
+  usb.extra = true;
+  usb.removable = true;
+  VolumeStore::instance().setInventoryForTest({sys, usb});
+
+  HandlerRegistry reg;
+  HandlerExec exec;
+  HandlerActions actions(&reg, &exec);
+  QVERIFY(!actions.runEject({item(QStringLiteral("/"),
+                                  QStringLiteral("inode/directory"), true)},
+                            QStringLiteral("/")));
+  QVERIFY(actions.lastError().contains(QStringLiteral("system")));
+
+  bool saw = false;
+  VolumeStore::instance().setEjectHook([&](const VolumeStore::Volume &v,
+                                           QString *) {
+    saw = v.mountPoint == usb.mountPoint;
+    return true;
+  });
+  QVERIFY(actions.runEject(
+      {item(usb.mountPoint, QStringLiteral("inode/directory"), true)},
+      usb.mountPoint));
+  QVERIFY(saw);
+  VolumeStore::instance().setEjectHook({});
+  VolumeStore::instance().setInventoryForTest({});
+}
+
+void HandlerActionsTest::ejectOnlyMatchesRemovableVolume() {
+  VolumeStore::Volume sys;
+  sys.label = QStringLiteral("/");
+  sys.mountPoint = QStringLiteral("/");
+  VolumeStore::Volume usb;
+  usb.label = QStringLiteral("stick");
+  usb.mountPoint = QStringLiteral("/run/media/ryan/stick");
+  usb.extra = true;
+  usb.removable = true;
+  VolumeStore::instance().setInventoryForTest({sys, usb});
+
+  HandlerRegistry reg;
+  reg.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  reg.setUserDir(tmp.filePath(QStringLiteral("none")));
+  reg.setConfigPath(tmp.filePath(QStringLiteral("none.json")));
+  reg.setScanEnv(false);
+  reg.scan();
+  HandlerExec exec;
+  HandlerActions actions(&reg, &exec);
+
+  const QString file = tmp.filePath(QStringLiteral("notes.md"));
+  QVERIFY(writeText(file, QByteArrayLiteral("hi\n")));
+  QVERIFY(!HandlerActions::canEject(
+      {item(file, QStringLiteral("text/markdown"))}));
+  QVERIFY(!HandlerActions::canEject(
+      {item(QStringLiteral("/"), QStringLiteral("inode/directory"), true)}));
+  QVERIFY(HandlerActions::canEject(
+      {item(usb.mountPoint, QStringLiteral("inode/directory"), true)}));
+
+  QStringList onFile;
+  for (const auto &m : actions.actionMatches(
+           {item(file, QStringLiteral("text/markdown"))}))
+    onFile.append(m.id);
+  QVERIFY(!onFile.contains(QStringLiteral("synchro.action.eject")));
+
+  QStringList onUsb;
+  for (const auto &m : actions.actionMatches(
+           {item(usb.mountPoint, QStringLiteral("inode/directory"), true)}))
+    onUsb.append(m.id);
+  QVERIFY(onUsb.contains(QStringLiteral("synchro.action.eject")));
+
+  VolumeStore::instance().setInventoryForTest({});
 }
 
 int main(int argc, char **argv) {

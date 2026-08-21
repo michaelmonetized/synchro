@@ -15,11 +15,14 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QQuickItem>
+#include <QQuickWindow>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QUrl>
+#include <QVector>
 #include <QtQml/QQmlExtensionPlugin>
 
 Q_IMPORT_QML_PLUGIN(Synchro_ThemePlugin)
@@ -128,6 +131,25 @@ bool waitFinished(QDBusPendingCall &call, int timeoutMs = 5000) {
   return QTest::qWaitFor([&] { return call.isFinished(); }, timeoutMs);
 }
 
+void collectVisual(QQuickItem *root, QVector<QQuickItem *> *out) {
+  if (!root)
+    return;
+  out->append(root);
+  const auto kids = root->childItems();
+  for (QQuickItem *child : kids)
+    collectVisual(child, out);
+}
+
+QQuickItem *visualNamed(QQuickItem *root, const QString &name) {
+  QVector<QQuickItem *> all;
+  collectVisual(root, &all);
+  for (QQuickItem *item : all) {
+    if (item->objectName() == name)
+      return item;
+  }
+  return nullptr;
+}
+
 } // namespace
 
 class PortalDbusTest : public QObject {
@@ -148,6 +170,9 @@ private slots:
   void saveEnterOnFolderSavesInsideIt();
   void bracketsCyclePortalFilters();
   void saveInvalidNameSetsStatus();
+  void chooserPeekShowsIndexAndQCloses();
+  void chooserPathBarTabsAboveField();
+  void saveAsTitleStillFloats();
 };
 
 void PortalDbusTest::portalFilterGlobKeepsDirs() {
@@ -812,6 +837,119 @@ void PortalDbusTest::saveInvalidNameSetsStatus() {
   session->cancel();
   QVERIFY(waitFinished(pending));
   closeBusPair(bus);
+}
+
+void PortalDbusTest::chooserPeekShowsIndexAndQCloses() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("shot.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("note.md"))));
+
+  PortalService portal;
+  QVariantMap options;
+  options.insert(QStringLiteral("current_folder"), folderBytes(tmp.path()));
+  ChooserSession *session = portal.openStandalone(
+      ChooserSession::Kind::OpenFile, QStringLiteral("Open File"), options);
+  QVERIFY(session);
+  QVERIFY(waitListingDone(*session->directoryModel()));
+  const int row =
+      findProxy(*session->filterProxy(), QStringLiteral("shot.txt"));
+  QVERIFY(row >= 0);
+  session->selectionModel()->setCursor(row);
+
+  auto *host = qobject_cast<HostApi *>(session->hostApi());
+  QVERIFY(host);
+  QVERIFY(host->openCurrent());
+  QVERIFY(host->isOpen());
+  QVERIFY(session->keyMachine()->peekOpen());
+  QVERIFY(session->keyMachine()->handleListKey(Qt::Key_Q, Qt::NoModifier,
+                                               QStringLiteral("q")));
+  QVERIFY(!host->isOpen());
+  QVERIFY(!session->keyMachine()->peekOpen());
+
+  QVERIFY(host->openCurrent());
+  QVERIFY(session->keyMachine()->handleFieldKey(Qt::Key_Q, Qt::NoModifier));
+  QVERIFY2(!host->isOpen(), "Q must leave peek even if the field has Qt focus");
+
+  QVERIFY(host->openCurrent());
+  auto *window = session->findChild<QQuickWindow *>();
+  QVERIFY(window);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+  QVERIFY2(QTest::qWaitFor(
+               [&] {
+                 auto *idx = visualNamed(window->contentItem(),
+                                         QStringLiteral("peekFileIndex"));
+                 return idx && idx->isVisible() && idx->width() > 8;
+               },
+               2000),
+           "chooser file peek must show the index rail");
+  QVERIFY(session->keyMachine()->handleListKey(Qt::Key_Q, Qt::NoModifier,
+                                               QStringLiteral("q")));
+  QVERIFY(!host->isOpen());
+  session->cancel();
+}
+
+void PortalDbusTest::chooserPathBarTabsAboveField() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("shot.txt"))));
+
+  PortalService portal;
+  QVariantMap options;
+  options.insert(QStringLiteral("current_folder"), folderBytes(tmp.path()));
+  ChooserSession *session = portal.openStandalone(
+      ChooserSession::Kind::OpenFile, QStringLiteral("Open File"), options);
+  QVERIFY(session);
+  auto *window = session->findChild<QQuickWindow *>();
+  QVERIFY(window);
+  window->resize(480, 360);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  auto *bar = window->findChild<QQuickItem *>(QStringLiteral("pathBar"));
+  auto *crumbs = window->findChild<QQuickItem *>(QStringLiteral("pathCrumbs"));
+  auto *tabs = window->findChild<QQuickItem *>(QStringLiteral("locationTabs"));
+  auto *disks = window->findChild<QQuickItem *>(QStringLiteral("diskTabs"));
+  auto *field =
+      window->findChild<QQuickItem *>(QStringLiteral("chooserCommandField"));
+  QVERIFY(bar);
+  QVERIFY(crumbs);
+  QVERIFY(tabs);
+  QVERIFY(field);
+  QVERIFY(crumbs->y() + crumbs->height() <= tabs->y() + 1);
+  QVERIFY(bar->y() + bar->height() <= field->y() + 1);
+  QVERIFY(tabs->y() + tabs->height() <= field->y() + 1);
+  QVERIFY2(disks && disks->isVisible() && disks->width() > 8,
+           "disk strip must paint (volumes + mounts), not collapse to width 0");
+  QVERIFY(disks->y() + disks->height() <= tabs->y() + 1);
+  QVERIFY(disks->y() + 1 >= crumbs->y());
+  QVERIFY2(crumbs->width() > window->width() * 0.45,
+           "crumb row must keep the path");
+  session->cancel();
+}
+
+void PortalDbusTest::saveAsTitleStillFloats() {
+  using Kind = ChooserSession::Kind;
+  QCOMPARE(ChooserSession::windowTitle(Kind::SaveFile, false, QString()),
+           QStringLiteral("Save File"));
+  QCOMPARE(ChooserSession::windowTitle(Kind::SaveFile, false, QString(),
+                                       QStringLiteral("firefox")),
+           QStringLiteral("Save File — firefox"));
+  const QString named = ChooserSession::windowTitle(
+      Kind::SaveFile, false, QStringLiteral("report.pdf"),
+      QStringLiteral("chromium"));
+  QVERIFY2(named.startsWith(QStringLiteral("Save")), qPrintable(named));
+  QVERIFY(named.contains(QStringLiteral("report.pdf")));
+  const QString as = ChooserSession::windowTitle(
+      Kind::SaveFile, false, QStringLiteral("Save As"),
+      QStringLiteral("firefox"));
+  QVERIFY(as.startsWith(QStringLiteral("Save")));
+  QVERIFY(as.contains(QStringLiteral("firefox")));
+  const QString open = ChooserSession::windowTitle(
+      Kind::OpenFile, false, QStringLiteral("Open File"),
+      QStringLiteral("firefox"));
+  QVERIFY(open.startsWith(QStringLiteral("Open")));
 }
 
 QTEST_MAIN(PortalDbusTest)

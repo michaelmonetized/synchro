@@ -6,6 +6,9 @@ Item {
 
     property var host: null
     property var keys: null
+    // Optional. Chooser exposes host as QObject*; pass the listing so the
+    // index rail still binds when peekProxy is not visible on that wrapper.
+    property var indexModel: null
     objectName: "peekOverlay"
     visible: host && host.open
     z: 100
@@ -90,9 +93,22 @@ Item {
             id: fileIndex
             objectName: "peekFileIndex"
             z: 1
-            visible: root.filePeekVisible && root.host && root.host.peekProxy
             readonly property bool grid: root.host && root.host.gridMode
-            readonly property var rows: root.host ? root.host.peekProxy : null
+            readonly property var rows: {
+                if (root.host && root.host.folderPeek && root.host.peekProxy)
+                    return root.host.peekProxy
+                if (root.indexModel)
+                    return root.indexModel
+                if (root.host && root.host.peekProxy)
+                    return root.host.peekProxy
+                return null
+            }
+            readonly property var fileRows: {
+                if (root.host && root.host.peekFileProxy)
+                    return root.host.peekFileProxy
+                return fileIndex.rows
+            }
+            visible: root.filePeekVisible && fileIndex.rows
             readonly property int thumbPx: 96
             anchors.top: caption.visible ? caption.bottom : parent.top
             anchors.left: parent.left
@@ -106,8 +122,8 @@ Item {
                    : 0
 
             function activateAt(i) {
-                if (fileIndex.grid && root.host && root.host.peekFileProxy)
-                    root.host.peekFileProxy.currentIndex = i
+                if (fileIndex.grid && fileIndex.fileRows)
+                    fileIndex.fileRows.currentIndex = i
                 else if (fileIndex.rows)
                     fileIndex.rows.currentIndex = i
                 if (root.host)
@@ -115,8 +131,8 @@ Item {
             }
 
             function commitAt(i) {
-                if (fileIndex.grid && root.host && root.host.peekFileProxy)
-                    root.host.peekFileProxy.currentIndex = i
+                if (fileIndex.grid && fileIndex.fileRows)
+                    fileIndex.fileRows.currentIndex = i
                 else if (fileIndex.rows)
                     fileIndex.rows.currentIndex = i
                 if (root.keys)
@@ -128,7 +144,7 @@ Item {
             function syncThumbs() {
                 if (!fileIndex.grid || !fileIndex.rows || !fileIndex.visible)
                     return
-                var files = root.host ? root.host.peekFileProxy : null
+                var files = fileIndex.fileRows
                 if (!files || !files.requestVisibleThumbs)
                     return
                 var h = Math.max(1, indexGrid.itemH)
@@ -155,7 +171,7 @@ Item {
                 anchors.fill: parent
                 visible: !fileIndex.grid
                 clip: true
-                model: fileIndex.rows
+                model: root.visible && !fileIndex.grid ? fileIndex.rows : null
                 currentIndex: model ? model.currentIndex : -1
                 keyNavigationEnabled: false
                 highlightFollowsCurrentItem: true
@@ -209,7 +225,7 @@ Item {
                 anchors.fill: parent
                 visible: fileIndex.grid
                 clip: true
-                model: root.host ? root.host.peekFileProxy : null
+                model: root.visible && fileIndex.grid ? fileIndex.fileRows : null
                 currentIndex: model ? model.currentIndex : -1
                 keyNavigationEnabled: false
                 highlightFollowsCurrentItem: true
@@ -359,7 +375,7 @@ Item {
                 if (!root.host)
                     return ""
                 if (root.host.peekPreviewFocused)
-                    return "file  ·  A index   W/S scroll   j/k next file"
+                    return "file  ·  A index   W/S scroll   / find   n/N hit   j/k next file"
                 return "index  ·  D file   W/S next file"
             }
             color: Theme.muted

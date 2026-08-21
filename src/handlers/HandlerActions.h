@@ -18,6 +18,7 @@ public:
   HandlerActions(HandlerRegistry *registry, HandlerExec *exec);
 
   static bool isVirtualLocation(const QString &path);
+  static bool canEject(const QVector<Manifest::Item> &items);
   static Kind classify(const Manifest &m, const QString &kind);
 
   bool openBest(const QVector<Manifest::Item> &items, const QString &cwd);
@@ -28,6 +29,7 @@ public:
   bool runCore(const Manifest &m, const QVector<Manifest::Item> &items);
   bool runTerminal(const QVector<Manifest::Item> &items, const QString &cwd);
   bool runTrash(const QVector<Manifest::Item> &items);
+  bool runEject(const QVector<Manifest::Item> &items, const QString &cwd);
   bool runAction(const QString &id, const QVector<Manifest::Item> &items,
                  const QString &cwd);
 

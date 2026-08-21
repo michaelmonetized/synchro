@@ -136,6 +136,8 @@ private slots:
   void enterHomeNavigates();
   void enterHiddenToggles();
   void enterGridListTogglesView();
+  void enterFsnAndEscReturns();
+  void mainQmlFsnMounts();
   void enterTrashNoopsWithStatus();
   void enterTrashOpensTrashUrl();
   void enterEmptyNoopsWithStatus();
@@ -153,7 +155,7 @@ private slots:
   void mainQmlColonEntersCommand();
   void mainQmlGridClickAfterColonPops();
   void leadingQuestionPromotesToFieldSearch();
-  void questionQuestionDoesNotSearch();
+  void questionQuestionIsContentSearch();
 };
 
 void CommandFieldTest::launchIsListFocused() {
@@ -806,6 +808,9 @@ void CommandFieldTest::paletteResolvePrefersBuiltins() {
   QCOMPARE(spec.id, QStringLiteral("synchro.action.terminal"));
   QVERIFY(pal.resolve(QStringLiteral(":?"), &spec, &err));
   QCOMPARE(spec.id, QStringLiteral("?"));
+  QVERIFY(pal.resolve(QStringLiteral(":volumes"), &spec, &err));
+  QCOMPARE(spec.id, QStringLiteral("volumes"));
+  QVERIFY(spec.builtin);
   QVERIFY(!pal.resolve(QStringLiteral(":h"), &spec, &err));
   QCOMPARE(err, QStringLiteral("ambiguous command"));
   QVERIFY(pal.resolve(QStringLiteral(":ho"), &spec, &err));
@@ -915,6 +920,94 @@ void CommandFieldTest::enterGridListTogglesView() {
   keys.setFieldText(QStringLiteral(":list"));
   keys.acceptField();
   QVERIFY(!keys.gridMode());
+}
+
+void CommandFieldTest::enterFsnAndEscReturns() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  QVERIFY(!keys.fsnMode());
+  keys.setGridMode(true);
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":fsn"));
+  keys.acceptField();
+  QVERIFY(keys.fsnMode());
+  QVERIFY(keys.gridMode());
+  QCOMPARE(keys.statusMessage(), QStringLiteral("it's a unix system"));
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":park"));
+  keys.acceptField();
+  QVERIFY(keys.fsnMode());
+
+  QVERIFY(keys.handleListKey(Qt::Key_V, Qt::NoModifier, QStringLiteral("v")));
+  QVERIFY(!keys.fsnMode());
+  QVERIFY(keys.gridMode());
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":nedry"));
+  keys.acceptField();
+  QVERIFY(keys.fsnMode());
+  QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
+  QVERIFY(!keys.fsnMode());
+  QVERIFY(keys.gridMode());
+
+  keys.setFsnMode(true);
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":list"));
+  keys.acceptField();
+  QVERIFY(!keys.fsnMode());
+  QVERIFY(!keys.gridMode());
+
+  // :fsv alias, with tree|map view arguments.
+  QVERIFY(keys.fsnTreeView());
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":fsv map"));
+  keys.acceptField();
+  QVERIFY(keys.fsnMode());
+  QVERIFY(!keys.fsnTreeView());
+  QCOMPARE(keys.statusMessage(), QStringLiteral("it's a unix system"));
+  QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
+  QVERIFY(!keys.fsnMode());
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":fsv treev"));
+  keys.acceptField();
+  QVERIFY(keys.fsnMode());
+  QVERIFY(keys.fsnTreeView());
+  // Bad argument leaves the mode alone and hints instead.
+  QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":fsv dinosaur"));
+  keys.acceptField();
+  QVERIFY(!keys.fsnMode());
+  QCOMPARE(keys.statusMessage(), QStringLiteral(":fsv tree|map"));
+  // Bad command left the field focused (first Esc clears the query, the
+  // second refocuses the listing).
+  QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
+  QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
+  QVERIFY(keys.listFocused());
+  // M passes through to the 3D view for the map/tree toggle.
+  keys.setFsnMode(true);
+  QVERIFY(!keys.handleListKey(Qt::Key_M, Qt::NoModifier, QStringLiteral("m")));
+  keys.setFsnMode(false);
+
+  // Ctrl+M toggles fsv mode from the listing and from the field.
+  QVERIFY(keys.handleListKey(Qt::Key_M, Qt::ControlModifier, QString()));
+  QVERIFY(keys.fsnMode());
+  QCOMPARE(keys.statusMessage(), QStringLiteral("it's a unix system"));
+  QVERIFY(keys.handleListKey(Qt::Key_M, Qt::ControlModifier, QString()));
+  QVERIFY(!keys.fsnMode());
+  keys.focusCommand();
+  QVERIFY(keys.handleFieldKey(Qt::Key_M, Qt::ControlModifier));
+  QVERIFY(keys.fsnMode());
+  QVERIFY(keys.handleFieldKey(Qt::Key_M, Qt::ControlModifier));
+  QVERIFY(!keys.fsnMode());
+
+  QVERIFY(keys.helpText().contains(QStringLiteral(":fsn")));
+  QVERIFY(keys.helpText().contains(QStringLiteral(":fsv")));
 }
 
 void CommandFieldTest::enterTrashNoopsWithStatus() {
@@ -1371,6 +1464,58 @@ void CommandFieldTest::mainQmlGridClickAfterColonPops() {
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
 }
 
+void CommandFieldTest::mainQmlFsnMounts() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("aaa.txt"))));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("bbb.txt"))));
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("docs")));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
+
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY(!engine.rootObjects().isEmpty());
+  auto *window =
+      qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+  QVERIFY(window);
+  window->resize(800, 600);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":fsn"));
+  keys.acceptField();
+  QVERIFY(keys.fsnMode());
+  auto *city = window->findChild<QQuickItem *>(QStringLiteral("fileFsn"));
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        city = window->findChild<QQuickItem *>(QStringLiteral("fileFsn"));
+        auto *list =
+            window->findChild<QQuickItem *>(QStringLiteral("fileList"));
+        return city && city->isVisible() && city->width() > 0 &&
+               (!list || !list->isVisible());
+      },
+      2000));
+  QVERIFY(window->findChild<QQuickItem *>(QStringLiteral("fileFsnView")));
+}
+
 void CommandFieldTest::leadingQuestionPromotesToFieldSearch() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
@@ -1393,7 +1538,7 @@ void CommandFieldTest::leadingQuestionPromotesToFieldSearch() {
            QStringLiteral("foo.bar"));
 }
 
-void CommandFieldTest::questionQuestionDoesNotSearch() {
+void CommandFieldTest::questionQuestionIsContentSearch() {
   DirectoryModel model;
   FilterProxy proxy;
   proxy.setDirectoryModel(&model);
@@ -1402,9 +1547,12 @@ void CommandFieldTest::questionQuestionDoesNotSearch() {
 
   keys.focusFilter();
   keys.setFieldText(QStringLiteral("??todo"));
-  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
-  QCOMPARE(proxy.filter(), QStringLiteral("??todo"));
-  QVERIFY(!KeyMachine::isSearchText(QStringLiteral("??todo")));
+  QCOMPARE(keys.mode(), QStringLiteral("field-search"));
+  QVERIFY(proxy.filter().isEmpty());
+  QVERIFY(KeyMachine::isSearchText(QStringLiteral("??todo")));
+  QVERIFY(KeyMachine::isContentSearchText(QStringLiteral("??todo")));
+  QCOMPARE(KeyMachine::searchQuery(QStringLiteral("??todo")),
+           QStringLiteral("todo"));
 }
 
 int main(int argc, char **argv) {

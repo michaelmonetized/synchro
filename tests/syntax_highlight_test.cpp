@@ -1,5 +1,6 @@
 #include "SyntaxHighlight.h"
 
+#include <QColor>
 #include <QFile>
 #include <QGuiApplication>
 #include <QTemporaryDir>
@@ -14,6 +15,8 @@ private slots:
   void markupIsEscaped();
   void unknownExtensionStaysPlain();
   void colorsComeFromOmarchyToml();
+  void markFindsKeepsSyntaxColor();
+  void markFindsWrapsPlain();
 };
 
 void SyntaxHighlightTest::pythonKeywordsBecomeSpans() {
@@ -95,6 +98,30 @@ void SyntaxHighlightTest::colorsComeFromOmarchyToml() {
   QVERIFY2(hl.html.contains(QStringLiteral("#00ff66")),
            "strings should use colors.toml green");
   QVERIFY(hl.html.contains(QStringLiteral("font-family:monospace")));
+}
+
+void SyntaxHighlightTest::markFindsKeepsSyntaxColor() {
+  const QString html = QStringLiteral(
+      "<pre><span style=\"color:#ff00aa;\">def</span> foo_token</pre>");
+  const QString marked = SyntaxHighlight::markFinds(
+      html, QStringLiteral("def foo_token"), QStringLiteral("foo_token"), 0,
+      QColor(0x44, 0x88, 0x66, 0x48), QColor(0x44, 0x88, 0x66, 0x8c));
+  QVERIFY2(marked.contains(QStringLiteral("color:#ff00aa;")),
+           qPrintable(marked));
+  QVERIFY2(marked.contains(QStringLiteral("background-color:")),
+           qPrintable(marked));
+  QVERIFY(marked.contains(QStringLiteral("foo_token")));
+  QVERIFY(!marked.contains(QStringLiteral("color:#020000")));
+}
+
+void SyntaxHighlightTest::markFindsWrapsPlain() {
+  const QString marked = SyntaxHighlight::markFinds(
+      QString(), QStringLiteral("one\ntwo HIT\nthree\n"), QStringLiteral("HIT"),
+      0, QColor(Qt::yellow), QColor(Qt::red));
+  QVERIFY(marked.startsWith(QStringLiteral("<pre")));
+  QVERIFY(marked.contains(QStringLiteral("\n")));
+  QVERIFY(marked.contains(QStringLiteral("background-color:")));
+  QVERIFY(marked.contains(QStringLiteral("HIT")));
 }
 
 int main(int argc, char **argv) {

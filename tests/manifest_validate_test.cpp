@@ -146,6 +146,22 @@ void ManifestValidateTest::firstPartyActionHandlersValid() {
            QStringLiteral("core"));
   QCOMPARE(trashLoc.manifest.coreVerb(QStringLiteral("location")),
            QStringLiteral("trash"));
+
+  const auto volumes = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.location.volumes")), true);
+  QVERIFY2(volumes.ok, qPrintable(volumes.errors.join(QLatin1Char(';'))));
+  QCOMPARE(volumes.manifest.coreVerb(QStringLiteral("location")),
+           QStringLiteral("volumes"));
+  QCOMPARE(volumes.manifest.entryPoints.value(QStringLiteral("row")),
+           QStringLiteral("Row.qml"));
+  QCOMPARE(volumes.manifest.entryPoints.value(QStringLiteral("thumb")),
+           QStringLiteral("Thumb.qml"));
+
+  const auto eject = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.action.eject")), true);
+  QVERIFY2(eject.ok, qPrintable(eject.errors.join(QLatin1Char(';'))));
+  QCOMPARE(eject.manifest.coreVerb(QStringLiteral("action")),
+           QStringLiteral("eject"));
 }
 
 void ManifestValidateTest::firstPartyPreviewHandlersValid() {

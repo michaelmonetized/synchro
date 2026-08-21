@@ -141,6 +141,8 @@ private slots:
   void staleDeleteSelfDoesNotKickNewPath();
   void deleteDuringListingIsNotResurrected();
   void visibleThumbsFillPngAndFolderMosaic();
+  void createdFileGetsThumbnail();
+  void refreshThumbsUpdatesFolderMosaicOnly();
 
 private:
   QTemporaryDir m_fixture;
@@ -1059,6 +1061,98 @@ void DirectoryModelTest::visibleThumbsFillPngAndFolderMosaic() {
                     .isEmpty();
       },
       4000));
+}
+
+void DirectoryModelTest::createdFileGetsThumbnail() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QImage seed(24, 24, QImage::Format_RGB32);
+  seed.fill(qRgb(200, 40, 40));
+  QVERIFY(seed.save(tmp.filePath(QStringLiteral("keep.png")), "PNG"));
+
+  DirectoryModel model;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  model.requestVisibleThumbs(0, model.rowCount() - 1, 128);
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        const int row = findRow(model, QStringLiteral("keep.png"));
+        return row >= 0 && !roleAt(model, row, DirectoryModel::ThumbnailRole)
+                                .toString()
+                                .isEmpty();
+      },
+      4000));
+
+  QImage extra(24, 24, QImage::Format_RGB32);
+  extra.fill(qRgb(40, 200, 40));
+  QVERIFY(extra.save(tmp.filePath(QStringLiteral("new.png")), "PNG"));
+  DirectoryWatchEvent ev;
+  ev.kind = DirectoryWatchEvent::Created;
+  ev.name = QStringLiteral("new.png");
+  ev.isDir = false;
+  ev.serial = model.m_watchSerial;
+  model.onWatchEvents({ev});
+  QVERIFY(findRow(model, QStringLiteral("new.png")) >= 0);
+  model.refreshThumbs({tmp.filePath(QStringLiteral("new.png"))});
+
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        const int row = findRow(model, QStringLiteral("new.png"));
+        return row >= 0 && !roleAt(model, row, DirectoryModel::ThumbnailRole)
+                                .toString()
+                                .isEmpty();
+      },
+      4000));
+}
+
+void DirectoryModelTest::refreshThumbsUpdatesFolderMosaicOnly() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("album")));
+  auto writeColor = [](const QString &path, QRgb color) {
+    QImage img(24, 24, QImage::Format_RGB32);
+    img.fill(color);
+    return img.save(path, "PNG");
+  };
+  QVERIFY(writeColor(tmp.filePath(QStringLiteral("shot.png")), qRgb(200, 30, 30)));
+  QVERIFY(writeColor(tmp.filePath(QStringLiteral("album/a.png")),
+                     qRgb(30, 200, 30)));
+
+  DirectoryModel model;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  model.requestVisibleThumbs(0, model.rowCount() - 1, 128);
+  QString shotUrl;
+  QString albumUrl;
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        const int shot = findRow(model, QStringLiteral("shot.png"));
+        const int album = findRow(model, QStringLiteral("album"));
+        if (shot < 0 || album < 0)
+          return false;
+        shotUrl = roleAt(model, shot, DirectoryModel::ThumbnailRole).toString();
+        albumUrl =
+            roleAt(model, album, DirectoryModel::ThumbnailRole).toString();
+        return !shotUrl.isEmpty() && !albumUrl.isEmpty();
+      },
+      4000));
+
+  QVERIFY(writeColor(tmp.filePath(QStringLiteral("album/b.png")),
+                     qRgb(30, 30, 200)));
+  model.refreshThumbs({tmp.filePath(QStringLiteral("album"))});
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        const int album = findRow(model, QStringLiteral("album"));
+        if (album < 0)
+          return false;
+        return roleAt(model, album, DirectoryModel::ThumbnailRole).toString() !=
+               albumUrl;
+      },
+      4000));
+  const int shot = findRow(model, QStringLiteral("shot.png"));
+  QVERIFY(shot >= 0);
+  QCOMPARE(roleAt(model, shot, DirectoryModel::ThumbnailRole).toString(),
+           shotUrl);
 }
 
 int main(int argc, char **argv) {

@@ -33,6 +33,7 @@ public:
   ~ThumbnailService() override;
 
   Q_INVOKABLE void request(const QString &path, qint64 mtime, int sizePx);
+  void request(const QVector<ThumbnailJob> &jobs);
   void requestVisible(const QVector<ThumbnailJob> &jobs);
   void cancelAll();
   void setThumbnailerDirectories(const QStringList &dirs);

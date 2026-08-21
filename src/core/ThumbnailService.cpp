@@ -1770,12 +1770,21 @@ void ThumbnailService::request(const QString &path, qint64 mtime, int sizePx) {
   job.path = path;
   job.mtime = mtime;
   job.sizePx = sizePx;
-  QString url;
-  if (hydratePacked(job, &url)) {
-    emit thumbnailReady(path, url);
-    return;
+  request(QVector<ThumbnailJob>{job});
+}
+
+void ThumbnailService::request(const QVector<ThumbnailJob> &jobs) {
+  QVector<ThumbnailJob> miss;
+  miss.reserve(jobs.size());
+  for (const ThumbnailJob &job : jobs) {
+    QString url;
+    if (hydratePacked(job, &url))
+      emit thumbnailReady(job.path, url);
+    else
+      miss.append(job);
   }
-  emit submitted({job}, false);
+  if (!miss.isEmpty())
+    emit submitted(miss, false);
 }
 
 void ThumbnailService::requestVisible(const QVector<ThumbnailJob> &jobs) {

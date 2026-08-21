@@ -13,6 +13,7 @@ Window {
     readonly property var chips: typeof locationChips !== "undefined" ? locationChips : null
     readonly property var selection: typeof selectionModel !== "undefined" ? selectionModel : null
     readonly property bool gridMode: root.keys ? root.keys.gridMode : false
+    readonly property bool fsnMode: root.keys ? root.keys.fsnMode : false
 
     width: 960
     height: 640
@@ -24,6 +25,7 @@ Window {
 
     PathBar {
         id: pathBar
+        objectName: "pathBar"
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
@@ -42,41 +44,82 @@ Window {
         fileModel: root.files
     }
 
-    FileList {
-        id: fileList
-        objectName: "fileList"
+    Rectangle {
         anchors.top: commandField.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: statusLine.top
-        visible: !root.gridMode
-        enabled: visible
-        fileModel: root.files
-        filterProxy: root.listing
-        navStack: root.history
-        keyMachine: root.keys
-        selection: root.selection
-        onViewToggleRequested: if (root.keys) root.keys.gridMode = true
-        onDoRequested: if (typeof hostApi !== "undefined" && hostApi)
-            hostApi.openDoLayer()
+        color: Theme.opaqueBackground
+        z: 0
     }
 
-    FileGrid {
-        id: fileGrid
-        objectName: "fileGrid"
+    Loader {
+        id: listingLoader
         anchors.top: commandField.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: statusLine.top
-        visible: root.gridMode
-        enabled: visible
-        fileModel: root.files
-        filterProxy: root.listing
-        keyMachine: root.keys
-        selection: root.selection
-        onViewToggleRequested: if (root.keys) root.keys.gridMode = false
-        onDoRequested: if (typeof hostApi !== "undefined" && hostApi)
-            hostApi.openDoLayer()
+        z: 1
+        sourceComponent: root.fsnMode ? fsnComp
+                                      : (root.gridMode ? gridComp : listComp)
+        onLoaded: {
+            if (!root.fsnMode && root.gridMode && item && root.keys)
+                root.keys.gridStride = item.columns
+            if (root.keys && root.keys.listFocused && item)
+                item.forceActiveFocus()
+        }
+    }
+
+    Component {
+        id: listComp
+        FileList {
+            objectName: "fileList"
+            fileModel: root.files
+            filterProxy: root.listing
+            navStack: root.history
+            keyMachine: root.keys
+            selection: root.selection
+            host: typeof hostApi !== "undefined" ? hostApi : null
+            fileOps: typeof fileOpEngine !== "undefined" ? fileOpEngine : null
+            onViewToggleRequested: if (root.keys) root.keys.gridMode = true
+            onDoRequested: if (typeof hostApi !== "undefined" && hostApi)
+                hostApi.openDoLayer()
+        }
+    }
+
+    Component {
+        id: fsnComp
+        FileFsn {
+            objectName: "fileFsn"
+            fileModel: root.files
+            filterProxy: root.listing
+            navStack: root.history
+            keyMachine: root.keys
+            selection: root.selection
+            host: typeof hostApi !== "undefined" ? hostApi : null
+            fileOps: typeof fileOpEngine !== "undefined" ? fileOpEngine : null
+            onViewToggleRequested: if (root.keys)
+                                       root.keys.fsnTreeView = !root.keys.fsnTreeView
+            onDoRequested: if (typeof hostApi !== "undefined" && hostApi)
+                hostApi.openDoLayer()
+        }
+    }
+
+    Component {
+        id: gridComp
+        FileGrid {
+            objectName: "fileGrid"
+            fileModel: root.files
+            filterProxy: root.listing
+            navStack: root.history
+            keyMachine: root.keys
+            selection: root.selection
+            host: typeof hostApi !== "undefined" ? hostApi : null
+            fileOps: typeof fileOpEngine !== "undefined" ? fileOpEngine : null
+            onViewToggleRequested: if (root.keys) root.keys.gridMode = false
+            onDoRequested: if (typeof hostApi !== "undefined" && hostApi)
+                hostApi.openDoLayer()
+        }
     }
 
     StatusLine {
@@ -90,6 +133,7 @@ Window {
         selection: root.selection
         filterProxy: root.listing
         host: typeof hostApi !== "undefined" ? hostApi : null
+        fileOps: typeof fileOpEngine !== "undefined" ? fileOpEngine : null
     }
 
     Confirm {
@@ -102,6 +146,7 @@ Window {
         anchors.fill: parent
         host: typeof hostApi !== "undefined" ? hostApi : null
         keys: root.keys
+        indexModel: root.listing
     }
 
     DoOverlay {
@@ -138,23 +183,18 @@ Window {
     Connections {
         target: root.keys
         function onModeChanged() {
-            if (root.keys.listFocused) {
-                if (root.gridMode)
-                    fileGrid.forceActiveFocus()
-                else
-                    fileList.forceActiveFocus()
-            } else {
+            if (root.keys.listFocused)
+                root.focusListing()
+            else
                 commandField.focusInput()
-            }
         }
         function onGridModeChanged() {
-            if (root.gridMode) {
-                root.keys.gridStride = fileGrid.columns
-                fileGrid.forceActiveFocus()
-            } else {
+            if (!root.gridMode && root.keys)
                 root.keys.gridStride = 1
-                fileList.forceActiveFocus()
-            }
+            Qt.callLater(root.focusListing)
+        }
+        function onFsnModeChanged() {
+            Qt.callLater(root.focusListing)
         }
     }
 
@@ -199,10 +239,8 @@ Window {
     function focusListing() {
         if (root.keys && !root.keys.listFocused)
             return
-        if (root.gridMode)
-            fileGrid.forceActiveFocus()
-        else
-            fileList.forceActiveFocus()
+        if (listingLoader.item)
+            listingLoader.item.forceActiveFocus()
     }
 
     onActiveChanged: if (active)

@@ -9,8 +9,15 @@ ListView {
     property var navStack
     property var keyMachine
     property var selection
+    property var host: null
+    property var fileOps: null
+    property bool dndEnabled: true
     readonly property int selectionEpoch: selection ? selection.epoch : 0
     readonly property int thumbSizePx: 128
+    readonly property bool dndLive: dndEnabled && fileOps && fileModel &&
+                                    !fileModel.isTrash && !fileModel.isRecent &&
+                                    !fileModel.isSearch && !fileModel.isVolumes
+    readonly property bool searching: fileModel && fileModel.isSearch
 
     signal viewToggleRequested()
     signal doRequested()
@@ -18,9 +25,11 @@ ListView {
     readonly property var rows: filterProxy ? filterProxy : fileModel
     readonly property bool showCursorChrome: !keyMachine || keyMachine.listFocused
 
-    model: list.rows
+    model: list.visible ? list.rows : null
     clip: true
-    reuseItems: true
+    reuseItems: !list.searching
+    readonly property int sectionH: Math.max(Theme.fontBody + Theme.space(10), 24)
+    readonly property int rowInner: Math.max(Theme.fontBody + Theme.space(8), 20)
     boundsBehavior: Flickable.StopAtBounds
     keyNavigationEnabled: false
     highlightFollowsCurrentItem: true
@@ -30,9 +39,99 @@ ListView {
     activeFocusOnTab: true
     cacheBuffer: Math.max(0, Theme.fontBody + Theme.space(8)) * 8
 
-    highlight: Rectangle {
-        color: Theme.selectedFill
+    Rectangle {
+        anchors.fill: parent
+        z: -2
+        color: Theme.opaqueBackground
+    }
+
+    highlight: Item {
         visible: list.showCursorChrome
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: list.rowInner
+            color: Theme.selectedFill
+        }
+    }
+
+    function folderLabel(parentPath) {
+        var root = list.fileModel && list.fileModel.searchRoot
+                   ? list.fileModel.searchRoot : ""
+        if (!parentPath)
+            return ""
+        if (root && parentPath === root)
+            return "this folder"
+        if (root && parentPath.indexOf(root + "/") === 0)
+            return parentPath.slice(root.length + 1)
+        return parentPath
+    }
+
+    function parentPathAt(i) {
+        if (list.fileModel && list.fileModel.rowMap)
+            return list.fileModel.rowMap(i).parentPath || ""
+        return ""
+    }
+
+    function dragPathsFor(index, path) {
+        if (list.selection && list.selection.isSelected(index)) {
+            var picked = list.selection.selectedPaths()
+            if (picked && picked.length)
+                return picked
+        }
+        return path ? [path] : []
+    }
+
+    function armDrag(item, index, path, name, thumbnail, isDir) {
+        if (!list.dndLive || !list.fileOps)
+            return
+        var paths = list.dragPathsFor(index, path)
+        if (!paths.length)
+            return
+        item.Drag.mimeData = list.fileOps.dragMime(paths)
+        item.Drag.hotSpot.x = Math.round(dragGhost.width / 2)
+        item.Drag.hotSpot.y = Math.round(dragGhost.height / 2)
+        dragGhost.name = name
+        dragGhost.thumbnail = thumbnail
+        dragGhost.isDir = isDir
+        dragGhost.count = paths.length
+        Qt.callLater(function () {
+            dragGhost.grabToImage(function (result) {
+                if (!result || !result.url)
+                    return
+                item.Drag.imageSource = result.url
+                item.Drag.imageSourceSize = Qt.size(dragGhost.width,
+                                                    dragGhost.height)
+            })
+        })
+    }
+
+    FileDragGhost {
+        id: dragGhost
+        parent: list.Window.window ? list.Window.window.contentItem : list
+        x: -500
+        y: -500
+        z: -1
+    }
+
+    FileDropSurface {
+        id: listingDrop
+        objectName: "listingDrop"
+        anchors.fill: parent
+        z: -1
+        fileOps: list.fileOps
+        destPath: list.fileModel ? list.fileModel.path : ""
+        dropEnabled: list.dndLive
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        visible: listingDrop.hot
+        color: "transparent"
+        border.color: Theme.accent
+        border.width: 1
+        z: 1
     }
 
     EmptyListing {
@@ -87,13 +186,90 @@ ListView {
         required property bool isDir
         required property bool isSymlink
         required property string thumbnail
+        // Must be required: Qt only maps model roles onto required
+        // properties once a delegate uses that style.
+        required property string path
+        required property string detail
+        required property var used
+        required property var total
+        required property int percent
+        required property string parentPath
+        required property string parentLabel
+
+        readonly property bool showFolderHead: {
+            if (!list.searching)
+                return false
+            if (index <= 0)
+                return true
+            return list.parentPathAt(index - 1) !== row.parentPath
+        }
 
         width: ListView.view.width
-        height: Math.max(Theme.fontBody + Theme.space(8), 20)
+        height: list.rowInner + (showFolderHead ? list.sectionH : 0)
+
+        Drag.dragType: Drag.Automatic
+        Drag.active: dragArea.drag.active && list.dndLive
+        Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
+        Drag.proposedAction: Qt.MoveAction
+        Drag.hotSpot.x: width / 2
+        Drag.hotSpot.y: height / 2
 
         readonly property bool picked: list.selection &&
                                        list.selectionEpoch >= 0 &&
                                        list.selection.isSelected(row.index)
+
+        Rectangle {
+            anchors.fill: parent
+            color: Theme.opaqueBackground
+        }
+
+        Item {
+            id: folderHead
+            width: parent.width
+            height: row.showFolderHead ? list.sectionH : 0
+            visible: row.showFolderHead
+            clip: true
+
+            Rectangle {
+                anchors.fill: parent
+                color: Theme.opaqueBackground
+            }
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 1
+                color: Theme.normalBorder
+            }
+
+            Text {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: Theme.space(8)
+                anchors.rightMargin: Theme.space(8)
+                text: list.folderLabel(row.parentPath)
+                color: Theme.accent
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontBody
+                elide: Text.ElideMiddle
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                enabled: row.parentPath.length > 0 && list.navStack
+                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                onClicked: list.navStack.navigate(row.parentPath)
+            }
+        }
+
+        Item {
+            id: fileRow
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: list.rowInner
 
         Rectangle {
             anchors.fill: parent
@@ -106,6 +282,23 @@ ListView {
             anchors.fill: parent
             visible: hover.hovered && !row.ListView.isCurrentItem
             color: Theme.hoverFill
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            visible: folderDrop.hot
+            color: "transparent"
+            border.color: Theme.accent
+            border.width: 1
+        }
+
+        FileDropSurface {
+            id: folderDrop
+            objectName: "folderDrop"
+            anchors.fill: parent
+            fileOps: list.fileOps
+            destPath: row.isDir ? row.path : ""
+            dropEnabled: list.dndLive && row.isDir
         }
 
         HoverHandler {
@@ -144,7 +337,7 @@ ListView {
 
         Text {
             anchors.left: iconBox.right
-            anchors.right: parent.right
+            anchors.right: chrome.visible ? chrome.left : parent.right
             anchors.leftMargin: Theme.space(8)
             anchors.rightMargin: Theme.space(8)
             anchors.verticalCenter: parent.verticalCenter
@@ -155,10 +348,56 @@ ListView {
             elide: Text.ElideMiddle
         }
 
+        ListingChrome {
+            id: chrome
+            objectName: "listingRowChrome"
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.min(implicitWidth, parent.width * 0.55)
+            height: parent.height
+            host: list.host
+            mode: "row"
+            file: row.path ? Qt.resolvedUrl("file://" + row.path) : ""
+            name: row.name
+            path: row.path
+            detail: row.detail
+            used: row.used
+            total: row.total
+            percent: row.percent
+        }
+
+        Item {
+            id: dragProxy
+            width: 1
+            height: 1
+        }
+
         MouseArea {
+            id: dragArea
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
+            property bool didDrag: false
+            drag.target: list.dndLive ? dragProxy : null
+            drag.threshold: Math.max(8, Qt.styleHints.startDragDistance)
+            preventStealing: drag.active
+
+            onPressed: function (mouse) {
+                didDrag = false
+                if (mouse.button !== Qt.LeftButton || !list.dndLive)
+                    return
+                list.armDrag(row, row.index, row.path, row.name,
+                             row.thumbnail, row.isDir)
+            }
+            onPositionChanged: if (drag.active)
+                didDrag = true
+            onReleased: {
+                dragProxy.x = 0
+                dragProxy.y = 0
+            }
             onClicked: function (mouse) {
+                if (didDrag)
+                    return
                 if (mouse.button === Qt.MiddleButton) {
                     list.viewToggleRequested()
                     return
@@ -199,6 +438,7 @@ ListView {
                 else
                     list.fileModel.activateCurrent()
             }
+        }
         }
     }
 

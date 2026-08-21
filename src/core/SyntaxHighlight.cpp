@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QStringList>
+#include <QVector>
 
 #ifdef SYNCHRO_HAVE_KSYNTAX
 #include <KSyntaxHighlighting/AbstractHighlighter>
@@ -241,6 +242,133 @@ private:
 #endif
 
 } // namespace
+
+QString SyntaxHighlight::markFinds(const QString &html, const QString &plain,
+                                   const QString &needle, int currentLocal,
+                                   const QColor &matchFill,
+                                   const QColor &currentFill) {
+  QString src = html;
+  if (src.isEmpty()) {
+    src = QStringLiteral("<pre style=\"margin:0;\">");
+    src += escapeHtml(plain);
+    src += QStringLiteral("</pre>");
+  }
+  if (plain.isEmpty() || needle.isEmpty())
+    return src;
+
+  struct Range {
+    int start = 0;
+    int end = 0;
+    bool current = false;
+  };
+  QVector<Range> ranges;
+  bool sensitive = false;
+  for (const QChar c : needle) {
+    if (c.isUpper()) {
+      sensitive = true;
+      break;
+    }
+  }
+  const Qt::CaseSensitivity cs =
+      sensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
+  int from = 0;
+  int n = 0;
+  while (true) {
+    const int at = plain.indexOf(needle, from, cs);
+    if (at < 0)
+      break;
+    Range r;
+    r.start = at;
+    r.end = at + needle.size();
+    r.current = (n == currentLocal);
+    ranges.append(r);
+    from = at + qMax(1, needle.size());
+    ++n;
+  }
+  if (ranges.isEmpty())
+    return src;
+
+  const QString matchCss = matchFill.isValid()
+                               ? matchFill.name(QColor::HexArgb)
+                               : QStringLiteral("#66cccc00");
+  const QString currentCss = currentFill.isValid()
+                                 ? currentFill.name(QColor::HexArgb)
+                                 : QStringLiteral("#99ffcc00");
+
+  QString out;
+  out.reserve(src.size() + ranges.size() * 72);
+  int textPos = 0;
+  int ri = 0;
+  bool hlOpen = false;
+  QString hlCss;
+
+  auto closeHl = [&] {
+    if (!hlOpen)
+      return;
+    out += QStringLiteral("</span>");
+    hlOpen = false;
+    hlCss.clear();
+  };
+  auto openHl = [&](const QString &css) {
+    if (hlOpen)
+      return;
+    out += QStringLiteral("<span style=\"background-color:");
+    out += css;
+    out += QStringLiteral(";\">");
+    hlOpen = true;
+    hlCss = css;
+  };
+  auto syncHl = [&] {
+    while (ri < ranges.size() && textPos >= ranges.at(ri).end)
+      ++ri;
+    if (ri < ranges.size() && textPos >= ranges.at(ri).start &&
+        textPos < ranges.at(ri).end) {
+      const QString css =
+          ranges.at(ri).current ? currentCss : matchCss;
+      if (hlOpen && hlCss != css)
+        closeHl();
+      openHl(css);
+    } else {
+      closeHl();
+    }
+  };
+
+  int i = 0;
+  const int len = src.size();
+  while (i < len) {
+    if (src.at(i) == QLatin1Char('<')) {
+      closeHl();
+      const int gt = src.indexOf(QLatin1Char('>'), i);
+      if (gt < 0) {
+        out += QStringView(src).mid(i);
+        break;
+      }
+      out += QStringView(src).mid(i, gt - i + 1);
+      i = gt + 1;
+      syncHl();
+      continue;
+    }
+    if (src.at(i) == QLatin1Char('&')) {
+      syncHl();
+      const int sc = src.indexOf(QLatin1Char(';'), i);
+      if (sc > i) {
+        out += QStringView(src).mid(i, sc - i + 1);
+        i = sc + 1;
+      } else {
+        out += src.at(i);
+        ++i;
+      }
+      ++textPos;
+      continue;
+    }
+    syncHl();
+    out += src.at(i);
+    ++i;
+    ++textPos;
+  }
+  closeHl();
+  return out;
+}
 
 HighlightedText SyntaxHighlight::highlight(const QString &path,
                                            const QString &text) {

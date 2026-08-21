@@ -1,8 +1,10 @@
 #include "DirectoryModel.h"
 
+#include "FsnLayout.h"
 #include "RecentStore.h"
 #include "SearchModel.h"
 #include "TrashStore.h"
+#include "VolumeStore.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -10,6 +12,9 @@
 #include <QFileInfo>
 #include <QMimeDatabase>
 #include <QMimeType>
+#include <QPointer>
+#include <QSet>
+#include <QtConcurrent>
 #include <QUrl>
 #include <QVariantMap>
 
@@ -81,11 +86,19 @@ DirectoryModel::DirectoryModel(QObject *parent) : QAbstractListModel(parent) {
   m_thumbs = new ThumbnailService(this);
   connect(m_thumbs, &ThumbnailService::thumbnailReady, this,
           &DirectoryModel::onThumbnailReady);
+  connect(&VolumeStore::instance(), &VolumeStore::changed, this, [this] {
+    if (isVolumes())
+      reload();
+    emit volumeHintChanged();
+  });
+  connect(this, &DirectoryModel::pathChanged, this,
+          &DirectoryModel::volumeHintChanged);
   m_thread.start();
 }
 
 DirectoryModel::~DirectoryModel() {
   ++m_gen;
+  ++m_fsnGen;
   if (m_lister)
     m_lister->abandon(m_gen);
   m_thread.quit();
@@ -97,7 +110,8 @@ DirectoryModel::~DirectoryModel() {
 bool DirectoryModel::isVirtualPath(const QString &path) {
   return path.startsWith(QLatin1String("search:")) ||
          path.startsWith(QLatin1String("trash:")) ||
-         path.startsWith(QLatin1String("recent:"));
+         path.startsWith(QLatin1String("recent:")) ||
+         path.startsWith(QLatin1String("volumes:"));
 }
 
 bool DirectoryModel::isSearchPath(const QString &path) {
@@ -112,14 +126,58 @@ bool DirectoryModel::isRecentPath(const QString &path) {
   return path.startsWith(QLatin1String("recent:"));
 }
 
+bool DirectoryModel::isVolumesPath(const QString &path) {
+  return path.startsWith(QLatin1String("volumes:"));
+}
+
 bool DirectoryModel::isTrash() const { return isTrashPath(m_path); }
 
 bool DirectoryModel::isRecent() const { return isRecentPath(m_path); }
+
+bool DirectoryModel::isVolumes() const { return isVolumesPath(m_path); }
 
 bool DirectoryModel::isSearch() const { return isSearchPath(m_path); }
 
 QString DirectoryModel::searchQuery() const {
   return m_search ? m_search->query() : QString();
+}
+
+bool DirectoryModel::isContentSearch() const {
+  return searching() && m_search && m_search->contentSearch();
+}
+
+QString DirectoryModel::searchRoot() const {
+  return m_search ? m_search->root() : QString();
+}
+
+QVariantList DirectoryModel::folderGroups() const {
+  return searching() && m_search ? m_search->folderGroups() : QVariantList();
+}
+
+QAbstractItemModel *DirectoryModel::folderGroupModel() const {
+  return searching() && m_search ? m_search->folderGroupModel() : nullptr;
+}
+
+QVariantMap DirectoryModel::rowMap(int row) const {
+  if (searching() && m_search)
+    return m_search->rowMap(row);
+  const DirectoryEntry *e = entryAt(row);
+  if (!e)
+    return {};
+  QVariantMap m;
+  m.insert(QStringLiteral("index"), row);
+  m.insert(QStringLiteral("name"), e->name);
+  m.insert(QStringLiteral("path"), e->path);
+  m.insert(QStringLiteral("isDir"), e->isDir);
+  m.insert(QStringLiteral("isSymlink"), e->isSymlink);
+  m.insert(QStringLiteral("thumbnail"), e->thumbnail);
+  m.insert(QStringLiteral("detail"), e->detail);
+  m.insert(QStringLiteral("used"), e->used);
+  m.insert(QStringLiteral("total"), e->total);
+  m.insert(QStringLiteral("percent"), e->percent);
+  m.insert(QStringLiteral("parentPath"), e->parentPath);
+  m.insert(QStringLiteral("parentLabel"), e->parentPath);
+  return m;
 }
 
 int DirectoryModel::currentIndex() const {
@@ -158,12 +216,35 @@ QHash<int, QByteArray> DirectoryModel::roleNames() const {
       {DirKindRole, "dirKind"},
       {OrigPathRole, "origPath"},
       {PermRole, "perm"},
+      {DetailRole, "detail"},
+      {UsedRole, "used"},
+      {TotalRole, "total"},
+      {PercentRole, "percent"},
+      {ParentPathRole, "parentPath"},
+      {ParentLabelRole, "parentLabel"},
   };
 }
 
 QVariant DirectoryModel::data(const QModelIndex &index, int role) const {
-  if (searching())
-    return m_search->data(m_search->index(index.row(), 0), role);
+  if (searching()) {
+    const QVariant v = m_search->data(m_search->index(index.row(), 0), role);
+    if (v.isValid())
+      return v;
+    switch (role) {
+    case DetailRole:
+      return QString();
+    case UsedRole:
+    case TotalRole:
+      return QVariant::fromValue(qint64(-1));
+    case PercentRole:
+      return -1;
+    case ParentPathRole:
+    case ParentLabelRole:
+      return QString();
+    default:
+      return v;
+    }
+  }
   const DirectoryEntry *e = entryAt(index.row());
   if (!index.isValid() || !e)
     return {};
@@ -197,6 +278,20 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const {
     return e->origPath;
   case PermRole:
     return formatPerm(e->perm, e->isDir, e->isSymlink);
+  case DetailRole:
+    return e->detail;
+  case UsedRole:
+    return e->used;
+  case TotalRole:
+    return e->total;
+  case PercentRole:
+    return e->percent;
+  case ParentPathRole:
+    return e->parentPath.isEmpty() && !e->path.isEmpty()
+               ? QFileInfo(e->path).absolutePath()
+               : e->parentPath;
+  case ParentLabelRole:
+    return e->parentPath;
   default:
     return {};
   }
@@ -218,6 +313,8 @@ QString DirectoryModel::normalizePath(const QString &path) {
     return path;
   if (isRecentPath(path))
     return QStringLiteral("recent://");
+  if (isVolumesPath(path))
+    return QStringLiteral("volumes://");
   if (TrashStore::isTrashUrl(path))
     return TrashStore::normalizeUrl(path);
   const QString expanded = expandUser(path);
@@ -245,6 +342,7 @@ void DirectoryModel::resetListing() {
   m_indexByPath.clear();
   m_visibleRowByAll.clear();
   m_suppressedNames.clear();
+  m_pendingThumbs.clear();
   m_thumbRows.clear();
   m_thumbFirst = -1;
   m_thumbLast = -1;
@@ -348,6 +446,12 @@ void DirectoryModel::bindSearch() {
           });
   connect(m_search, &SearchModel::queryChanged, this,
           &DirectoryModel::searchQueryChanged);
+  connect(m_search, &SearchModel::kindChanged, this,
+          &DirectoryModel::searchQueryChanged);
+  connect(m_search, &SearchModel::rootChanged, this,
+          &DirectoryModel::searchQueryChanged);
+  connect(m_search, &SearchModel::folderGroupsChanged, this,
+          &DirectoryModel::folderGroupsChanged);
 }
 
 void DirectoryModel::unbindSearch() {
@@ -392,8 +496,10 @@ void DirectoryModel::setPath(const QString &path, const QString &selectName,
 
   m_searching = false;
   resetListing();
+  const QString previous = m_path;
   if (!isVirtualPath(m_path) && !m_path.isEmpty() && isVirtualPath(resolved))
     m_returnPath = m_path;
+  updateVolumeRoot(previous, resolved);
   m_path = resolved;
   m_error.clear();
   m_pendingActivate.clear();
@@ -406,6 +512,7 @@ void DirectoryModel::setPath(const QString &path, const QString &selectName,
     m_searching = isSearchPath(resolved) && m_search;
     m_listing = m_searching && m_search->listing();
     emit pathChanged();
+    emit folderGroupsChanged();
     emit errorStringChanged();
     emit listingChanged();
     emitCurrentStat();
@@ -426,6 +533,10 @@ void DirectoryModel::setPath(const QString &path, const QString &selectName,
       loadRecentListing();
       return;
     }
+    if (isVolumesPath(resolved)) {
+      loadVolumesListing();
+      return;
+    }
     if (m_searching)
       adoptSearchRows();
     return;
@@ -435,6 +546,7 @@ void DirectoryModel::setPath(const QString &path, const QString &selectName,
   m_watcher.setPath(m_path);
   m_watchSerial = m_watcher.serial();
   emit pathChanged();
+  emit folderGroupsChanged();
   emit errorStringChanged();
   emit listingChanged();
   emitCurrentStat();
@@ -478,6 +590,10 @@ QVariantMap DirectoryModel::entryToMap(const DirectoryEntry &e) const {
   m.insert(QStringLiteral("origPath"), e.origPath);
   m.insert(QStringLiteral("perm"), formatPerm(e.perm, e.isDir, e.isSymlink));
   m.insert(QStringLiteral("mode"), e.perm);
+  m.insert(QStringLiteral("detail"), e.detail);
+  m.insert(QStringLiteral("used"), e.used);
+  m.insert(QStringLiteral("total"), e.total);
+  m.insert(QStringLiteral("percent"), e.percent);
   return m;
 }
 
@@ -507,6 +623,64 @@ void DirectoryModel::requestStatPath(const QString &path) {
   if (parent != QDir::cleanPath(m_path))
     return;
   emit statRequested(m_gen, m_path, QStringList{fi.fileName()});
+}
+
+void DirectoryModel::refreshFsn(const QString &view) {
+  if (!view.isEmpty())
+    m_fsnView = view;
+  const FsnLayout::View fsnView = m_fsnView == QLatin1String("map")
+                                      ? FsnLayout::MapView
+                                      : FsnLayout::TreeVView;
+  ++m_fsnGen;
+  const quint64 gen = m_fsnGen;
+  if (isVirtualPath(m_path)) {
+    QVector<FsnLayout::Item> items;
+    items.reserve(m_visible.size());
+    for (int vis : m_visible) {
+      if (vis < 0 || vis >= m_all.size())
+        continue;
+      const DirectoryEntry &e = m_all.at(vis);
+      FsnLayout::Item b;
+      b.name = e.name;
+      b.path = e.path;
+      b.isDir = e.isDir;
+      b.bytes = e.size > 0 ? e.size : (e.isDir ? 32768 : 1);
+      items.append(b);
+    }
+    QString rootName = m_path;
+    const int schemeEnd = rootName.indexOf(QLatin1String("://"));
+    if (schemeEnd > 0)
+      rootName = rootName.left(schemeEnd);
+    m_fsnBoxes = FsnLayout::toVariantList(
+        FsnLayout::buildFromItems(rootName, m_path, items, fsnView));
+    m_fsnListing = false;
+    emit fsnBoxesChanged();
+    emit fsnListingChanged();
+    return;
+  }
+  m_fsnListing = true;
+  emit fsnListingChanged();
+  const QString path = m_path;
+  const bool hidden = m_showHidden;
+  QPointer<DirectoryModel> self(this);
+  (void)QtConcurrent::run([self, gen, path, hidden, fsnView] {
+    const QVariantList boxes =
+        FsnLayout::toVariantList(FsnLayout::build(path, hidden, fsnView));
+    if (!self)
+      return;
+    QMetaObject::invokeMethod(self.data(), "applyFsnBoxes",
+                              Qt::QueuedConnection, Q_ARG(quint64, gen),
+                              Q_ARG(QVariantList, boxes));
+  });
+}
+
+void DirectoryModel::applyFsnBoxes(quint64 gen, const QVariantList &boxes) {
+  if (gen != m_fsnGen)
+    return;
+  m_fsnBoxes = boxes;
+  m_fsnListing = false;
+  emit fsnBoxesChanged();
+  emit fsnListingChanged();
 }
 
 void DirectoryModel::setShowHidden(bool show) {
@@ -583,6 +757,13 @@ void DirectoryModel::moveCursor(int delta) {
     setCurrentIndex(0);
   else
     setCurrentIndex(m_currentIndex + delta);
+}
+
+int DirectoryModel::stepSearchGrid(int index, int dx, int dy,
+                                   int columns) const {
+  if (!searching() || !m_search || !m_search->folderGroupModel())
+    return index + dy * qMax(1, columns) + dx;
+  return m_search->folderGroupModel()->stepVisual(index, dx, dy, columns);
 }
 
 void DirectoryModel::activateIndex(int sourceRow) {
@@ -746,6 +927,69 @@ DirectoryEntry DirectoryModel::makeRecentEntry(const QString &path,
   return e;
 }
 
+void DirectoryModel::updateVolumeRoot(const QString &previous,
+                                      const QString &next) {
+  if (isVolumesPath(previous) && !isVirtualPath(next)) {
+    const auto v = VolumeStore::instance().findMount(next);
+    m_volumeRoot = v.extra ? v.mountPoint : QString();
+    if (v.extra)
+      m_returnPath = QStringLiteral("volumes://");
+    return;
+  }
+  if (isVirtualPath(next)) {
+    if (!isVolumesPath(next))
+      m_volumeRoot.clear();
+    return;
+  }
+  const auto root = VolumeStore::instance().extraRoot(next);
+  if (root.extra)
+    m_volumeRoot = root.mountPoint;
+  else
+    m_volumeRoot.clear();
+}
+
+QString DirectoryModel::volumeHint() const {
+  if (isVolumes())
+    return {};
+  const QString path = isVirtualPath(m_path) ? QString() : m_path;
+  const auto v = VolumeStore::instance().containing(path);
+  if (v.mountPoint.isEmpty() || v.total <= 0)
+    return {};
+  return v.label + QStringLiteral("  ") + VolumeStore::formatBytes(v.free) +
+         QStringLiteral(" free / ") + VolumeStore::formatBytes(v.total);
+}
+
+void DirectoryModel::loadVolumesListing() {
+  QVector<DirectoryEntry> batch;
+  const auto vols = VolumeStore::instance().volumes();
+  batch.reserve(vols.size());
+  QSet<QString> names;
+  for (const auto &v : vols) {
+    DirectoryEntry e;
+    e.name = v.label;
+    if (names.contains(e.name))
+      e.name = v.label + QLatin1Char(' ') + QFileInfo(v.mountPoint).fileName();
+    names.insert(e.name);
+    e.path = v.mountPoint;
+    e.uri = QUrl::fromLocalFile(v.mountPoint);
+    e.isDir = true;
+    e.size = v.free;
+    e.used = v.used;
+    e.total = v.total;
+    e.percent = v.total > 0
+                    ? qBound(0, int((v.used * 100) / v.total), 100)
+                    : -1;
+    e.mime = QStringLiteral("inode/directory");
+    e.iconName = QStringLiteral("folder");
+    e.dirKind = QStringLiteral("volume");
+    e.detail = VolumeStore::detailText(v);
+    e.origPath = v.mountPoint;
+    batch.append(e);
+  }
+  onBatchReady(m_gen, batch);
+  onFinished(m_gen, true, QString());
+}
+
 void DirectoryModel::loadRecentListing() {
   QVector<DirectoryEntry> batch;
   if (m_recents) {
@@ -824,12 +1068,10 @@ void DirectoryModel::applyEntry(const DirectoryEntry &entry) {
   m_all[allIndex] = entry;
   if (m_all[allIndex].thumbnail.isEmpty())
     m_all[allIndex].thumbnail = oldThumb;
-  if (oldPath != entry.path) {
-    if (!oldPath.isEmpty())
-      m_indexByPath.remove(oldPath);
-    if (!entry.path.isEmpty())
-      m_indexByPath.insert(entry.path, allIndex);
-  }
+  if (oldPath != entry.path && !oldPath.isEmpty())
+    m_indexByPath.remove(oldPath);
+  if (!entry.path.isEmpty())
+    m_indexByPath.insert(entry.path, allIndex);
 
   const auto vis = m_visibleRowByAll.constFind(allIndex);
   if (vis == m_visibleRowByAll.cend())
@@ -846,15 +1088,35 @@ void DirectoryModel::onStatsReady(quint64 generation,
   Q_UNUSED(priority);
   if (generation != m_gen)
     return;
+  QStringList thumbs;
+  thumbs.reserve(batch.size());
   for (const DirectoryEntry &e : batch) {
+    qint64 oldMtime = 0;
+    bool hadThumb = false;
+    int visRow = -1;
+    const auto it = m_indexByName.constFind(e.name);
+    if (it != m_indexByName.cend()) {
+      const int allIndex = it.value();
+      if (allIndex >= 0 && allIndex < m_all.size()) {
+        oldMtime = m_all.at(allIndex).mtime;
+        hadThumb = !m_all.at(allIndex).thumbnail.isEmpty();
+        visRow = m_visibleRowByAll.value(allIndex, -1);
+      }
+    }
     applyEntry(e);
     emit entryStatReady(e.path, entryToMap(e));
+    if (e.path.isEmpty())
+      continue;
+    const bool dirTouched =
+        e.isDir && oldMtime > 0 && e.mtime != oldMtime && hadThumb;
+    const bool pending = m_pendingThumbs.remove(e.path);
+    const bool onScreen = visRow >= 0 && m_thumbRows.contains(visRow);
+    if (dirTouched || pending || (!hadThumb && onScreen))
+      thumbs.append(e.path);
   }
   maybeActivatePending();
-  if (!m_thumbRows.isEmpty())
-    requestSourceThumbs(m_thumbRows, m_thumbSizePx);
-  else if (m_thumbFirst >= 0)
-    requestVisibleThumbs(m_thumbFirst, m_thumbLast, m_thumbSizePx);
+  if (!thumbs.isEmpty())
+    refreshThumbs(thumbs);
 }
 
 void DirectoryModel::maybeActivatePending() {
@@ -970,6 +1232,8 @@ void DirectoryModel::insertPlaceholder(const QString &name, bool isDir) {
   const int allIndex = m_all.size();
   m_all.append(e);
   m_indexByName.insert(name, allIndex);
+  if (!e.path.isEmpty())
+    m_indexByPath.insert(e.path, allIndex);
   if (m_showHidden || !e.isHidden)
     insertVisible(allIndex);
 }
@@ -983,8 +1247,11 @@ void DirectoryModel::removeByName(const QString &name) {
   const int allIndex = it.value();
   removeVisible(allIndex);
   m_indexByName.remove(name);
-  if (allIndex >= 0 && allIndex < m_all.size())
+  if (allIndex >= 0 && allIndex < m_all.size()) {
+    if (!m_all[allIndex].path.isEmpty())
+      m_indexByPath.remove(m_all[allIndex].path);
     m_all[allIndex] = DirectoryEntry{};
+  }
 }
 
 void DirectoryModel::renameEntry(const QString &from, const QString &to) {
@@ -1000,7 +1267,11 @@ void DirectoryModel::renameEntry(const QString &from, const QString &to) {
     removeByName(to);
   DirectoryEntry &e = m_all[allIndex];
   e.name = to;
+  if (!e.path.isEmpty())
+    m_indexByPath.remove(e.path);
   e.path = QDir(m_path).filePath(to);
+  if (!e.path.isEmpty())
+    m_indexByPath.insert(e.path, allIndex);
   e.uri = QUrl::fromLocalFile(e.path);
   e.isHidden = !to.isEmpty() && to[0] == QLatin1Char('.');
   m_indexByName.remove(from);
@@ -1018,7 +1289,14 @@ void DirectoryModel::renameEntry(const QString &from, const QString &to) {
 }
 
 void DirectoryModel::navigateToExistingParent() {
-  if (isTrash() || isRecent() || isSearchPath(m_path)) {
+  if (!m_volumeRoot.isEmpty() &&
+      (m_path == m_volumeRoot || !QFileInfo(m_volumeRoot).isDir() ||
+       !QFileInfo(m_path).isDir())) {
+    m_volumeRoot.clear();
+    setPath(QStringLiteral("volumes://"), QString(), true);
+    return;
+  }
+  if (isTrash() || isRecent() || isSearch() || isVolumes()) {
     const QString dest =
         m_returnPath.isEmpty() ? QDir::homePath() : m_returnPath;
     setPath(dest, QString(), true);
@@ -1163,6 +1441,45 @@ void DirectoryModel::requestSourceThumbs(const QVector<int> &sourceRows,
     jobs.append(job);
   }
   m_thumbs->requestVisible(jobs);
+}
+
+void DirectoryModel::refreshThumbs(const QStringList &paths) {
+  if (!m_thumbs || paths.isEmpty())
+    return;
+  const int sizePx = m_thumbSizePx > 0 ? m_thumbSizePx : 128;
+  QVector<ThumbnailJob> jobs;
+  jobs.reserve(paths.size());
+  QSet<QString> seen;
+  for (const QString &raw : paths) {
+    const QString path = QDir::cleanPath(raw);
+    if (path.isEmpty() || seen.contains(path))
+      continue;
+    seen.insert(path);
+    auto it = m_indexByPath.constFind(path);
+    if (it == m_indexByPath.cend()) {
+      m_pendingThumbs.insert(path);
+      continue;
+    }
+    const int allIndex = it.value();
+    if (allIndex < 0 || allIndex >= m_all.size())
+      continue;
+    DirectoryEntry &e = m_all[allIndex];
+    if (e.path.isEmpty())
+      continue;
+    qint64 mtime = QFileInfo(e.path).lastModified().toMSecsSinceEpoch();
+    if (mtime <= 0)
+      mtime = QDateTime::currentMSecsSinceEpoch();
+    if (!e.thumbnail.isEmpty())
+      mtime = qMax(mtime + 1, QDateTime::currentMSecsSinceEpoch());
+    ThumbnailJob job;
+    job.path = e.path;
+    job.mime = e.mime;
+    job.mtime = mtime;
+    job.sizePx = sizePx;
+    jobs.append(job);
+  }
+  if (!jobs.isEmpty())
+    m_thumbs->request(jobs);
 }
 
 void DirectoryModel::onThumbnailReady(const QString &path, const QString &url) {

@@ -15,6 +15,9 @@ class NavStack;
 class LocationChips : public QObject {
   Q_OBJECT
   Q_PROPERTY(QVariantList chips READ chips NOTIFY chipsChanged)
+  Q_PROPERTY(QVariantList placeChips READ placeChips NOTIFY chipsChanged)
+  Q_PROPERTY(QVariantList diskChips READ diskChips NOTIFY chipsChanged)
+  Q_PROPERTY(QVariantMap volumesChip READ volumesChip NOTIFY chipsChanged)
   Q_PROPERTY(bool chooserMode READ chooserMode WRITE setChooserMode NOTIFY
                  chooserModeChanged)
 
@@ -27,6 +30,9 @@ public:
   void setDirectoryModel(DirectoryModel *model);
 
   QVariantList chips() const { return m_chips; }
+  QVariantList placeChips() const;
+  QVariantList diskChips() const;
+  QVariantMap volumesChip() const;
   bool chooserMode() const { return m_chooserMode; }
   Q_INVOKABLE void setChooserMode(bool on);
 
@@ -49,6 +55,7 @@ private:
   QVariantMap chipMap(const QString &id) const;
   QVariantMap pinChipMap(const QString &path) const;
   bool chipActive(const QVariantMap &chip) const;
+  QVariantList chipsInGroup(const QString &group) const;
   void persistPins();
   void rebuild();
 

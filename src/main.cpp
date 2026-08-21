@@ -15,6 +15,7 @@
 #include "SelectionModel.h"
 #include "ThumbnailService.h"
 #include "ThumbImageProvider.h"
+#include "VolumeStore.h"
 #include "XdgOpen.h"
 #include "cli.h"
 
@@ -177,7 +178,8 @@ int main(int argc, char *argv[]) {
   const QStringList positional = parser.positionalArguments();
   if (!positional.isEmpty())
     startPath = positional.first();
-  else if (!config.lastPath().isEmpty())
+  else if (!config.lastPath().isEmpty() &&
+           !config.lastPath().startsWith(QLatin1String("search:")))
     startPath = config.lastPath();
 
   DirectoryModel directoryModel;
@@ -265,6 +267,7 @@ int main(int argc, char *argv[]) {
                    &HostApi::runTerminal);
   QObject::connect(&keyMachine, &KeyMachine::openWithRequested, &hostApi,
                    &HostApi::openWithPalette);
+  VolumeStore::instance().startWatching();
   engine.rootContext()->setContextProperty(QStringLiteral("hostApi"),
                                            &hostApi);
   engine.rootContext()->setContextProperty(QStringLiteral("selectionModel"),
@@ -323,6 +326,11 @@ int main(int argc, char *argv[]) {
   });
   QObject::connect(&config, &Config::pinsChanged, &config,
                    [&] { schedulePersist(); });
+  QObject::connect(&app, &QCoreApplication::aboutToQuit, &config, [&] {
+    persistTimer.stop();
+    if (config.writable())
+      config.save();
+  });
 
   // Declared last so it dies first and drops this connection before hostApi.
   RecentStore recents;

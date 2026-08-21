@@ -2,6 +2,7 @@
 
 #include "CoreVerbs.h"
 #include "HandlerExec.h"
+#include "VolumeStore.h"
 
 #include <QFileInfo>
 #include <QUrl>
@@ -13,7 +14,20 @@ HandlerActions::HandlerActions(HandlerRegistry *registry, HandlerExec *exec)
 bool HandlerActions::isVirtualLocation(const QString &path) {
   return path.startsWith(QLatin1String("trash:")) ||
          path.startsWith(QLatin1String("recent:")) ||
-         path.startsWith(QLatin1String("search:"));
+         path.startsWith(QLatin1String("search:")) ||
+         path.startsWith(QLatin1String("volumes:"));
+}
+
+bool HandlerActions::canEject(const QVector<Manifest::Item> &items) {
+  if (items.size() != 1)
+    return false;
+  const QString path = items.constFirst().path;
+  if (path.isEmpty() || isVirtualLocation(path))
+    return false;
+  const VolumeStore::Volume v = VolumeStore::instance().findMount(path);
+  if (v.mountPoint.isEmpty() || v.mountPoint == QLatin1String("/"))
+    return false;
+  return v.extra || v.removable;
 }
 
 HandlerActions::Kind HandlerActions::classify(const Manifest &m,
@@ -67,6 +81,8 @@ bool HandlerActions::runCore(const Manifest &m,
   const QString verb = m.coreVerb(QStringLiteral("action"));
   if (verb == QLatin1String("trash"))
     return runTrash(items);
+  if (verb == QLatin1String("eject"))
+    return runEject(items, QString());
   m_error = QStringLiteral("unknown core verb '%1'").arg(verb);
   return false;
 }
@@ -152,8 +168,12 @@ bool HandlerActions::runAction(const QString &id,
     return false;
   }
   const Kind kind = classify(rec.manifest, QStringLiteral("action"));
-  if (kind == Kind::Core)
+  if (kind == Kind::Core) {
+    if (rec.manifest.coreVerb(QStringLiteral("action")) ==
+        QLatin1String("eject"))
+      return runEject(items, cwd);
     return runCore(rec.manifest, items);
+  }
   if (kind == Kind::Exec) {
     const QString exec = rec.manifest.execLine(QStringLiteral("action"));
     const bool terminal = rec.manifest.id ==
@@ -175,6 +195,22 @@ bool HandlerActions::runAction(const QString &id,
   }
   m_error = QStringLiteral("handler '%1' has no action runtime").arg(id);
   return false;
+}
+
+bool HandlerActions::runEject(const QVector<Manifest::Item> &items,
+                              const QString &cwd) {
+  m_error.clear();
+  QString target;
+  if (!items.isEmpty())
+    target = items.constFirst().path;
+  if (target.isEmpty() || HandlerActions::isVirtualLocation(target))
+    target = cwd;
+  if (!VolumeStore::instance().eject(target, &m_error)) {
+    if (m_error.isEmpty())
+      m_error = QStringLiteral("eject failed");
+    return false;
+  }
+  return true;
 }
 
 bool HandlerActions::runTrash(const QVector<Manifest::Item> &items) {
@@ -215,5 +251,13 @@ QVector<HandlerRegistry::Match>
 HandlerActions::actionMatches(const QVector<Manifest::Item> &items) const {
   if (!m_reg)
     return {};
-  return m_reg->resolve(QStringLiteral("action"), items);
+  auto matches = m_reg->resolve(QStringLiteral("action"), items);
+  QVector<HandlerRegistry::Match> out;
+  out.reserve(matches.size());
+  for (const auto &m : matches) {
+    if (m.id == QLatin1String("synchro.action.eject") && !canEject(items))
+      continue;
+    out.append(m);
+  }
+  return out;
 }

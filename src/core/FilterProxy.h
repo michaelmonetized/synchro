@@ -2,6 +2,7 @@
 
 #include <QSortFilterProxyModel>
 #include <QString>
+#include <QVariantMap>
 #include <QVector>
 
 class DirectoryModel;
@@ -47,6 +48,7 @@ public:
   Q_INVOKABLE QString currentName() const;
   Q_INVOKABLE int seekPrefix(const QString &prefix);
   Q_INVOKABLE void requestVisibleThumbs(int first, int last, int sizePx);
+  Q_INVOKABLE QVariantMap rowMap(int proxyRow) const;
   void setPortalRules(const QVector<PortalFilterRule> &rules);
 
 signals:

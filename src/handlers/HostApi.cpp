@@ -21,6 +21,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QIODevice>
 #include <QGuiApplication>
 #include <QImageReader>
 #include <QMetaObject>
@@ -39,10 +40,14 @@ HostApi::HostApi(DirectoryModel *model, FilterProxy *proxy, NavStack *nav,
     connect(m_model, &DirectoryModel::pathChanged, this, [this] {
       close();
       closeAction();
+      refreshListingChrome();
     });
     connect(m_model, &DirectoryModel::entryStatReady, this,
             &HostApi::onEntryStat);
+    connect(m_model, &DirectoryModel::searchQueryChanged, this,
+            &HostApi::peekFindQueryChanged);
   }
+  refreshListingChrome();
 }
 
 void HostApi::onEntryStat(const QString &path, const QVariantMap &st) {
@@ -434,7 +439,90 @@ QString posixWorkingDirectory(const QString &listingCwd,
 }
 } // namespace
 
-QVariantMap HostApi::readPreview(const QUrl &url, int maxBytes) const {
+namespace {
+
+constexpr int kPreviewCap = 256 * 1024;
+constexpr int kFindHitCap = 500;
+constexpr qint64 kFindLoadCap = 16 * 1024 * 1024;
+
+bool needleHasUpper(const QString &s) {
+  for (const QChar c : s) {
+    if (c.isUpper())
+      return true;
+  }
+  return false;
+}
+
+char foldAscii(char c) {
+  if (c >= 'A' && c <= 'Z')
+    return static_cast<char>(c - 'A' + 'a');
+  return c;
+}
+
+int findBytes(const QByteArray &hay, const QByteArray &needle, int from,
+              bool sensitive) {
+  if (sensitive)
+    return hay.indexOf(needle, from);
+  const int n = needle.size();
+  const int h = hay.size();
+  if (n <= 0 || from > h - n)
+    return -1;
+  for (int i = from; i <= h - n; ++i) {
+    int k = 0;
+    for (; k < n; ++k) {
+      if (foldAscii(hay.at(i + k)) != foldAscii(needle.at(k)))
+        break;
+    }
+    if (k == n)
+      return i;
+  }
+  return -1;
+}
+
+void walkLines(const QString &text, int from, int to, int *line, int *col) {
+  for (int i = from; i < to && i < text.size(); ++i) {
+    if (text.at(i) == QLatin1Char('\n')) {
+      ++(*line);
+      *col = 1;
+    } else {
+      ++(*col);
+    }
+  }
+}
+
+void walkLinesBytes(const QByteArray &buf, int from, int to, int *line,
+                    int *col) {
+  for (int i = from; i < to && i < buf.size(); ++i) {
+    if (buf.at(i) == '\n') {
+      ++(*line);
+      *col = 1;
+    } else {
+      ++(*col);
+    }
+  }
+}
+
+QString snippetAround(const QString &text, int at, int len) {
+  const int a = qMax(0, at - 24);
+  const int b = qMin(text.size(), at + len + 32);
+  return text.mid(a, b - a).simplified();
+}
+
+QVariantMap makeHit(int line, int column, qint64 offset, int length,
+                    const QString &snippet) {
+  QVariantMap m;
+  m.insert(QStringLiteral("line"), line);
+  m.insert(QStringLiteral("column"), column);
+  m.insert(QStringLiteral("offset"), offset);
+  m.insert(QStringLiteral("length"), length);
+  m.insert(QStringLiteral("snippet"), snippet);
+  return m;
+}
+
+} // namespace
+
+QVariantMap HostApi::readPreview(const QUrl &url, int maxBytes,
+                                 qint64 startByte) const {
   QVariantMap out;
   const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
   const QFileInfo fi(path);
@@ -443,22 +531,38 @@ QVariantMap HostApi::readPreview(const QUrl &url, int maxBytes) const {
   out.insert(QStringLiteral("size"), fi.size());
   if (maxBytes <= 0)
     maxBytes = 65536;
-  if (maxBytes > 256 * 1024)
-    maxBytes = 256 * 1024;
+  if (maxBytes > kPreviewCap)
+    maxBytes = kPreviewCap;
   QFile f(path);
   if (!f.open(QIODevice::ReadOnly)) {
     out.insert(QStringLiteral("ok"), false);
     out.insert(QStringLiteral("error"), QStringLiteral("unreadable"));
     return out;
   }
+  qint64 start = qMax(qint64(0), startByte);
+  if (start > fi.size())
+    start = fi.size();
+  if (start > 0) {
+    const qint64 back = qMin(start, qint64(1024));
+    f.seek(start - back);
+    const QByteArray pre = f.read(back);
+    const int nl = pre.lastIndexOf('\n');
+    if (nl >= 0)
+      start = start - back + nl + 1;
+    f.seek(start);
+  }
   QByteArray raw = f.read(maxBytes + 1);
-  const bool truncated = raw.size() > maxBytes;
-  if (truncated)
+  const bool tailCut = raw.size() > maxBytes;
+  if (tailCut)
     raw.chop(1);
   const int probe = qMin(raw.size(), 4096);
   const bool binary = raw.left(probe).contains('\0');
   out.insert(QStringLiteral("binary"), binary);
-  out.insert(QStringLiteral("truncated"), truncated);
+  out.insert(QStringLiteral("startByte"), start);
+  out.insert(QStringLiteral("byteLength"), raw.size());
+  out.insert(QStringLiteral("truncated"), tailCut || start > 0);
+  out.insert(QStringLiteral("truncatedHead"), start > 0);
+  out.insert(QStringLiteral("truncatedTail"), tailCut);
   if (binary) {
     out.insert(QStringLiteral("ok"), false);
     out.insert(QStringLiteral("text"), QString());
@@ -468,12 +572,120 @@ QVariantMap HostApi::readPreview(const QUrl &url, int maxBytes) const {
   out.insert(QStringLiteral("ok"), true);
   const QString text = QString::fromUtf8(raw);
   out.insert(QStringLiteral("text"), text);
-  const HighlightedText hl = SyntaxHighlight::highlight(path, text);
-  out.insert(QStringLiteral("highlighted"), hl.ok);
-  out.insert(QStringLiteral("language"), hl.language);
-  if (hl.ok)
-    out.insert(QStringLiteral("html"), hl.html);
+  if (start == 0) {
+    const HighlightedText hl = SyntaxHighlight::highlight(path, text);
+    out.insert(QStringLiteral("highlighted"), hl.ok);
+    out.insert(QStringLiteral("language"), hl.language);
+    if (hl.ok)
+      out.insert(QStringLiteral("html"), hl.html);
+  } else {
+    out.insert(QStringLiteral("highlighted"), false);
+  }
   return out;
+}
+
+QVariantList HostApi::findInFile(const QUrl &url, const QString &needle,
+                                 int maxHits) const {
+  QVariantList hits;
+  if (needle.isEmpty())
+    return hits;
+  if (maxHits <= 0)
+    maxHits = 200;
+  if (maxHits > kFindHitCap)
+    maxHits = kFindHitCap;
+  const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+  QFile f(path);
+  if (!f.open(QIODevice::ReadOnly))
+    return hits;
+  const qint64 size = f.size();
+  const QByteArray needleUtf8 = needle.toUtf8();
+  if (needleUtf8.isEmpty())
+    return hits;
+  const bool sensitive = needleHasUpper(needle);
+
+  auto takeHit = [&](int line, int column, qint64 offset, int length,
+                     const QString &snippet) {
+    hits.append(makeHit(line, column, offset, length, snippet));
+  };
+
+  if (size <= kFindLoadCap) {
+    const QByteArray raw = f.readAll();
+    if (raw.left(qMin(raw.size(), 4096)).contains('\0'))
+      return hits;
+    const QString text = QString::fromUtf8(raw);
+    const Qt::CaseSensitivity cs =
+        sensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
+    int from = 0;
+    int scanned = 0;
+    int line = 1;
+    int col = 1;
+    qint64 bytes = 0;
+    while (hits.size() < maxHits) {
+      const int at = text.indexOf(needle, from, cs);
+      if (at < 0)
+        break;
+      walkLines(text, scanned, at, &line, &col);
+      bytes += text.mid(scanned, at - scanned).toUtf8().size();
+      const int matchChars = needle.size();
+      const int matchBytes = text.mid(at, matchChars).toUtf8().size();
+      takeHit(line, col, bytes, matchBytes, snippetAround(text, at, matchChars));
+      scanned = at;
+      from = at + qMax(1, matchChars);
+    }
+    return hits;
+  }
+
+  QByteArray probe = f.peek(4096);
+  if (probe.contains('\0'))
+    return hits;
+  int line = 1;
+  int col = 1;
+  int walked = 0;
+  QByteArray carry;
+  qint64 produced = 0;
+  const int overlap = needleUtf8.size() - 1;
+  while (hits.size() < maxHits) {
+    const QByteArray chunk = f.read(256 * 1024);
+    if (chunk.isEmpty() && carry.isEmpty())
+      break;
+    const QByteArray hay = carry + chunk;
+    const qint64 hayStart = produced - carry.size();
+    int searchFrom = 0;
+    while (hits.size() < maxHits) {
+      const int at = findBytes(hay, needleUtf8, searchFrom, sensitive);
+      if (at < 0)
+        break;
+      walkLinesBytes(hay, walked, at, &line, &col);
+      walked = at;
+      const QString snip = QString::fromUtf8(
+          hay.mid(qMax(0, at - 24), needleUtf8.size() + 48));
+      takeHit(line, col, hayStart + at, needleUtf8.size(), snip.simplified());
+      searchFrom = at + needleUtf8.size();
+    }
+    const int keep = qMax(0, overlap);
+    const int consume = qMax(0, hay.size() - keep);
+    walkLinesBytes(hay, walked, consume, &line, &col);
+    walked = 0;
+    carry = hay.right(keep);
+    produced += chunk.size();
+    if (chunk.isEmpty())
+      break;
+  }
+  return hits;
+}
+
+QString HostApi::markFindHits(const QString &html, const QString &plain,
+                              const QString &needle, int currentLocal,
+                              const QColor &matchFill,
+                              const QColor &currentFill) const {
+  return SyntaxHighlight::markFinds(html, plain, needle, currentLocal,
+                                    matchFill, currentFill);
+}
+
+QString HostApi::peekFindQuery() const {
+  if (!m_model || !m_model->isContentSearch())
+    return {};
+  return m_model->searchQuery();
 }
 
 QVariantMap HostApi::readParquet(const QUrl &url, int maxRows) const {
@@ -1167,14 +1379,27 @@ void HostApi::destroyDoContent() {
     m_doPreviewItem->deleteLater();
     m_doPreviewItem = nullptr;
   }
-  const bool had = m_doTargetIsDir || !m_doMosaicUrl.isEmpty() ||
-                   !m_doTargetName.isEmpty();
-  m_doMosaicUrl.clear();
-  m_doMosaicPath.clear();
+  const bool had = m_doTargetIsDir || !m_doTargetName.isEmpty();
   m_doTargetName.clear();
   m_doTargetIsDir = false;
   if (had)
     emit doPreviewChanged();
+}
+
+QObject *HostApi::doFolderModel() const {
+  return m_doTargetIsDir ? m_doFolderModel : nullptr;
+}
+
+QObject *HostApi::doFolderProxy() const {
+  return m_doTargetIsDir ? m_doFolderProxy : nullptr;
+}
+
+void HostApi::ensureDoFolderListing() {
+  if (m_doFolderModel)
+    return;
+  m_doFolderModel = new DirectoryModel(this);
+  m_doFolderProxy = new FilterProxy(this);
+  m_doFolderProxy->setDirectoryModel(m_doFolderModel);
 }
 
 Manifest::Item HostApi::doContentItem() const {
@@ -1226,16 +1451,14 @@ void HostApi::loadDoContent() {
     m_doTargetName = item.path;
 
   if (item.isDir) {
-    constexpr int kMosaicPx = 512;
-    const QFileInfo fi(item.path);
-    const qint64 mtime = fi.lastModified().toMSecsSinceEpoch();
-    const QImage img =
-        ThumbnailService::renderFolderMosaicImage(item.path, kMosaicPx);
-    if (!img.isNull()) {
-      ThumbCache::instance().putImage(item.path, mtime, kMosaicPx, img);
-      m_doMosaicUrl = ThumbCache::imageUrl(item.path, mtime, kMosaicPx);
-      m_doMosaicPath = item.path;
+    ensureDoFolderListing();
+    if (m_model)
+      m_doFolderModel->setShowHidden(m_model->showHidden());
+    if (m_proxy) {
+      m_doFolderProxy->setSortRoleName(m_proxy->sortRoleName());
+      m_doFolderProxy->setSortOrder(m_proxy->sortOrder());
     }
+    m_doFolderModel->setPath(item.path, QString(), true);
     emit doPreviewChanged();
     return;
   }
@@ -1415,7 +1638,6 @@ bool HostApi::openDoLayer(const QString &focusId) {
     }
   }
   close();
-  loadDoContent();
   rebuildDoVerbs();
   int idx = 0;
   if (!focusId.isEmpty()) {
@@ -1432,7 +1654,27 @@ bool HostApi::openDoLayer(const QString &focusId) {
   m_doParamsFocused = false;
   if (!wasOpen)
     emit actionOpenChanged();
+  // After actionOpen: QML binds doFolder* on doPreviewChanged.
+  loadDoContent();
   setDoIndex(idx);
   emit doHintChanged();
   return true;
+}
+
+void HostApi::refreshListingChrome() {
+  QUrl row;
+  QUrl thumb;
+  if (m_model && m_model->isVolumes() && m_registry) {
+    const HandlerRegistry::Record rec =
+        m_registry->handler(QStringLiteral("synchro.location.volumes"));
+    if (rec.enabled && !rec.manifest.id.isEmpty()) {
+      row = HandlerLoader::entryPointUrl(rec, QStringLiteral("row"));
+      thumb = HandlerLoader::entryPointUrl(rec, QStringLiteral("thumb"));
+    }
+  }
+  if (row == m_listingRowUrl && thumb == m_listingThumbUrl)
+    return;
+  m_listingRowUrl = row;
+  m_listingThumbUrl = thumb;
+  emit listingChromeChanged();
 }

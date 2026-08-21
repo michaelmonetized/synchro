@@ -157,6 +157,16 @@ QString FilterProxy::currentName() const {
   return data(index(row, 0), DirectoryModel::NameRole).toString();
 }
 
+QVariantMap FilterProxy::rowMap(int proxyRow) const {
+  auto *dm = directoryModel();
+  if (!dm)
+    return {};
+  const QModelIndex src = mapToSource(index(proxyRow, 0));
+  if (!src.isValid())
+    return {};
+  return dm->rowMap(src.row());
+}
+
 void FilterProxy::requestVisibleThumbs(int first, int last, int sizePx) {
   auto *dm = directoryModel();
   if (!dm)

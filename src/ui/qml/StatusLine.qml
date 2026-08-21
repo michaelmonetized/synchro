@@ -9,6 +9,7 @@ Item {
     property var selection
     property var filterProxy
     property var host: null
+    property var fileOps: null
     property string extra: ""
 
     implicitHeight: Math.max(Theme.fontBody + Theme.space(8), 22)
@@ -45,6 +46,12 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         text: {
             var bits = []
+            if (root.fileOps && root.fileOps.busy) {
+                if (root.fileOps.progressText)
+                    bits.push(root.fileOps.progressText)
+                else
+                    bits.push("working…")
+            }
             if (root.keyMachine && root.keyMachine.mode === "field-search")
                 bits.push("SEARCH")
             else if (root.fileModel && root.fileModel.isSearch)
@@ -72,6 +79,8 @@ Item {
                 if (role !== "name" || desc)
                     bits.push(role + (desc ? "↓" : "↑"))
             }
+            if (root.fileModel && root.fileModel.volumeHint)
+                bits.push(root.fileModel.volumeHint)
             if (root.fileModel && root.fileModel.path)
                 bits.push(root.fileModel.path)
             if (root.keyMachine && root.keyMachine.statusMessage)
@@ -87,13 +96,5 @@ Item {
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody
         elide: Text.ElideMiddle
-    }
-
-    Rectangle {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        height: 1
-        color: Theme.normalBorder
     }
 }

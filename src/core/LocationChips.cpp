@@ -5,6 +5,7 @@
 #include "HandlerRegistry.h"
 #include "Manifest.h"
 #include "NavStack.h"
+#include "VolumeStore.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -62,6 +63,8 @@ void LocationChips::setDirectoryModel(DirectoryModel *model) {
   if (m_model)
     connect(m_model, &DirectoryModel::pathChanged, this,
             &LocationChips::rebuild);
+  connect(&VolumeStore::instance(), &VolumeStore::changed, this,
+          &LocationChips::rebuild);
   rebuild();
 }
 
@@ -74,6 +77,33 @@ void LocationChips::setChooserMode(bool on) {
 }
 
 void LocationChips::refresh() { rebuild(); }
+
+QVariantList LocationChips::chipsInGroup(const QString &group) const {
+  QVariantList out;
+  for (const QVariant &row : m_chips) {
+    if (row.toMap().value(QStringLiteral("group")).toString() == group)
+      out.append(row);
+  }
+  return out;
+}
+
+QVariantList LocationChips::placeChips() const {
+  return chipsInGroup(QStringLiteral("place"));
+}
+
+QVariantList LocationChips::diskChips() const {
+  return chipsInGroup(QStringLiteral("disk"));
+}
+
+QVariantMap LocationChips::volumesChip() const {
+  for (const QVariant &row : m_chips) {
+    const QVariantMap chip = row.toMap();
+    if (chip.value(QStringLiteral("group")).toString() ==
+        QLatin1String("volumes"))
+      return chip;
+  }
+  return {};
+}
 
 QString LocationChips::expandPath(const QString &path) {
   QString out = path.trimmed();
@@ -116,7 +146,9 @@ bool LocationChips::allowedInChooser(const QString &adapter,
                                      const QString &runtime) {
   if (runtime == QLatin1String("path"))
     return true;
-  if (runtime == QLatin1String("core") && adapter == QLatin1String("recent"))
+  if (runtime == QLatin1String("core") &&
+      (adapter == QLatin1String("recent") ||
+       adapter == QLatin1String("volumes")))
     return true;
   return false;
 }
@@ -147,6 +179,7 @@ QVariantMap LocationChips::pinChipMap(const QString &path) const {
   out.insert(QStringLiteral("runtime"), QStringLiteral("path"));
   out.insert(QStringLiteral("path"), abs);
   out.insert(QStringLiteral("pinned"), true);
+  out.insert(QStringLiteral("group"), QStringLiteral("place"));
   out.insert(QStringLiteral("active"), chipActive(out));
   return out;
 }
@@ -199,6 +232,21 @@ bool LocationChips::unpin(const QString &path) {
 QVariantMap LocationChips::chipMap(const QString &id) const {
   if (isPinId(id))
     return pinChipMap(id.mid(4));
+  if (id.startsWith(QLatin1String("volume:"))) {
+    const QString mount = id.mid(7);
+    const auto v = VolumeStore::instance().findMount(mount);
+    if (v.mountPoint.isEmpty())
+      return {};
+    QVariantMap out;
+    out.insert(QStringLiteral("id"), id);
+    out.insert(QStringLiteral("name"), v.label);
+    out.insert(QStringLiteral("label"), VolumeStore::chipLabel(v));
+    out.insert(QStringLiteral("runtime"), QStringLiteral("path"));
+    out.insert(QStringLiteral("path"), v.mountPoint);
+    out.insert(QStringLiteral("group"), QStringLiteral("disk"));
+    out.insert(QStringLiteral("active"), chipActive(out));
+    return out;
+  }
   QVariantMap out;
   if (!m_registry || id.isEmpty())
     return out;
@@ -227,6 +275,11 @@ QVariantMap LocationChips::chipMap(const QString &id) const {
     out.insert(QStringLiteral("path"), QStringLiteral("recent://"));
   else if (adapter == QLatin1String("search"))
     out.insert(QStringLiteral("path"), QStringLiteral("search://"));
+  else if (adapter == QLatin1String("volumes"))
+    out.insert(QStringLiteral("path"), QStringLiteral("volumes://"));
+  out.insert(QStringLiteral("group"),
+             adapter == QLatin1String("volumes") ? QStringLiteral("volumes")
+                                                 : QStringLiteral("place"));
   out.insert(QStringLiteral("active"), chipActive(out));
   return out;
 }
@@ -235,9 +288,21 @@ bool LocationChips::chipActive(const QVariantMap &chip) const {
   if (!m_model)
     return false;
   const QString cwd = m_model->path();
+  const QString id = chip.value(QStringLiteral("id")).toString();
   const QString target = chip.value(QStringLiteral("path")).toString();
   if (target.isEmpty())
     return false;
+  if (id.startsWith(QLatin1String("volume:"))) {
+    const QString mount = id.mid(7);
+    if (mount == QLatin1String("/")) {
+      if (DirectoryModel::isVirtualPath(cwd))
+        return false;
+      return !VolumeStore::instance().extraRoot(cwd).extra;
+    }
+    return cwd == mount || cwd.startsWith(mount + QLatin1Char('/'));
+  }
+  if (target.startsWith(QLatin1String("volumes:")))
+    return cwd.startsWith(QLatin1String("volumes:"));
   if (DirectoryModel::isVirtualPath(target))
     return cwd.startsWith(target.left(target.indexOf(QLatin1Char(':')) + 1));
   const QString a = QFileInfo(cwd).canonicalFilePath();
@@ -272,6 +337,29 @@ void LocationChips::rebuild() {
       appendPins();
   }
   appendPins();
+  bool hasVolumes = false;
+  for (const QVariant &row : next) {
+    if (row.toMap().value(QStringLiteral("id")).toString() ==
+        QLatin1String("synchro.location.volumes")) {
+      hasVolumes = true;
+      break;
+    }
+  }
+  if (!hasVolumes) {
+    const QVariantMap vol = chipMap(QStringLiteral("synchro.location.volumes"));
+    if (!vol.isEmpty())
+      next.append(vol);
+  }
+  const QStringList pins = m_config ? m_config->pins() : QStringList();
+  for (const QVariant &row : VolumeStore::instance().extraChips()) {
+    QVariantMap chip = row.toMap();
+    const QString path = chip.value(QStringLiteral("path")).toString();
+    if (pins.contains(Config::normalizePin(path)))
+      continue;
+    chip.insert(QStringLiteral("group"), QStringLiteral("disk"));
+    chip.insert(QStringLiteral("active"), chipActive(chip));
+    next.append(chip);
+  }
   if (next == m_chips)
     return;
   m_chips = next;

@@ -101,6 +101,11 @@ void NavStack::goUp() {
       m_model->setPath(dest);
     return;
   }
+  const QString root = m_model->volumeRoot();
+  if (!root.isEmpty() && (path == root || QDir::cleanPath(path) == root)) {
+    m_model->setPath(QStringLiteral("volumes://"));
+    return;
+  }
   QDir dir(path);
   const QString name = QFileInfo(QDir::cleanPath(path)).fileName();
   if (!dir.cdUp())
@@ -113,6 +118,8 @@ void NavStack::goHome() { navigate(homePath()); }
 void NavStack::goTrash() { navigate(QStringLiteral("trash://")); }
 
 void NavStack::goRecent() { navigate(QStringLiteral("recent://")); }
+
+void NavStack::goVolumes() { navigate(QStringLiteral("volumes://")); }
 
 QVariantList NavStack::pathSegments() const {
   return segmentsFor(m_model ? m_model->path() : QString());
@@ -141,6 +148,32 @@ QVariantList NavStack::segmentsFor(const QString &path) const {
   if (path.startsWith(QLatin1String("recent:"))) {
     add(QStringLiteral("recent"), path);
     return segs;
+  }
+  if (path.startsWith(QLatin1String("volumes:"))) {
+    add(QStringLiteral("volumes"), QStringLiteral("volumes://"));
+    return segs;
+  }
+
+  if (m_model) {
+    const QString root = m_model->volumeRoot();
+    if (!root.isEmpty() &&
+        (path == root || path.startsWith(root + QLatin1Char('/')))) {
+      add(QStringLiteral("volumes"), QStringLiteral("volumes://"));
+      const QString label = QFileInfo(root).fileName().isEmpty()
+                                ? root
+                                : QFileInfo(root).fileName();
+      add(label, root);
+      if (path == root)
+        return segs;
+      const QStringList parts =
+          path.mid(root.size()).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+      QString acc = root;
+      for (const QString &part : parts) {
+        acc += QLatin1Char('/') + part;
+        add(part, acc);
+      }
+      return segs;
+    }
   }
 
   const QString home = homePath();

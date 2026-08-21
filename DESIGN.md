@@ -1825,6 +1825,7 @@ No existing schema. v1 files:
 | Compress / extract | later | `action` (tar/unzip exec) | Nautilus MIME list is archive-heavy; we don't claim those MIMEs in v1 |
 | Templates | later | `action` + `XDG_TEMPLATES_DIR` | On this box `XDG_TEMPLATES_DIR="$HOME/"` — useless until the user sets it |
 | User scripts (`~/.local/share/nautilus/scripts`) | later / migrate | `action` handlers | Offer a one-shot importer that wraps each script as `exec` |
+| Removable / extra mounts | **v1** | `volumes://` + chips | Not GVFS. POSIX mounts + statvfs. Extra disks are root trees; status shows free space. Eject via do-layer. Listing chrome (`entryPoints.row` / `thumb`) paints used/total bars; core owns the roles. |
 | Network (SMB, SFTP, MTP, gvfs) | later | `location` family | No GVFS in core |
 | Connect to server | later | same | |
 | Cloud (Dropbox, etc.) | later | `location` | Omarchy already has a Dropbox **bar-widget** (`omarchy.dropbox`, `kinds: ["bar-widget"]`); that is status, not a file store |

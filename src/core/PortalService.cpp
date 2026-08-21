@@ -323,15 +323,24 @@ const char *kindName(ChooserSession::Kind kind) {
   return "OpenFile";
 }
 
-QString titledForApp(const QString &title, const QString &appId) {
+bool titleLooksLikeChooser(const QString &title) {
+  return title.startsWith(QLatin1String("Open"), Qt::CaseInsensitive) ||
+         title.startsWith(QLatin1String("Save"), Qt::CaseInsensitive) ||
+         title.startsWith(QLatin1String("Select"), Qt::CaseInsensitive) ||
+         title.startsWith(QLatin1String("Choose"), Qt::CaseInsensitive);
+}
+
+QString titledForApp(ChooserSession::Kind kind, bool directory,
+                     const QString &title, const QString &appId) {
+  const QString fallback = defaultTitle(kind, directory);
   QString t = title.trimmed();
-  if (appId.isEmpty())
-    return t;
-  if (t.contains(appId, Qt::CaseInsensitive))
-    return t;
   if (t.isEmpty())
-    return appId;
-  return t + QStringLiteral(" — ") + appId;
+    t = fallback;
+  else if (!titleLooksLikeChooser(t))
+    t = fallback + QStringLiteral(" — ") + t;
+  if (!appId.isEmpty() && !t.contains(appId, Qt::CaseInsensitive))
+    t += QStringLiteral(" — ") + appId;
+  return t;
 }
 
 QString defaultAccept(ChooserSession::Kind kind, bool directory) {
@@ -469,6 +478,11 @@ uint FileChooserAdaptor::SaveFiles(const QDBusObjectPath &handle,
   return 0;
 }
 
+QString ChooserSession::windowTitle(Kind kind, bool directory,
+                                    const QString &title, const QString &appId) {
+  return titledForApp(kind, directory, title, appId);
+}
+
 ChooserSession::ChooserSession(Kind kind, const QDBusObjectPath &handle,
                                const QString &title,
                                const QVariantMap &options,
@@ -492,8 +506,7 @@ ChooserSession::ChooserSession(Kind kind, const QDBusObjectPath &handle,
   m_filter.setSortRoleName(m_config.sortRole());
   m_filter.setSortOrder(m_config.sortOrder());
   applyOptions(options);
-  if (m_title.isEmpty())
-    m_title = defaultTitle(kind, m_directory);
+  m_title = ChooserSession::windowTitle(kind, m_directory, m_title);
   if (m_acceptLabel.isEmpty())
     m_acceptLabel = defaultAccept(kind, m_directory);
 
@@ -726,9 +739,12 @@ bool ChooserSession::createWindow(QQmlEngine *engine) {
     delete obj;
     return false;
   }
+  m_window->setTitle(m_title);
   m_window->setFlags(m_window->flags() | Qt::Dialog);
   QObject::connect(m_window, &QQuickWindow::closing, this,
                    [this] { cancel(); });
+  // Map only after title + Dialog are set so Hyprland's float rule matches
+  // at first commit (title changes after map are not re-evaluated).
   m_window->setVisible(true);
   m_window->requestActivate();
   return true;
@@ -1131,7 +1147,10 @@ ChooserSession *PortalService::beginRequest(
     const QVariantMap &options, const QDBusConnection &connection,
     const QDBusMessage &message) {
   Q_UNUSED(parentWindow);
-  const QString winTitle = titledForApp(title, appId);
+  const bool directory = optionBool(options, "directory", false) ||
+                         kind == ChooserSession::Kind::SaveFiles;
+  const QString winTitle = ChooserSession::windowTitle(kind, directory, title,
+                                                       appId);
   std::fprintf(stderr, "synchro: portal %s app_id=%s title=%s\n",
                kindName(kind),
                qPrintable(appId.isEmpty() ? QStringLiteral("-") : appId),

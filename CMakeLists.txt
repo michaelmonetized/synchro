@@ -49,6 +49,12 @@ qt_standard_project_setup(REQUIRES 6.8)
 
 set(QT_QML_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml")
 
+set(SYNCHRO_FS_SOURCES
+    src/core/DirectoryModel.cpp
+    src/core/FsnLayout.cpp
+    src/core/VolumeStore.cpp
+)
+
 set(SYNCHRO_FILEOP_SOURCES
     src/core/SelectionModel.cpp
     src/core/UndoStack.cpp
@@ -70,7 +76,7 @@ set(SYNCHRO_SYNTAX_SOURCES
 
 qt_add_executable(synchro
     src/main.cpp
-    src/core/DirectoryModel.cpp
+    ${SYNCHRO_FS_SOURCES}
     src/core/DirectoryLister.cpp
     src/core/DirectoryWatcher.cpp
     src/core/NavStack.cpp
@@ -122,10 +128,15 @@ qt_add_qml_module(synchro
         src/ui/qml/Main.qml
         src/ui/qml/FileList.qml
         src/ui/qml/FileGrid.qml
+        src/ui/qml/FileFsn.qml
+        src/ui/qml/FileGridCell.qml
+        src/ui/qml/FileDropSurface.qml
+        src/ui/qml/FileDragGhost.qml
         src/ui/qml/PathBar.qml
         src/ui/qml/CommandField.qml
         src/ui/qml/PeekOverlay.qml
         src/ui/qml/DoOverlay.qml
+        src/ui/qml/DoFolderGrid.qml
         src/ui/qml/StatusLine.qml
         src/ui/qml/Confirm.qml
         src/ui/qml/ChooserWindow.qml
@@ -147,6 +158,7 @@ qt_add_qml_module(synchro_theme
         src/ui/qml/Synchro/Theme/FolderMark.qml
         src/ui/qml/Synchro/Theme/FileMark.qml
         src/ui/qml/Synchro/Theme/EmptyListing.qml
+        src/ui/qml/Synchro/Theme/ListingChrome.qml
     OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml/Synchro/Theme"
 )
 
@@ -156,6 +168,7 @@ qt_add_qml_module(synchro_handler
     VERSION 1.0
     QML_FILES
         src/ui/qml/Synchro/Handler/HandlerSurface.qml
+        src/ui/qml/Synchro/Handler/PeekFindBody.qml
         src/ui/qml/Synchro/Handler/DatabasePeek.qml
         src/ui/qml/Synchro/Handler/ArchivePeek.qml
     OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml/Synchro/Handler"
@@ -191,13 +204,14 @@ if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     qt_add_executable(directory_model_test
         tests/directory_model_test.cpp
-        src/core/DirectoryModel.cpp
+        ${SYNCHRO_FS_SOURCES}
         src/core/DirectoryLister.cpp
         src/core/DirectoryWatcher.cpp
         src/core/NavStack.cpp
         src/core/RecentStore.cpp
         src/core/TrashStore.cpp
         ${SYNCHRO_THUMB_SOURCES}
+        src/core/MimeMap.cpp
         src/core/SearchService.cpp
         src/core/SearchModel.cpp
     )
@@ -209,6 +223,7 @@ if(BUILD_TESTING)
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
+        Qt6::Concurrent
     )
     synchro_use_webp(directory_model_test)
     synchro_use_sqlite(directory_model_test)
@@ -220,9 +235,28 @@ if(BUILD_TESTING)
     set_tests_properties(directory_model_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
+    qt_add_executable(fsn_layout_test
+        tests/fsn_layout_test.cpp
+        src/core/FsnLayout.cpp
+    )
+    target_include_directories(fsn_layout_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core
+    )
+    target_link_libraries(fsn_layout_test PRIVATE
+        Qt6::Test
+        Qt6::Gui
+        Qt6::Core
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(fsn_layout_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME fsn_layout_test COMMAND fsn_layout_test)
+    set_tests_properties(fsn_layout_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     qt_add_executable(command_field_test
         tests/command_field_test.cpp
-        src/core/DirectoryModel.cpp
+        ${SYNCHRO_FS_SOURCES}
         src/core/DirectoryLister.cpp
         src/core/DirectoryWatcher.cpp
         src/core/NavStack.cpp
@@ -238,6 +272,7 @@ if(BUILD_TESTING)
         ${SYNCHRO_THUMB_SOURCES}
         src/core/SearchService.cpp
         src/core/SearchModel.cpp
+        src/core/MimeMap.cpp
         src/handlers/Manifest.cpp
         src/handlers/HandlerRegistry.cpp
     )
@@ -269,7 +304,7 @@ if(BUILD_TESTING)
 
     qt_add_executable(handler_exec_test
         tests/handler_exec_test.cpp
-        src/core/DirectoryModel.cpp
+        ${SYNCHRO_FS_SOURCES}
         src/core/DirectoryLister.cpp
         src/core/DirectoryWatcher.cpp
         src/core/FilterProxy.cpp
@@ -379,7 +414,7 @@ if(BUILD_TESTING)
 
     qt_add_executable(peek_overlay_test
         tests/peek_overlay_test.cpp
-        src/core/DirectoryModel.cpp
+        ${SYNCHRO_FS_SOURCES}
         src/core/DirectoryLister.cpp
         src/core/DirectoryWatcher.cpp
         src/core/NavStack.cpp
@@ -460,6 +495,7 @@ if(BUILD_TESTING)
 
     qt_add_executable(handler_actions_test
         tests/handler_actions_test.cpp
+        src/core/VolumeStore.cpp
         src/handlers/HandlerActions.cpp
         src/handlers/CoreVerbs.cpp
         src/handlers/HandlerExec.cpp
@@ -467,6 +503,7 @@ if(BUILD_TESTING)
         src/handlers/Manifest.cpp
     )
     target_include_directories(handler_actions_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core
         ${CMAKE_SOURCE_DIR}/src/handlers
     )
     target_compile_definitions(handler_actions_test PRIVATE
@@ -485,7 +522,7 @@ if(BUILD_TESTING)
         tests/search_service_test.cpp
         src/core/SearchService.cpp
         src/core/SearchModel.cpp
-        src/core/DirectoryModel.cpp
+        ${SYNCHRO_FS_SOURCES}
         src/core/DirectoryLister.cpp
         src/core/DirectoryWatcher.cpp
         src/core/NavStack.cpp
@@ -499,6 +536,7 @@ if(BUILD_TESTING)
         src/core/RecentStore.cpp
         src/core/TrashStore.cpp
         ${SYNCHRO_THUMB_SOURCES}
+        src/core/MimeMap.cpp
         src/handlers/Manifest.cpp
         src/handlers/HandlerRegistry.cpp
     )
@@ -527,7 +565,7 @@ if(BUILD_TESTING)
         tests/location_adapters_test.cpp
         src/core/Config.cpp
         src/core/LocationChips.cpp
-        src/core/DirectoryModel.cpp
+        ${SYNCHRO_FS_SOURCES}
         src/core/DirectoryLister.cpp
         src/core/DirectoryWatcher.cpp
         src/core/NavStack.cpp
@@ -538,6 +576,7 @@ if(BUILD_TESTING)
         src/core/PeekHost.cpp
         src/core/RecentStore.cpp
         src/core/TrashStore.cpp
+        src/core/MimeMap.cpp
         ${SYNCHRO_THUMB_SOURCES}
         src/core/SearchService.cpp
         src/core/SearchModel.cpp
@@ -570,7 +609,7 @@ if(BUILD_TESTING)
 
     qt_add_executable(file_ops_test
         tests/file_ops_test.cpp
-        src/core/DirectoryModel.cpp
+        ${SYNCHRO_FS_SOURCES}
         src/core/DirectoryLister.cpp
         src/core/DirectoryWatcher.cpp
         src/core/NavStack.cpp
@@ -585,6 +624,7 @@ if(BUILD_TESTING)
         ${SYNCHRO_THUMB_SOURCES}
         src/core/SearchService.cpp
         src/core/SearchModel.cpp
+        src/core/MimeMap.cpp
         src/handlers/Manifest.cpp
         src/handlers/HandlerRegistry.cpp
         ${SYNCHRO_FILEOP_SOURCES}
@@ -612,7 +652,7 @@ if(BUILD_TESTING)
 
     qt_add_executable(portal_dbus_test
         tests/portal_dbus_test.cpp
-        src/core/DirectoryModel.cpp
+        ${SYNCHRO_FS_SOURCES}
         src/core/DirectoryLister.cpp
         src/core/DirectoryWatcher.cpp
         src/core/NavStack.cpp

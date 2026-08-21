@@ -32,6 +32,9 @@ class KeyMachine : public QObject {
                  fieldTextChanged)
   Q_PROPERTY(int jumpEpoch READ jumpEpoch NOTIFY jumpEpochChanged)
   Q_PROPERTY(bool gridMode READ gridMode WRITE setGridMode NOTIFY gridModeChanged)
+  Q_PROPERTY(bool fsnMode READ fsnMode WRITE setFsnMode NOTIFY fsnModeChanged)
+  Q_PROPERTY(bool fsnTreeView READ fsnTreeView WRITE setFsnTreeView NOTIFY
+                 fsnTreeViewChanged)
   Q_PROPERTY(int gridStride READ gridStride WRITE setGridStride NOTIFY
                  gridStrideChanged)
   Q_PROPERTY(bool helpOpen READ helpOpen NOTIFY helpOpenChanged)
@@ -91,6 +94,8 @@ public:
   int jumpEpoch() const { return m_jumpEpoch; }
   Mode modeEnum() const { return m_mode; }
   bool gridMode() const { return m_gridMode; }
+  bool fsnMode() const { return m_fsnMode; }
+  bool fsnTreeView() const { return m_fsnTreeView; }
   int gridStride() const { return m_gridStride; }
   bool helpOpen() const { return m_helpOpen; }
   QString helpText() const { return CommandPalette::helpText(); }
@@ -101,6 +106,9 @@ public:
 
   Q_INVOKABLE void setFieldText(const QString &text);
   Q_INVOKABLE void setGridMode(bool on);
+  Q_INVOKABLE void setFsnMode(bool on);
+  Q_INVOKABLE void toggleFsnMode();
+  Q_INVOKABLE void setFsnTreeView(bool tree);
   Q_INVOKABLE void setGridStride(int columns);
   Q_INVOKABLE void setStatusMessage(const QString &text);
   Q_INVOKABLE void focusFilter();
@@ -126,9 +134,12 @@ public:
   static bool isJumpText(const QString &text, const QString &cwd);
   static QString resolveJump(const QString &text, const QString &cwd);
   static bool isCommandText(const QString &text);
-  // Leading `?` but not `??` (content search is a later PR).
+  // Leading `?` (name) or `??` (content).
   static bool isSearchText(const QString &text);
+  static bool isContentSearchText(const QString &text);
   static QString searchQuery(const QString &text);
+  static constexpr int kMinContentQueryChars = 3;
+  static constexpr int kMinNameQueryChars = 3;
 
 signals:
   void modeChanged();
@@ -138,6 +149,8 @@ signals:
   void openWithRequested();
   void actionOpenChanged();
   void gridModeChanged();
+  void fsnModeChanged();
+  void fsnTreeViewChanged();
   void gridStrideChanged();
   void helpOpenChanged();
   void statusMessageChanged();
@@ -173,6 +186,7 @@ private:
   void scheduleSearch();
   void runSearch();
   void cancelSearch();
+  void leaveSearchListing();
   void revealCurrent();
   QString searchRoot() const;
   bool handleConfirmKey(int key, int modifiers, const QString &text);
@@ -184,6 +198,8 @@ private:
   void startUnlinkConfirm();
   void startEmptyConfirm();
   void nudgeCursor(int dx, int dy, bool leap);
+  void setCursorIndex(int index);
+  int cursorIndex() const;
 
   static bool isReservedVerb(int key, int modifiers);
 
@@ -198,6 +214,8 @@ private:
   SearchModel *m_search = nullptr;
   CommandPalette m_palette;
   QTimer m_searchDebounce;
+  QString m_searchAnchor;
+  bool m_holdSearchField = false;
   ActionRunner m_actionRunner;
   Mode m_mode = Mode::ListFocused;
   QString m_fieldText;
@@ -206,6 +224,8 @@ private:
   QElapsedTimer m_seekClock;
   int m_jumpEpoch = 0;
   bool m_gridMode = false;
+  bool m_fsnMode = false;
+  bool m_fsnTreeView = true;
   int m_gridStride = 1;
   bool m_helpOpen = false;
   bool m_trashAvailable = true;

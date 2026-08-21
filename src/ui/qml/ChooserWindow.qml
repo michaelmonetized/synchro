@@ -16,7 +16,7 @@ Window {
     height: 600
     minimumWidth: 480
     minimumHeight: 320
-    visible: true
+    visible: false
     title: chooser.title
     color: Theme.background
     flags: Qt.Dialog
@@ -29,6 +29,7 @@ Window {
 
     PathBar {
         id: pathBar
+        objectName: "pathBar"
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
@@ -50,39 +51,62 @@ Window {
 
     readonly property bool gridMode: root.keys ? root.keys.gridMode : false
 
-    FileList {
-        id: fileList
-        objectName: "chooserFileList"
+    Rectangle {
         anchors.top: commandField.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: statusLine.top
-        visible: !root.gridMode
-        enabled: visible && !chooser.overwriteOpen
-        fileModel: root.files
-        filterProxy: root.listing
-        navStack: root.history
-        keyMachine: root.keys
-        selection: root.selection
-        onViewToggleRequested: if (root.keys) root.keys.gridMode = true
-        onDoRequested: if (chooser.hostApi) chooser.hostApi.openDoLayer()
+        color: Theme.opaqueBackground
+        z: 0
     }
 
-    FileGrid {
-        id: fileGrid
-        objectName: "chooserFileGrid"
+    Loader {
+        id: listingLoader
         anchors.top: commandField.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: statusLine.top
-        visible: root.gridMode
-        enabled: visible && !chooser.overwriteOpen
-        fileModel: root.files
-        filterProxy: root.listing
-        keyMachine: root.keys
-        selection: root.selection
-        onViewToggleRequested: if (root.keys) root.keys.gridMode = false
-        onDoRequested: if (chooser.hostApi) chooser.hostApi.openDoLayer()
+        z: 1
+        enabled: !chooser.overwriteOpen
+        sourceComponent: root.gridMode ? gridComp : listComp
+        onLoaded: {
+            if (root.gridMode && item && root.keys)
+                root.keys.gridStride = item.columns
+            if (root.keys && root.keys.listFocused && item)
+                item.forceActiveFocus()
+        }
+    }
+
+    Component {
+        id: listComp
+        FileList {
+            objectName: "chooserFileList"
+            fileModel: root.files
+            filterProxy: root.listing
+            navStack: root.history
+            keyMachine: root.keys
+            selection: root.selection
+            host: chooser.hostApi
+            dndEnabled: false
+            onViewToggleRequested: if (root.keys) root.keys.gridMode = true
+            onDoRequested: if (chooser.hostApi) chooser.hostApi.openDoLayer()
+        }
+    }
+
+    Component {
+        id: gridComp
+        FileGrid {
+            objectName: "chooserFileGrid"
+            fileModel: root.files
+            filterProxy: root.listing
+            navStack: root.history
+            keyMachine: root.keys
+            selection: root.selection
+            host: chooser.hostApi
+            dndEnabled: false
+            onViewToggleRequested: if (root.keys) root.keys.gridMode = false
+            onDoRequested: if (chooser.hostApi) chooser.hostApi.openDoLayer()
+        }
     }
 
     StatusLine {
@@ -103,6 +127,25 @@ Window {
         anchors.fill: parent
         host: chooser.hostApi
         keys: root.keys
+        indexModel: root.listing
+    }
+
+    // Dialog windows steal focus to the first TextInput. Keep peek keys
+    // on a sink so Q / j / k still reach KeyMachine.
+    Item {
+        id: peekKeys
+        objectName: "chooserPeekKeys"
+        anchors.fill: parent
+        z: 101
+        focus: root.keys && root.keys.peekOpen && !chooser.overwriteOpen
+        enabled: focus
+        Keys.priority: Keys.BeforeItem
+        Keys.onPressed: function (event) {
+            if (!root.keys || !root.keys.peekOpen)
+                return
+            if (root.keys.handleListKey(event.key, event.modifiers, event.text))
+                event.accepted = true
+        }
     }
 
     DoOverlay {
@@ -111,10 +154,8 @@ Window {
         onClosed: {
             if (root.keys && root.keys.fieldFocused)
                 commandField.focusInput()
-            else if (root.gridMode)
-                fileGrid.forceActiveFocus()
             else
-                fileList.forceActiveFocus()
+                root.focusListing()
         }
     }
 
@@ -500,12 +541,14 @@ Window {
             overwrite.forceActiveFocus()
             return
         }
+        if (root.keys && root.keys.peekOpen) {
+            peekKeys.forceActiveFocus()
+            return
+        }
         if (root.keys && !root.keys.listFocused)
             return
-        if (root.gridMode)
-            fileGrid.forceActiveFocus()
-        else
-            fileList.forceActiveFocus()
+        if (listingLoader.item)
+            listingLoader.item.forceActiveFocus()
     }
 
     function focusSaveName() {
@@ -522,15 +565,15 @@ Window {
                 overwrite.forceActiveFocus()
                 return
             }
-            if (root.keys.listFocused)
+            if (root.keys.peekOpen || root.keys.listFocused)
                 root.focusListing()
             else
                 commandField.focusInput()
         }
         function onGridModeChanged() {
-            if (root.gridMode && root.keys)
-                root.keys.gridStride = fileGrid.columns
-            root.focusListing()
+            if (!root.gridMode && root.keys)
+                root.keys.gridStride = 1
+            Qt.callLater(root.focusListing)
         }
         function onSaveNameFocusRequested() {
             root.focusSaveName()

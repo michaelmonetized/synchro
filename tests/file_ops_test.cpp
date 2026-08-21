@@ -9,9 +9,13 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QClipboard>
 #include <QGuiApplication>
 #include <QImage>
+#include <QMimeData>
 #include <QSignalSpy>
+#include <QUrl>
+#include <QVariant>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -97,6 +101,17 @@ private slots:
   void arrowsWalkHierarchy();
   void visibleThumbsFollowSortedProxy();
   void partialCopyKeepsUndo();
+  void pasteReadsOsClipboardFromOtherEngine();
+  void pasteOsGnomeCutMoves();
+  void pasteReadsBareUriList();
+  void copyEmitsProgress();
+  void dragMimeHasUriListAndSynchroMark();
+  void pathsFromDropReadsGnomeAndUrls();
+  void dropOnCopyKeepsSource();
+  void dropOnAutoSameDeviceMoves();
+  void dropOnRejectsVirtualDest();
+  void dropOnFolderIntoSelfFails();
+  void dropOnSameDirMoveIsAlreadyThere();
 };
 
 void FileOpsTest::forbiddenRootAndDotDot() {
@@ -901,6 +916,217 @@ void FileOpsTest::undoStackCapsAt32() {
   }
   QCOMPARE(stack.count(), 32);
   QCOMPARE(stack.pop().dests.first(), QStringLiteral("39"));
+}
+
+void FileOpsTest::pasteReadsOsClipboardFromOtherEngine() {
+  QTemporaryDir a;
+  QTemporaryDir b;
+  QVERIFY(a.isValid() && b.isValid());
+  QVERIFY(writeFile(a.filePath(QStringLiteral("shared.txt")), "hi"));
+
+  DirectoryModel srcModel;
+  FilterProxy srcProxy;
+  srcProxy.setDirectoryModel(&srcModel);
+  SelectionModel srcSel(&srcProxy, &srcModel);
+  FileOpEngine srcOps;
+  srcOps.setSelection(&srcSel);
+  srcOps.setDirectoryModel(&srcModel);
+  srcModel.setPath(a.path());
+  QVERIFY(waitListingDone(srcModel));
+  srcProxy.setCurrentIndex(findProxy(srcProxy, QStringLiteral("shared.txt")));
+  srcOps.copySelection();
+  QCOMPARE(srcOps.clipboardMode(), QStringLiteral("copy"));
+
+  DirectoryModel destModel;
+  FileOpEngine destOps;
+  destOps.setDirectoryModel(&destModel);
+  destModel.setPath(b.path());
+  QVERIFY(waitListingDone(destModel));
+  QVERIFY(destOps.clipboardPaths().isEmpty());
+  destOps.paste();
+  QVERIFY(waitIdle(destOps));
+  QVERIFY2(QFileInfo(b.filePath(QStringLiteral("shared.txt"))).exists(),
+           qPrintable(destOps.errorString()));
+  QVERIFY(QFileInfo(a.filePath(QStringLiteral("shared.txt"))).exists());
+}
+
+void FileOpsTest::pasteOsGnomeCutMoves() {
+  QTemporaryDir a;
+  QTemporaryDir b;
+  QVERIFY(a.isValid() && b.isValid());
+  const QString src = a.filePath(QStringLiteral("take.txt"));
+  QVERIFY(writeFile(src, "x"));
+
+  auto *mime = new QMimeData;
+  const QUrl url = QUrl::fromLocalFile(src);
+  mime->setUrls({url});
+  QByteArray gnome = "cut\n";
+  gnome += url.toString(QUrl::FullyEncoded).toUtf8();
+  gnome += '\n';
+  mime->setData(QStringLiteral("x-special/gnome-copied-files"), gnome);
+  QGuiApplication::clipboard()->setMimeData(mime);
+
+  DirectoryModel destModel;
+  FileOpEngine destOps;
+  destOps.setDirectoryModel(&destModel);
+  destModel.setPath(b.path());
+  QVERIFY(waitListingDone(destModel));
+  destOps.paste();
+  QVERIFY(waitIdle(destOps));
+  QVERIFY2(QFileInfo(b.filePath(QStringLiteral("take.txt"))).exists(),
+           qPrintable(destOps.errorString()));
+  QVERIFY(!QFileInfo(src).exists());
+}
+
+void FileOpsTest::pasteReadsBareUriList() {
+  QTemporaryDir a;
+  QTemporaryDir b;
+  QVERIFY(a.isValid() && b.isValid());
+  const QString src = a.filePath(QStringLiteral("only-uri.txt"));
+  QVERIFY(writeFile(src, "z"));
+
+  auto *mime = new QMimeData;
+  mime->setData(QStringLiteral("x-special/gnome-copied-files"), QByteArray());
+  const QString line =
+      QUrl::fromLocalFile(src).toString(QUrl::FullyEncoded) +
+      QStringLiteral("\r\n");
+  mime->setData(QStringLiteral("text/uri-list"), line.toUtf8());
+  QGuiApplication::clipboard()->setMimeData(mime);
+
+  DirectoryModel destModel;
+  FileOpEngine destOps;
+  destOps.setDirectoryModel(&destModel);
+  destModel.setPath(b.path());
+  QVERIFY(waitListingDone(destModel));
+  destOps.paste();
+  QVERIFY(waitIdle(destOps));
+  QVERIFY2(QFileInfo(b.filePath(QStringLiteral("only-uri.txt"))).exists(),
+           qPrintable(destOps.errorString()));
+}
+
+void FileOpsTest::copyEmitsProgress() {
+  QTemporaryDir src;
+  QTemporaryDir dest;
+  QVERIFY(src.isValid() && dest.isValid());
+  QVERIFY(writeFile(src.filePath(QStringLiteral("blob.bin")),
+                    QByteArray(512 * 1024, 'z')));
+  FileOpEngine ops;
+  QSignalSpy spy(&ops, &FileOpEngine::progressChanged);
+  ops.copyPaths({src.filePath(QStringLiteral("blob.bin"))}, dest.path());
+  QVERIFY(waitIdle(ops));
+  QVERIFY(QFileInfo(dest.filePath(QStringLiteral("blob.bin"))).exists());
+  QVERIFY2(spy.count() >= 1, "copy should publish progress");
+  QCOMPARE(ops.progress(), 0);
+  QVERIFY(ops.progressText().isEmpty());
+}
+
+void FileOpsTest::dragMimeHasUriListAndSynchroMark() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString src = tmp.filePath(QStringLiteral("drag.txt"));
+  QVERIFY(writeFile(src, "d"));
+  FileOpEngine ops;
+  const QVariantMap mime = ops.dragMime({src});
+  QVERIFY(mime.contains(QStringLiteral("text/uri-list")));
+  QVERIFY(mime.contains(QStringLiteral("application/x-synchro-drop")));
+  QVERIFY(mime.value(QStringLiteral("text/uri-list")).toString().contains(
+      QStringLiteral("file://")));
+  const QString gnome =
+      mime.value(QStringLiteral("x-special/gnome-copied-files")).toString();
+  QVERIFY(gnome.startsWith(QStringLiteral("copy")));
+}
+
+void FileOpsTest::pathsFromDropReadsGnomeAndUrls() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString src = tmp.filePath(QStringLiteral("from-drop.txt"));
+  QVERIFY(writeFile(src, "z"));
+  const QUrl url = QUrl::fromLocalFile(src);
+  FileOpEngine ops;
+  const QStringList fromUrls =
+      ops.pathsFromDrop({QVariant::fromValue(url)}, QString(), QString());
+  QCOMPARE(fromUrls, QStringList{src});
+
+  const QString uri = url.toString(QUrl::FullyEncoded) + QStringLiteral("\r\n");
+  const QStringList fromList =
+      ops.pathsFromDrop({}, uri, QString());
+  QCOMPARE(fromList, QStringList{src});
+
+  const QString gnome = QStringLiteral("cut\n") +
+                        url.toString(QUrl::FullyEncoded) + QLatin1Char('\n');
+  const QStringList fromGnome = ops.pathsFromDrop({}, QString(), gnome);
+  QCOMPARE(fromGnome, QStringList{src});
+}
+
+void FileOpsTest::dropOnCopyKeepsSource() {
+  QTemporaryDir a;
+  QTemporaryDir b;
+  QVERIFY(a.isValid() && b.isValid());
+  const QString src = a.filePath(QStringLiteral("keep.txt"));
+  QVERIFY(writeFile(src, "k"));
+  FileOpEngine ops;
+  ops.dropOn({src}, b.path(), QStringLiteral("copy"));
+  QVERIFY(waitIdle(ops));
+  QVERIFY2(QFileInfo(b.filePath(QStringLiteral("keep.txt"))).exists(),
+           qPrintable(ops.errorString()));
+  QVERIFY(QFileInfo(src).exists());
+}
+
+void FileOpsTest::dropOnAutoSameDeviceMoves() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("dest")));
+  const QString src = tmp.filePath(QStringLiteral("take.txt"));
+  QVERIFY(writeFile(src, "m"));
+  const QString dest = tmp.filePath(QStringLiteral("dest"));
+  QVERIFY(FileOpEngine::sameDevice(src, dest));
+  FileOpEngine ops;
+  ops.dropOn({src}, dest, QStringLiteral("auto"));
+  QVERIFY(waitIdle(ops));
+  QVERIFY2(QFileInfo(QDir(dest).filePath(QStringLiteral("take.txt"))).exists(),
+           qPrintable(ops.errorString()));
+  QVERIFY(!QFileInfo(src).exists());
+}
+
+void FileOpsTest::dropOnRejectsVirtualDest() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString src = tmp.filePath(QStringLiteral("nope.txt"));
+  QVERIFY(writeFile(src, "x"));
+  FileOpEngine ops;
+  QVERIFY(!ops.canDropOn(QStringLiteral("volumes://")));
+  QVERIFY(!ops.canDropOn(QStringLiteral("trash://")));
+  QVERIFY(!ops.canDropOn(QStringLiteral("recent://")));
+  QVERIFY(!ops.canAcceptDrop({src}, QStringLiteral("volumes://")));
+  ops.dropOn({src}, QStringLiteral("volumes://"), QStringLiteral("copy"));
+  QVERIFY(!ops.errorString().isEmpty());
+  QVERIFY(QFileInfo(src).exists());
+}
+
+void FileOpsTest::dropOnFolderIntoSelfFails() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("tree")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("tree/leaf")), "z"));
+  const QString tree = tmp.filePath(QStringLiteral("tree"));
+  FileOpEngine ops;
+  QVERIFY(!ops.canAcceptDrop({tree}, tree));
+  ops.dropOn({tree}, tree, QStringLiteral("move"));
+  QVERIFY(!ops.errorString().isEmpty());
+  QVERIFY(QFileInfo(tmp.filePath(QStringLiteral("tree/leaf"))).exists());
+}
+
+void FileOpsTest::dropOnSameDirMoveIsAlreadyThere() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString src = tmp.filePath(QStringLiteral("stay.txt"));
+  QVERIFY(writeFile(src, "s"));
+  FileOpEngine ops;
+  ops.dropOn({src}, tmp.path(), QStringLiteral("move"));
+  QVERIFY(waitIdle(ops));
+  QCOMPARE(ops.lastMessage(), QStringLiteral("already there"));
+  QVERIFY(QFileInfo(src).exists());
+  QVERIFY(!QFileInfo(tmp.filePath(QStringLiteral("stay (1).txt"))).exists());
 }
 
 int main(int argc, char **argv) {

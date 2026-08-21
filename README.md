@@ -65,7 +65,7 @@ an always-focused omnibar.
 | `Space` | Peek (look). Esc / Q / Space again leave. |
 | `Ctrl+Enter` / right-click | Do-layer (sticky actions + params) |
 | `/` · `Ctrl+K` | Filter the listing |
-| `:` | Command palette (`:trash` `:home` `:hidden` `:help`) |
+| `:` | Command palette (`:trash` `:home` `:volumes` `:hidden` `:help`) |
 | `Ctrl+L` | Jump (current path selected) |
 | `?name` | Name search via `fd` |
 | `v` | List / grid. `V` is visual select. |
@@ -75,6 +75,8 @@ an always-focused omnibar.
 | `F1` / `:?` | Key reference |
 
 Peek is **look**. Enter is **commit**. The do-layer is **do**.
+
+**Volumes.** `:volumes` or the `volumes` chip is a listing of user-facing mounts — not a sidebar, not GVFS. `/` is always a row (the system disk, even when home lives on it). Each row shows free / total / filesystem. `/` and extra disks also get a compact chip with free space (`/ 180G`, `KINGSTON 18G`); USB chips vanish when you unplug. Enter an extra disk and it is a **root tree**: crumbs start at `volumes / KINGSTON`, and Q / h at the mount root returns to the volumes listing instead of `/run/media`. Status line shows `KINGSTON  18G free / 64G` while you are inside. Do-layer **Eject** unmounts a removable volume (`udisksctl`). `/proc`, snaps, and portal mounts stay hidden.
 
 **Peek.** Space on a file opens the preview overlay. `A`/`D` hop the index ↔
 the file; `W`/`S` then scroll the preview (sqlite / duckdb / text / archives
@@ -105,6 +107,13 @@ the registry.
 | `thumbnail` | Listing / mosaic tiles | Core verb or system `.thumbnailer` |
 
 A pack may declare more than one kind (preview + action is common).
+
+Location handlers may also ship **listing chrome** — `entryPoints.row` and
+`entryPoints.thumb` — QML that paints on each visible row or grid thumb.
+The core still owns the model (used / total / percent / detail roles). If no
+chrome is mounted, FileList/FileGrid draw a first-party bar from `percent`.
+`synchro.location.volumes` is the first client. Do not use this to restyle
+every file in `$HOME`.
 
 ### Install (same shape as `omarchy plugin add`)
 
@@ -283,6 +292,8 @@ and a Synchro manifest, not a Nautilus Python extension.
 | `synchro.location.home` | location | `$HOME` |
 | `synchro.location.recent` | location | Recents |
 | `synchro.location.trash` | location | XDG trash |
+| `synchro.location.volumes` | location | Disks / USB as a listing + root trees |
+| `synchro.action.eject` | action | Unmount / power-off a removable volume |
 
 Office docs, audio, 7z, fonts, and a few more previews are still on the
 [preview backlog](PREVIEW-BACKLOG.md).

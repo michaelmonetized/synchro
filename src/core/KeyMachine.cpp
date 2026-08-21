@@ -17,7 +17,7 @@
 namespace {
 
 constexpr int kSeekTimeoutMs = 800;
-constexpr int kSearchDebounceMs = 200;
+constexpr int kSearchDebounceMs = 350;
 
 bool hasCtrl(int modifiers) { return modifiers & Qt::ControlModifier; }
 
@@ -133,8 +133,21 @@ void KeyMachine::setSearchModel(SearchModel *search) {
     const int n = m_search->count();
     if (n <= 0 && !m_search->query().isEmpty())
       setStatusMessage(QStringLiteral("no matches"));
-    else if (n > 0)
-      setStatusMessage(QStringLiteral("%1 matches").arg(n));
+    else if (n > 0) {
+      const QString root = m_search->root();
+      const QString home = QDir::homePath();
+      QString where = root;
+      if (root == home)
+        where = QStringLiteral("~");
+      else if (root.startsWith(home + QLatin1Char('/')))
+        where = QLatin1Char('~') + root.mid(home.size());
+      setStatusMessage(
+          (m_search->contentSearch()
+               ? QStringLiteral("%1 content matches in %2")
+               : QStringLiteral("%1 matches in %2"))
+              .arg(n)
+              .arg(where));
+    }
   });
 }
 
@@ -175,12 +188,40 @@ void KeyMachine::setFieldText(const QString &text) {
 }
 
 void KeyMachine::setGridMode(bool on) {
+  if (m_fsnMode)
+    setFsnMode(false);
   if (m_gridMode == on)
     return;
   m_gridMode = on;
   if (!on)
     setGridStride(1);
   emit gridModeChanged();
+}
+
+void KeyMachine::setFsnMode(bool on) {
+  if (m_chooserMode)
+    on = false;
+  if (m_fsnMode == on)
+    return;
+  m_fsnMode = on;
+  emit fsnModeChanged();
+}
+
+void KeyMachine::toggleFsnMode() {
+  if (m_chooserMode) {
+    setStatusMessage(QStringLiteral("fsn is a main-window toy"));
+    return;
+  }
+  setFsnMode(!m_fsnMode);
+  setStatusMessage(m_fsnMode ? QStringLiteral("it's a unix system")
+                             : QString());
+}
+
+void KeyMachine::setFsnTreeView(bool tree) {
+  if (m_fsnTreeView == tree)
+    return;
+  m_fsnTreeView = tree;
+  emit fsnTreeViewChanged();
 }
 
 void KeyMachine::setGridStride(int columns) {
@@ -191,8 +232,31 @@ void KeyMachine::setGridStride(int columns) {
   emit gridStrideChanged();
 }
 
+void KeyMachine::setCursorIndex(int index) {
+  if (m_selection)
+    m_selection->setCursor(index);
+  else if (m_proxy)
+    m_proxy->setCurrentIndex(index);
+  else if (m_model)
+    m_model->setCurrentIndex(index);
+}
+
+int KeyMachine::cursorIndex() const {
+  if (m_proxy)
+    return m_proxy->currentIndex();
+  if (m_model)
+    return m_model->currentIndex();
+  return -1;
+}
+
 void KeyMachine::nudgeCursor(int dx, int dy, bool leap) {
   const int step = leap ? 5 : 1;
+  if (m_gridMode && m_model && m_model->isSearch()) {
+    const int next = m_model->stepSearchGrid(
+        cursorIndex(), dx * step, dy * step, m_gridStride);
+    setCursorIndex(next);
+    return;
+  }
   const int stride = m_gridMode ? m_gridStride : 1;
   const int delta = dy * step * stride + dx * step;
   if (delta == 0)
@@ -236,7 +300,6 @@ void KeyMachine::applyFieldText() {
       setMode(Mode::FieldCommand);
     return;
   }
-  // `??` is content search (later). Do not treat it as `?` name search.
   if (isSearchText(m_fieldText)) {
     if (m_proxy)
       m_proxy->setFilter(QString());
@@ -288,6 +351,9 @@ void KeyMachine::onPathChanged() {
   // Entering search:// is the field-search destination; keep `?query`.
   if (m_model && DirectoryModel::isSearchPath(m_model->path()))
     return;
+  if (m_holdSearchField)
+    return;
+  m_searchAnchor.clear();
   if (m_nav && m_nav->restoring()) {
     setMode(Mode::ListFocused);
     return;
@@ -304,6 +370,8 @@ void KeyMachine::onPathChanged() {
 }
 
 void KeyMachine::restoreField(const QString &text) {
+  if (m_holdSearchField)
+    return;
   if (m_fieldText != text) {
     m_fieldText = text;
     emit fieldTextChanged();
@@ -386,7 +454,13 @@ void KeyMachine::toggleSearchField() {
       return;
     }
     m_searchDebounce.stop();
-    runSearch();
+    // Same live query: just hop focus. runSearch() would no-op on
+    // query match, but skip the call so Tab cannot retrigger start().
+    if (!m_search || m_search->query() != q ||
+        m_search->root() != searchRoot() ||
+        m_search->contentSearch() != isContentSearchText(m_fieldText) ||
+        (m_model && !DirectoryModel::isSearchPath(m_model->path())))
+      runSearch();
     setMode(Mode::ListFocused);
     return;
   }
@@ -622,6 +696,10 @@ void KeyMachine::escape() {
     clearFieldAndFilter();
     return;
   }
+  if (m_fsnMode) {
+    setFsnMode(false);
+    return;
+  }
   if (m_chooserMode)
     emit dismissRequested();
 }
@@ -634,7 +712,8 @@ void KeyMachine::acceptField() {
   if (m_mode == Mode::FieldSearch || isSearchText(m_fieldText)) {
     m_searchDebounce.stop();
     runSearch();
-    setMode(Mode::ListFocused);
+    if (!searchQuery(m_fieldText).isEmpty())
+      setMode(Mode::ListFocused);
     return;
   }
   const QString cwd = m_model ? m_model->path() : QString();
@@ -658,14 +737,19 @@ bool KeyMachine::isCommandText(const QString &text) {
 }
 
 bool KeyMachine::isSearchText(const QString &text) {
-  return text.startsWith(QLatin1Char('?')) &&
-         !text.startsWith(QLatin1String("??"));
+  return text.startsWith(QLatin1Char('?'));
+}
+
+bool KeyMachine::isContentSearchText(const QString &text) {
+  return text.startsWith(QLatin1String("??"));
 }
 
 QString KeyMachine::searchQuery(const QString &text) {
-  if (!isSearchText(text))
-    return {};
-  return text.mid(1);
+  if (isContentSearchText(text))
+    return text.mid(2);
+  if (isSearchText(text))
+    return text.mid(1);
+  return {};
 }
 
 bool KeyMachine::fieldQueryEmpty() const {
@@ -684,6 +768,8 @@ void KeyMachine::scheduleSearch() {
 }
 
 QString KeyMachine::searchRoot() const {
+  if (!m_searchAnchor.isEmpty())
+    return m_searchAnchor;
   if (!m_model)
     return QDir::homePath();
   const QString loc = m_model->path();
@@ -692,9 +778,11 @@ QString KeyMachine::searchRoot() const {
       return m_search->root();
     if (!m_model->returnPath().isEmpty())
       return m_model->returnPath();
-  }
-  if (!DirectoryModel::isVirtualPath(loc) && !loc.isEmpty())
+  } else if (!DirectoryModel::isVirtualPath(loc) && !loc.isEmpty()) {
     return loc;
+  }
+  if (!m_model->returnPath().isEmpty())
+    return m_model->returnPath();
   return QDir::homePath();
 }
 
@@ -704,10 +792,52 @@ void KeyMachine::cancelSearch() {
     m_search->cancel();
 }
 
+void KeyMachine::leaveSearchListing() {
+  if (!m_model || !DirectoryModel::isSearchPath(m_model->path()))
+    return;
+  m_holdSearchField = true;
+  if (m_nav && m_nav->canGoBack())
+    m_nav->goBack();
+  else {
+    const QString dest = !m_searchAnchor.isEmpty()
+                             ? m_searchAnchor
+                             : (!m_model->returnPath().isEmpty()
+                                    ? m_model->returnPath()
+                                    : QDir::homePath());
+    m_model->setPath(dest);
+  }
+  m_holdSearchField = false;
+  if (isSearchText(m_fieldText))
+    setMode(Mode::FieldSearch);
+}
+
 void KeyMachine::runSearch() {
   const QString query = searchQuery(m_fieldText);
   if (query.isEmpty()) {
     cancelSearch();
+    if (m_search)
+      m_search->clear();
+    leaveSearchListing();
+    return;
+  }
+  if (isContentSearchText(m_fieldText) &&
+      query.size() < kMinContentQueryChars) {
+    cancelSearch();
+    if (m_search)
+      m_search->clear();
+    setStatusMessage(
+        QStringLiteral("type %1+ characters for content search")
+            .arg(kMinContentQueryChars));
+    return;
+  }
+  if (!isContentSearchText(m_fieldText) &&
+      query.size() < kMinNameQueryChars) {
+    cancelSearch();
+    if (m_search)
+      m_search->clear();
+    setStatusMessage(
+        QStringLiteral("type %1+ characters to search")
+            .arg(kMinNameQueryChars));
     return;
   }
   const QString loc = m_model ? m_model->path() : QString();
@@ -719,15 +849,20 @@ void KeyMachine::runSearch() {
     setStatusMessage(QStringLiteral("search is not available"));
     return;
   }
+  if (!DirectoryModel::isSearchPath(loc) &&
+      !DirectoryModel::isVirtualPath(loc) && !loc.isEmpty())
+    m_searchAnchor = loc;
   const QString root = searchRoot();
   if (m_model && !DirectoryModel::isSearchPath(m_model->path())) {
     if (m_nav)
       m_nav->navigate(QStringLiteral("search://"));
     else
       m_model->setPath(QStringLiteral("search://"));
-  } else if (m_search->query() == query && m_search->root() == root)
+  } else if (m_search->query() == query && m_search->root() == root &&
+             m_search->contentSearch() == isContentSearchText(m_fieldText))
     return;
-  m_search->start(query, root, m_model && m_model->showHidden());
+  m_search->start(query, root, m_model && m_model->showHidden(),
+                  isContentSearchText(m_fieldText));
 }
 
 void KeyMachine::revealCurrent() {
@@ -774,6 +909,32 @@ void KeyMachine::runCommand(const QString &text) {
     if (!info.isEmpty())
       setStatusMessage(info);
     return;
+  }
+  const QStringList fsnToks =
+      stripped.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+  if (!fsnToks.isEmpty()) {
+    const QString head = fsnToks.first().toLower();
+    if (head == QLatin1String("fsn") || head == QLatin1String("fsv") ||
+        head == QLatin1String("park") || head == QLatin1String("nedry")) {
+      if (fsnToks.size() > 1) {
+        const QString arg = fsnToks.at(1).toLower();
+        if (arg == QLatin1String("tree") || arg == QLatin1String("treev"))
+          setFsnTreeView(true);
+        else if (arg == QLatin1String("map") || arg == QLatin1String("mapv"))
+          setFsnTreeView(false);
+        else {
+          setStatusMessage(QStringLiteral(":fsv tree|map"));
+          return;
+        }
+      }
+      QString info;
+      if (!runBuiltin(QStringLiteral("fsn"), &info))
+        return;
+      finishCommand();
+      if (!info.isEmpty())
+        setStatusMessage(info);
+      return;
+    }
   }
   CommandSpec spec;
   QString err;
@@ -829,6 +990,18 @@ bool KeyMachine::runBuiltin(const QString &id, QString *info) {
     setGridMode(false);
     return true;
   }
+  if (id == QLatin1String("fsn") || id == QLatin1String("fsv") ||
+      id == QLatin1String("park") || id == QLatin1String("nedry")) {
+    if (m_chooserMode) {
+      if (info)
+        *info = QStringLiteral("fsn is a main-window toy");
+      return true;
+    }
+    setFsnMode(true);
+    if (info)
+      *info = QStringLiteral("it's a unix system");
+    return true;
+  }
   if (id == QLatin1String("help") || id == QLatin1String("?")) {
     setHelpOpen(true);
     return true;
@@ -847,6 +1020,13 @@ bool KeyMachine::runBuiltin(const QString &id, QString *info) {
   }
   if (id == QLatin1String("recent"))
     return runRecent(info);
+  if (id == QLatin1String("volumes")) {
+    if (m_nav)
+      m_nav->goVolumes();
+    else if (m_model)
+      m_model->setPath(QStringLiteral("volumes://"));
+    return true;
+  }
   if (id == QLatin1String("pin") || id == QLatin1String("unpin"))
     return runPinCommand(id, info);
   if (id == QLatin1String("empty")) {
@@ -1097,6 +1277,8 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
   if (!alt && !chord &&
       (key == Qt::Key_W || key == Qt::Key_A || key == Qt::Key_S ||
        key == Qt::Key_D)) {
+    if (m_fsnMode)
+      return false;
     int dx = 0;
     int dy = 0;
     if (key == Qt::Key_W)
@@ -1158,6 +1340,10 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
   if (key == Qt::Key_J || key == Qt::Key_Down) {
     if (alt || chord)
       return false;
+    if (m_gridMode && m_model && m_model->isSearch()) {
+      nudgeCursor(0, 1, false);
+      return true;
+    }
     if (m_selection)
       m_selection->moveCursor(1);
     else if (m_proxy)
@@ -1169,6 +1355,10 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
   if (key == Qt::Key_K || key == Qt::Key_Up) {
     if (alt || chord)
       return false;
+    if (m_gridMode && m_model && m_model->isSearch()) {
+      nudgeCursor(0, -1, false);
+      return true;
+    }
     if (m_selection)
       m_selection->moveCursor(-1);
     else if (m_proxy)
@@ -1261,7 +1451,10 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
     return true;
   }
   if (key == Qt::Key_V && !alt && !chord && !shift) {
-    setGridMode(!m_gridMode);
+    if (m_fsnMode)
+      setFsnMode(false);
+    else
+      setGridMode(!m_gridMode);
     return true;
   }
   if ((key == Qt::Key_Question || key == Qt::Key_F1) && !alt && !chord) {
@@ -1341,6 +1534,11 @@ bool KeyMachine::handlePeekKey(int key, int modifiers) {
     return true;
   }
   if (key == Qt::Key_Escape) {
+    const bool previewOn =
+        m_host && m_host->isOpen() && !m_host->folderListing() &&
+        m_host->peekPreviewFocused();
+    if (previewOn && m_host->deliverPeekKey(key, modifiers))
+      return true;
     if (m_host)
       m_host->close();
     else
@@ -1482,6 +1680,11 @@ bool KeyMachine::handleListKey(int key, int modifiers, const QString &text) {
     focusJump();
     return true;
   }
+  if (key == Qt::Key_M && hasCtrl(modifiers) && !hasAlt(modifiers) &&
+      !hasMeta(modifiers)) {
+    toggleFsnMode();
+    return true;
+  }
   if ((key == Qt::Key_Return || key == Qt::Key_Enter) &&
       hasCtrl(modifiers) && !hasAlt(modifiers) && !hasMeta(modifiers)) {
     emit openWithRequested();
@@ -1499,6 +1702,10 @@ bool KeyMachine::handleListKey(int key, int modifiers, const QString &text) {
   }
   if (handleListVerbs(key, modifiers))
     return true;
+  if (m_fsnMode && !hasChord(modifiers) && !hasAlt(modifiers) &&
+      (key == Qt::Key_W || key == Qt::Key_A || key == Qt::Key_S ||
+       key == Qt::Key_D || key == Qt::Key_M))
+    return false;
   if (isReservedVerb(key, modifiers))
     return true;
 
@@ -1521,6 +1728,8 @@ bool KeyMachine::handleListKey(int key, int modifiers, const QString &text) {
 bool KeyMachine::handleFieldKey(int key, int modifiers) {
   if (handleChooserPromptKey(key, modifiers))
     return true;
+  if (m_mode == Mode::PeekOpen || (m_host && m_host->isOpen()))
+    return handlePeekKey(key, modifiers);
   if (m_mode == Mode::ListFocused)
     return false;
   if (key == Qt::Key_Escape) {
@@ -1546,6 +1755,11 @@ bool KeyMachine::handleFieldKey(int key, int modifiers) {
   if (key == Qt::Key_L && hasCtrl(modifiers) && !hasAlt(modifiers) &&
       !hasMeta(modifiers)) {
     focusJump();
+    return true;
+  }
+  if (key == Qt::Key_M && hasCtrl(modifiers) && !hasAlt(modifiers) &&
+      !hasMeta(modifiers)) {
+    toggleFsnMode();
     return true;
   }
   return false;

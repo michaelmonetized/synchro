@@ -22,7 +22,12 @@ struct DirectoryEntry {
   bool isSymlink = false;
   QString dirKind;
   QString origPath;
+  QString parentPath;
+  QString detail;
   int perm = 0;
+  qint64 used = -1;
+  qint64 total = -1;
+  int percent = -1;
 };
 
 class DirectoryLister : public QObject {

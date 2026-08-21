@@ -26,6 +26,7 @@ QVector<CommandSpec> CommandPalette::builtins() {
   return {
       {QStringLiteral("trash"), QStringLiteral("Open trash"), true},
       {QStringLiteral("recent"), QStringLiteral("Open recents"), true},
+      {QStringLiteral("volumes"), QStringLiteral("Open volumes"), true},
       {QStringLiteral("home"), QStringLiteral("Go home"), true},
       {QStringLiteral("hidden"), QStringLiteral("Toggle hidden files"), true},
       {QStringLiteral("pin"), QStringLiteral("Pin this folder"), true},
@@ -33,6 +34,10 @@ QVector<CommandSpec> CommandPalette::builtins() {
       {QStringLiteral("sort"), QStringLiteral("Sort listing"), true},
       {QStringLiteral("grid"), QStringLiteral("Grid view"), true},
       {QStringLiteral("list"), QStringLiteral("List view"), true},
+      {QStringLiteral("fsn"), QStringLiteral("3D file browser (fsv)"), true},
+      {QStringLiteral("fsv"), QStringLiteral("3D file browser (tree|map)"), true},
+      {QStringLiteral("park"), QStringLiteral("3D file browser (fsv)"), true},
+      {QStringLiteral("nedry"), QStringLiteral("3D file browser (fsv)"), true},
       {QStringLiteral("empty"), QStringLiteral("Empty trash"), true},
       {QStringLiteral("help"), QStringLiteral("Key reference"), true},
       {QStringLiteral("?"), QStringLiteral("Key reference"), true},
@@ -48,14 +53,17 @@ QString CommandPalette::helpText() {
       "Ctrl+Enter / right-click  do-layer (actions + params)\n"
       "do: W/S verbs   A/D params   Enter run   Esc/Q leave\n"
       "/    filter   Tab  search/listing   :  command   Ctrl+L  jump\n"
+      "? name (fd)   ?? content (rg)\n"
       ".    hidden   v / middle-click  grid      V  visual\n"
       "Shift+P  pin folder     [ ]  cycle filter\n"
-      "y/x/p copy/cut/paste   r rename   n mkdir   u undo\n"
+      "y/x/p copy/cut/paste   drag drop   r rename   n mkdir   u undo\n"
       "Delete trash   Shift+Delete unlink   t terminal   g reveal\n"
       "Esc  pop      F1  help\n"
       "\n"
-      ":trash :recent :home :hidden :pin :unpin :sort :grid :list :empty :agent :help :?\n"
-      ":sort name|size|mtime|type [asc|desc]   :sort  flip order");
+      ":trash :recent :volumes :home :hidden :pin :unpin :sort :grid :list :fsn :empty :agent :help :?\n"
+      ":sort name|size|mtime|type [asc|desc]   :sort  flip order\n"
+      ":fsv tree|map / Ctrl+M  3D browser\n"
+      "in fsv: click fly-to   WASD drive   drag orbit   wheel zoom   M map/tree");
 }
 
 QString CommandPalette::stripSigil(const QString &text) {

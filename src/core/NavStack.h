@@ -30,6 +30,7 @@ public:
   Q_INVOKABLE void goHome();
   Q_INVOKABLE void goTrash();
   Q_INVOKABLE void goRecent();
+  Q_INVOKABLE void goVolumes();
   Q_INVOKABLE QVariantList pathSegments() const;
   Q_INVOKABLE QVariantList segmentsFor(const QString &path) const;
 

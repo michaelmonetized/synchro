@@ -209,8 +209,7 @@ Item {
 
             readonly property bool looking: root.host && root.host.doParamsFocused
                                             && !root.host.doHasParams
-            readonly property bool hasMosaic: root.host &&
-                                              root.host.doMosaicUrl.length > 0
+            readonly property bool hasFolder: root.host && root.host.doTargetIsDir
             readonly property bool hasPreview: root.host && root.host.doPreviewItem
 
             Text {
@@ -274,18 +273,12 @@ Item {
                     opacity: 0.8
                 }
 
-                Image {
-                    id: mosaic
-                    objectName: "doMosaicImage"
+                DoFolderGrid {
                     anchors.fill: parent
-                    anchors.margins: Theme.space(10)
-                    visible: briefPane.hasMosaic
-                    source: root.host ? root.host.doMosaicUrl : ""
-                    asynchronous: true
-                    cache: true
-                    fillMode: Image.PreserveAspectFit
-                    sourceSize.width: Math.max(128, Math.round(width))
-                    sourceSize.height: Math.max(128, Math.round(height))
+                    anchors.margins: Theme.space(4)
+                    visible: briefPane.hasFolder
+                    fileModel: root.host ? root.host.doFolderModel : null
+                    filterProxy: root.host ? root.host.doFolderProxy : null
                 }
 
                 Item {
@@ -297,14 +290,6 @@ Item {
                     Component.onCompleted: if (root.host &&
                                                root.host.registerDoContentSurface)
                         root.host.registerDoContentSurface(previewSurface)
-                }
-
-                FolderMark {
-                    anchors.centerIn: parent
-                    width: Math.min(parent.width, parent.height) * 0.42
-                    height: width
-                    visible: root.host && root.host.doTargetIsDir &&
-                             !briefPane.hasMosaic
                 }
 
                 FileMark {

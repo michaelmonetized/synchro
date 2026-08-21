@@ -82,6 +82,11 @@ public:
                  QQmlEngine *engine, QObject *parent = nullptr);
   ~ChooserSession() override;
 
+  // Hyprland floats titles matching ^(Open|Save|Select|Choose). Apps often
+  // send a filename or empty title for Save As; keep a kind prefix.
+  static QString windowTitle(Kind kind, bool directory, const QString &title,
+                             const QString &appId = QString());
+
   QDBusObjectPath handle() const { return m_handle; }
   Kind kind() const { return m_kind; }
   bool done() const { return m_done; }

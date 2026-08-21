@@ -20,8 +20,7 @@ HandlerSurface {
             root.host.peekGridStride = 1
             return
         }
-        var w = grid.width > 1 ? grid.width : root.width
-        root.host.peekGridStride = Math.max(1, Math.floor(w / Math.max(1, grid.cellWidth)))
+        root.host.peekGridStride = Math.max(1, grid.columns)
     }
 
     onGridChanged: root.syncStride()
@@ -153,9 +152,14 @@ HandlerSurface {
         highlightMoveDuration: 0
         currentIndex: root.rows ? root.rows.currentIndex : -1
         focus: false
-        cellWidth: 96 + Theme.space(16)
-        cellHeight: 96 + Theme.fontBody + Theme.space(20)
-        readonly property int columns: Math.max(1, Math.floor(width / Math.max(1, cellWidth)))
+        readonly property int preferredCell: 96 + Theme.space(16)
+        readonly property int columns: Math.max(
+                                           1, Math.floor(width / Math.max(1, preferredCell)))
+        readonly property int cellInner: Math.max(
+                                             Theme.space(48),
+                                             Math.round(cellWidth - Theme.space(16)))
+        cellWidth: width > 0 ? width / columns : preferredCell
+        cellHeight: cellInner + Theme.fontBody + Theme.space(20)
         onColumnsChanged: root.syncStride()
         onCellWidthChanged: root.syncStride()
 
@@ -200,7 +204,7 @@ HandlerSurface {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.margins: Theme.space(8)
-                height: 80
+                height: grid.cellInner
 
                 Image {
                     anchors.fill: parent

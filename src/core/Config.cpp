@@ -41,6 +41,13 @@ QString normalizeSortOrder(const QString &order) {
   return QStringLiteral("asc");
 }
 
+QString sanitizeLastPath(const QString &path) {
+  const QString t = path.trimmed();
+  if (t.isEmpty() || t.startsWith(QLatin1String("search:")))
+    return QDir::homePath();
+  return t;
+}
+
 } // namespace
 
 Config::Config(QObject *parent) : Config(QString(), parent) {}
@@ -60,7 +67,8 @@ QString Config::defaultPath() {
 QStringList Config::defaultLocationChips() {
   return {QStringLiteral("synchro.location.home"),
           QStringLiteral("synchro.location.recent"),
-          QStringLiteral("synchro.location.trash")};
+          QStringLiteral("synchro.location.trash"),
+          QStringLiteral("synchro.location.volumes")};
 }
 
 void Config::applyDefaults() {
@@ -106,7 +114,7 @@ bool Config::load() {
       m_chips = chips;
   }
   if (obj.contains(QStringLiteral("lastPath")))
-    m_lastPath = obj.value(QStringLiteral("lastPath")).toString();
+    m_lastPath = sanitizeLastPath(obj.value(QStringLiteral("lastPath")).toString());
   if (obj.contains(QStringLiteral("pins"))) {
     QStringList pins;
     for (const QString &raw :
@@ -218,8 +226,9 @@ void Config::setLocationChips(const QStringList &ids) {
 }
 
 void Config::setLastPath(const QString &path) {
-  if (m_lastPath == path)
+  const QString next = sanitizeLastPath(path);
+  if (m_lastPath == next)
     return;
-  m_lastPath = path;
+  m_lastPath = next;
   emit lastPathChanged();
 }

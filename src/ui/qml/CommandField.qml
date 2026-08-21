@@ -10,6 +10,18 @@ Item {
     readonly property bool fieldActive: keyMachine && keyMachine.fieldFocused
     readonly property bool typingSearch: keyMachine && keyMachine.mode === "field-search"
     readonly property bool viewingSearch: fileModel && fileModel.isSearch
+    readonly property bool contentSearch: {
+        var t = keyMachine ? keyMachine.fieldText : ""
+        return t.length >= 2 && t.charAt(0) === "?" && t.charAt(1) === "?"
+    }
+    readonly property bool viewToggle: keyMachine &&
+                                       !keyMachine.fieldFocused &&
+                                       !keyMachine.peekOpen &&
+                                       !keyMachine.statusMessage.length &&
+                                       !typingSearch && !viewingSearch &&
+                                       keyMachine.mode !== "field-filter" &&
+                                       keyMachine.mode !== "field-command" &&
+                                       keyMachine.mode !== "field-jump"
 
     implicitHeight: Math.max(Theme.fontBody + Theme.space(10), 28)
 
@@ -33,7 +45,7 @@ Item {
             if (root.keyMachine && root.keyMachine.mode === "field-command")
                 return ":"
             if (root.keyMachine && root.keyMachine.mode === "field-search")
-                return "?"
+                return root.contentSearch ? "??" : "?"
             return "/"
         }
         color: (root.fieldActive || root.viewingSearch) ? Theme.accent : Theme.muted
@@ -64,26 +76,39 @@ Item {
             if (root.keyMachine && root.keyMachine.mode === "field-command" &&
                     t.length > 0 && t.charAt(0) === ":")
                 return t.substring(1)
-            if (root.keyMachine && root.keyMachine.mode === "field-search" &&
-                    t.length > 0 && t.charAt(0) === "?")
-                return t.substring(1)
+            if (root.keyMachine && root.keyMachine.mode === "field-search") {
+                if (t.length >= 2 && t.charAt(0) === "?" && t.charAt(1) === "?")
+                    return t.substring(2)
+                if (t.length > 0 && t.charAt(0) === "?")
+                    return t.substring(1)
+            }
             return t
         }
 
         onTextEdited: {
             if (!root.keyMachine)
                 return
-            // Keep the ':' / '?' sigil on the C++ side so parse order stays K7.
+            // Keep the ':' / '?' / '??' sigil on the C++ side so parse
+            // order stays K7. The prompt already shows the sigil — do
+            // not prepend another '?' onto a pasted "??query".
             if (root.keyMachine.mode === "field-command")
                 root.keyMachine.fieldText = ":" + text
-            else if (root.keyMachine.mode === "field-search")
-                root.keyMachine.fieldText = "?" + text
-            else
+            else if (root.keyMachine.mode === "field-search") {
+                if (text.indexOf("??") === 0)
+                    root.keyMachine.fieldText = text
+                else if (text.length > 0 && text.charAt(0) === "?")
+                    root.keyMachine.fieldText = "?" + text
+                else if (root.contentSearch)
+                    root.keyMachine.fieldText = "??" + text
+                else
+                    root.keyMachine.fieldText = "?" + text
+            } else
                 root.keyMachine.fieldText = text
         }
 
         onActiveFocusChanged: {
-            if (activeFocus && root.keyMachine && root.keyMachine.listFocused)
+            if (activeFocus && root.keyMachine && root.keyMachine.listFocused &&
+                    !root.keyMachine.peekOpen)
                 root.keyMachine.focusFilter()
         }
 
@@ -106,7 +131,9 @@ Item {
             if (root.keyMachine && root.keyMachine.mode === "field-command")
                 return "command…"
             if (root.keyMachine && root.keyMachine.mode === "field-search")
-                return "search names…  Tab listing"
+                return root.contentSearch
+                       ? "search content…  Tab listing"
+                       : "search names…  Tab listing"
             return "filter or command…"
         }
         color: Theme.muted
@@ -125,16 +152,20 @@ Item {
             if (root.keyMachine && root.keyMachine.statusMessage.length)
                 return root.keyMachine.statusMessage
             if (root.typingSearch)
-                return "SEARCH   Tab listing"
+                return root.contentSearch ? "CONTENT" : "SEARCH"
             if (root.viewingSearch)
-                return "RESULTS   Tab search"
+                return root.fileModel.isContentSearch ? "CONTENT" : "RESULTS"
             if (root.keyMachine && root.keyMachine.mode === "field-filter")
                 return "FILTER"
             if (root.keyMachine && root.keyMachine.mode === "field-command")
                 return "COMMAND"
             if (root.keyMachine && root.keyMachine.mode === "field-jump")
                 return "JUMP"
-            return "LIST   Tab search"
+            if (root.viewToggle && root.keyMachine.fsnMode)
+                return "FSN"
+            if (root.viewToggle)
+                return root.keyMachine.gridMode ? "GRID" : "LIST"
+            return ""
         }
         color: (root.fieldActive || root.viewingSearch ||
                 (root.keyMachine && root.keyMachine.statusMessage.length))
@@ -142,15 +173,20 @@ Item {
         elide: Text.ElideLeft
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody
-    }
 
-    Rectangle {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        height: root.fieldActive ? 2 : 1
-        color: (root.fieldActive || root.viewingSearch) ? Theme.accent
-                                                        : Theme.normalBorder
+        MouseArea {
+            anchors.fill: parent
+            enabled: root.viewToggle
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: {
+                if (!root.keyMachine)
+                    return
+                if (root.keyMachine.fsnMode)
+                    root.keyMachine.fsnMode = false
+                else
+                    root.keyMachine.gridMode = !root.keyMachine.gridMode
+            }
+        }
     }
 
     Connections {

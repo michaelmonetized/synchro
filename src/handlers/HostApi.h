@@ -5,6 +5,7 @@
 #include "Manifest.h"
 #include "PeekHost.h"
 
+#include <QColor>
 #include <QQuickItem>
 #include <QStringList>
 #include <QUrl>
@@ -49,7 +50,8 @@ class HostApi : public PeekHost {
   Q_PROPERTY(QString doHint READ doHint NOTIFY doHintChanged)
   Q_PROPERTY(QString listHint READ listHint CONSTANT)
   Q_PROPERTY(QQuickItem *doPreviewItem READ doPreviewItem NOTIFY doPreviewChanged)
-  Q_PROPERTY(QString doMosaicUrl READ doMosaicUrl NOTIFY doPreviewChanged)
+  Q_PROPERTY(QObject *doFolderModel READ doFolderModel NOTIFY doPreviewChanged)
+  Q_PROPERTY(QObject *doFolderProxy READ doFolderProxy NOTIFY doPreviewChanged)
   Q_PROPERTY(bool doTargetIsDir READ doTargetIsDir NOTIFY doPreviewChanged)
   Q_PROPERTY(QString doTargetName READ doTargetName NOTIFY doPreviewChanged)
   Q_PROPERTY(QVariantList openCandidates READ openCandidates NOTIFY
@@ -64,6 +66,11 @@ class HostApi : public PeekHost {
   Q_PROPERTY(bool gridMode READ gridMode WRITE setGridMode NOTIFY gridModeChanged)
   Q_PROPERTY(bool peekPreviewFocused READ peekPreviewFocused WRITE
                  setPeekPreviewFocused NOTIFY peekFocusChanged)
+  Q_PROPERTY(QUrl listingRowUrl READ listingRowUrl NOTIFY listingChromeChanged)
+  Q_PROPERTY(QUrl listingThumbUrl READ listingThumbUrl NOTIFY
+                 listingChromeChanged)
+  Q_PROPERTY(QString peekFindQuery READ peekFindQuery NOTIFY
+                 peekFindQueryChanged)
 
 public:
   HostApi(DirectoryModel *model, FilterProxy *proxy, NavStack *nav,
@@ -88,9 +95,12 @@ public:
   QString doHint() const;
   QString listHint() const;
   QQuickItem *doPreviewItem() const { return m_doPreviewItem; }
-  QString doMosaicUrl() const { return m_doMosaicUrl; }
+  QObject *doFolderModel() const;
+  QObject *doFolderProxy() const;
   bool doTargetIsDir() const { return m_doTargetIsDir; }
   QString doTargetName() const { return m_doTargetName; }
+  QUrl listingRowUrl() const { return m_listingRowUrl; }
+  QUrl listingThumbUrl() const { return m_listingThumbUrl; }
   QVariantList openCandidates() const { return m_openCandidates; }
   QString lastError() const { return m_error; }
   HandlerExec &exec() { return m_exec; }
@@ -128,7 +138,20 @@ public:
   Q_INVOKABLE void registerDoSurface(QObject *surface);
   Q_INVOKABLE void registerDoContentSurface(QObject *surface);
   // First N bytes as text for peek handlers. Never executes the file.
-  Q_INVOKABLE QVariantMap readPreview(const QUrl &url, int maxBytes = 65536) const;
+  // startByte seeks into the file (aligned back to a newline) so find
+  // can show a hit past the default 64 KiB window.
+  Q_INVOKABLE QVariantMap readPreview(const QUrl &url, int maxBytes = 65536,
+                                      qint64 startByte = 0) const;
+  // Literal find (smart-case: sensitive only if needle has an uppercase).
+  // Whole file, capped. offset/length are UTF-8 bytes.
+  Q_INVOKABLE QVariantList findInFile(const QUrl &url, const QString &needle,
+                                      int maxHits = 200) const;
+  // Overlay find backgrounds on syntax HTML (or wrap plain text).
+  Q_INVOKABLE QString markFindHits(const QString &html, const QString &plain,
+                                   const QString &needle, int currentLocal,
+                                   const QColor &matchFill,
+                                   const QColor &currentFill) const;
+  QString peekFindQuery() const;
   // Parquet footer schema; sample rows if duckdb is on PATH.
   Q_INVOKABLE QVariantMap readParquet(const QUrl &url, int maxRows = 12) const;
   // Read-only table browser for sqlite / duckdb peek handlers.
@@ -189,6 +212,8 @@ signals:
   void peekFocusChanged();
   void fileCommitted(const QString &path, const QString &mime);
   void peekCommitRequested();
+  void listingChromeChanged();
+  void peekFindQueryChanged();
 
 private:
   Manifest::Item currentItem() const;
@@ -208,6 +233,8 @@ private:
   void destroyDoContent();
   void attachDoPreview();
   Manifest::Item doContentItem() const;
+  void ensureDoFolderListing();
+  void refreshListingChrome();
   QVector<Manifest::Item> snapshotDoItems() const;
   QVector<Manifest::Item> activeItems() const;
   bool commitDoItems();
@@ -250,8 +277,8 @@ private:
   QQuickItem *m_doSurface = nullptr;
   QQuickItem *m_doContentSurface = nullptr;
   QQuickItem *m_doPreviewItem = nullptr;
-  QString m_doMosaicUrl;
-  QString m_doMosaicPath;
+  DirectoryModel *m_doFolderModel = nullptr;
+  FilterProxy *m_doFolderProxy = nullptr;
   QString m_doTargetName;
   bool m_doTargetIsDir = false;
   struct DoVerb {
@@ -281,4 +308,6 @@ private:
   bool m_peekPreviewFocused = false;
   bool m_chooserMode = false;
   FilesOnlyProxy *m_fileOnlyProxy = nullptr;
+  QUrl m_listingRowUrl;
+  QUrl m_listingThumbUrl;
 };

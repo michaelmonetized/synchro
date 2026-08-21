@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.action.eject",
+  "name": "Eject",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Unmount a removable or extra volume and power it off when udisks can.",
+  "kinds": ["action"],
+  "priority": 55,
+  "match": {
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {},
+  "action": {
+    "runtime": "core",
+    "verb": "eject"
+  }
+}
