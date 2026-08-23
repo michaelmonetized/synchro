@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QIcon>
 #include <QProcess>
 #include <QRegularExpression>
 
@@ -39,6 +40,7 @@ ThemeBridge::ThemeBridge(QObject *parent) : QObject(parent) {
   m_themeNamePath = joinPath(m_currentDir, QStringLiteral("theme.name"));
   m_colorsPath = joinPath(m_themeDir, QStringLiteral("colors.toml"));
   m_themeShellPath = joinPath(m_themeDir, QStringLiteral("shell.toml"));
+  m_iconThemePath = joinPath(m_themeDir, QStringLiteral("icons.theme"));
   m_userConfigDir = joinPath(joinPath(home, QStringLiteral(".config")),
                              QStringLiteral("omarchy"));
   m_userShellPath = joinPath(m_userConfigDir, QStringLiteral("shell.toml"));
@@ -109,6 +111,7 @@ void ThemeBridge::rearmWatches() {
   add(m_themeNamePath);
   add(m_colorsPath);
   add(m_themeShellPath);
+  add(m_iconThemePath);
   add(m_userConfigDir);
   add(m_userShellPath);
 }
@@ -132,6 +135,7 @@ void ThemeBridge::reloadNow() {
       loadUserShell();
       applyShellValues(m_userShell);
       composeDerived();
+      rebuildTokens(m_userShell);
       publish();
     }
     return;
@@ -154,6 +158,8 @@ void ThemeBridge::reloadNow() {
     merged.insert(it.key(), it.value());
   applyShellValues(merged);
   composeDerived();
+  loadIconTheme();
+  rebuildTokens(merged);
   publish();
   refreshHyprland();
 }
@@ -201,6 +207,7 @@ void ThemeBridge::loadColors(const QString &raw) {
   QString color4;
   QString color7;
   QString color8;
+  m_colorTokens.clear();
 
   static const QRegularExpression re(
       QStringLiteral("^\\s*([A-Za-z0-9_-]+)\\s*=\\s*[\"']?(#[0-9A-Fa-f]{6})"));
@@ -212,6 +219,9 @@ void ThemeBridge::loadColors(const QString &raw) {
       continue;
     const QString key = match.captured(1);
     const QString val = match.captured(2);
+    const QColor parsed(val);
+    if (parsed.isValid())
+      m_colorTokens.insert(key, parsed);
     if (key == QLatin1String("foreground")) {
       foreground = QColor(val);
       loadedForeground = true;
@@ -251,6 +261,25 @@ void ThemeBridge::loadColors(const QString &raw) {
   m_accent = accent;
   m_urgent = urgent;
   m_muted = muted;
+}
+
+void ThemeBridge::loadIconTheme() {
+  bool ok = false;
+  const QString next = readUtf8(m_iconThemePath, &ok).trimmed();
+  if (!ok || next.isEmpty())
+    return;
+  m_iconTheme = next;
+  QIcon::setThemeName(next);
+}
+
+void ThemeBridge::rebuildTokens(const QHash<QString, QString> &values) {
+  QVariantMap out;
+  for (auto it = m_colorTokens.cbegin(); it != m_colorTokens.cend(); ++it)
+    out.insert(QStringLiteral("colors.") + it.key(), it.value());
+  for (auto it = values.cbegin(); it != values.cend(); ++it)
+    out.insert(it.key(), it.value());
+  out.insert(QStringLiteral("theme.icon-name"), m_iconTheme);
+  m_tokens = out;
 }
 
 QHash<QString, QString> ThemeBridge::parseShell(const QString &raw) const {
@@ -390,7 +419,10 @@ void ThemeBridge::composeDerived() {
   m_normalBorder = withAlpha(normalBase, m_normalBorderAlpha);
 }
 
-void ThemeBridge::publish() { emit themeChanged(); }
+void ThemeBridge::publish() {
+  ++m_epoch;
+  emit themeChanged();
+}
 
 void ThemeBridge::refreshHyprland() {
   runHyprctl({QStringLiteral("-j"), QStringLiteral("getoption"),

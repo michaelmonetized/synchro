@@ -26,6 +26,7 @@ Item {
     property bool started: false
     property string schemeName: "Linux"
     property color termBg: "#000000"
+    readonly property real gradientReach: 0.5
 
     function refreshScheme() {
         if (!surface.host)
@@ -53,6 +54,9 @@ Item {
             surface.lastSyncedPath = p
             surface.lastSeenCwd = p
         }
+        // Leave ANSI cell backgrounds opaque, but clear the terminal's base
+        // coat so the themed panel well below can show through.
+        surface.host.setTerminalBackgroundOpacity(term, 0)
         session.startShellProgram()
         term.forceActiveFocus()
     }
@@ -67,6 +71,8 @@ Item {
 
     function browsePath() {
         var p = surface.fileModel ? surface.fileModel.path : ""
+        if (surface.fileModel && surface.fileModel.isSql)
+            p = surface.fileModel.sqlContext
         return p && p.charAt(0) === "/" ? p : ""
     }
 
@@ -86,13 +92,31 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: surface.termBg
+        gradient: Gradient {
+            orientation: Gradient.Vertical
+            GradientStop {
+                position: 0
+                color: Theme.darkBackground
+            }
+            GradientStop {
+                position: surface.gradientReach
+                color: surface.termBg
+            }
+            GradientStop {
+                position: 1
+                color: surface.termBg
+            }
+        }
     }
 
     QMLTermWidget {
         id: term
         anchors.fill: parent
         anchors.margins: Theme.space(8)
+        // qmltermwidget defaults to an OpenGL framebuffer object.  Keep the
+        // terminal on QQuickPaintedItem's image-backed path instead: the FBO
+        // path is where the NVIDIA driver crashes seen in Synchro originate.
+        renderTarget: PaintedItem.Image
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody + 1
         colorScheme: surface.schemeName

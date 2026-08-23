@@ -29,7 +29,9 @@ QColor withAlpha(const QColor &c, qreal a) {
 ThumbTheme fallback() {
   ThumbTheme t;
   t.foreground = kFg;
+  t.subtleForeground = kMuted;
   t.background = kBg;
+  t.surfaceRaised = withAlpha(kFg, 0.09);
   t.muted = kMuted;
   t.accent = kAccent;
   t.border = withAlpha(kFg, 0.4);
@@ -61,6 +63,10 @@ ThumbTheme parseColors(const QString &raw) {
     } else if (key == QLatin1String("background")) {
       t.background = val;
       gotBg = true;
+    } else if (key == QLatin1String("dark_foreground")) {
+      t.subtleForeground = val;
+    } else if (key == QLatin1String("lighter_background")) {
+      t.surfaceRaised = val;
     } else if (key == QLatin1String("accent")) {
       t.accent = val;
       gotAccent = true;
@@ -85,6 +91,10 @@ ThumbTheme parseColors(const QString &raw) {
     t.accent = QColor(color4);
   if (!gotMuted)
     t.muted = color8.isEmpty() ? t.foreground : QColor(color8);
+  if (!t.subtleForeground.isValid())
+    t.subtleForeground = t.muted;
+  if (!t.surfaceRaised.isValid())
+    t.surfaceRaised = withAlpha(t.foreground, 0.09);
   t.border = withAlpha(t.foreground, 0.4);
   return t;
 }
@@ -93,7 +103,8 @@ ThumbTheme parseColors(const QString &raw) {
 
 QString ThumbTheme::cacheId() const {
   const QByteArray raw =
-      (background.name() + foreground.name() + muted.name() + accent.name())
+      (background.name() + surfaceRaised.name() + foreground.name() +
+       subtleForeground.name() + muted.name() + accent.name())
           .toLatin1();
   return QString::fromLatin1(
       QCryptographicHash::hash(raw, QCryptographicHash::Md5).toHex().left(8));

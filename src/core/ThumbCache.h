@@ -31,6 +31,7 @@ public:
                 const QImage &img);
   bool ingestFile(const QString &path, qint64 mtime, int sizePx,
                   const QString &pngPath);
+  void removePath(const QString &path);
 
   int entryCount();
   qint64 byteSize();

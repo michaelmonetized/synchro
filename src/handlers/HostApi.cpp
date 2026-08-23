@@ -29,14 +29,96 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
 #include <QIODevice>
 #include <QGuiApplication>
 #include <QImageReader>
 #include <QMetaObject>
 #include <QObject>
 #include <QQuickItem>
+#include <QQuickTextDocument>
+#include <QSyntaxHighlighter>
+#include <QTextCharFormat>
+#include <QTextDocument>
 
+#include <algorithm>
 #include <cstdio>
+
+namespace {
+
+class SqlEditorHighlighter final : public QSyntaxHighlighter {
+public:
+  explicit SqlEditorHighlighter(QTextDocument *document)
+      : QSyntaxHighlighter(document) {
+    setObjectName(QStringLiteral("synchroSqlHighlighter"));
+  }
+
+  void setColors(const QColor &keyword, const QColor &stringColor,
+                 const QColor &number, const QColor &comment,
+                 const QColor &normal) {
+    m_keyword.setForeground(keyword);
+    m_keyword.setFontWeight(QFont::DemiBold);
+    m_string.setForeground(stringColor);
+    m_number.setForeground(number);
+    m_comment.setForeground(comment);
+    m_comment.setFontItalic(true);
+    m_normal.setForeground(normal);
+    rehighlight();
+  }
+
+protected:
+  void highlightBlock(const QString &text) override {
+    setFormat(0, text.size(), m_normal);
+    static const QRegularExpression keywords(
+        QStringLiteral("\\b(select|from|where|join|left|right|full|inner|outer|"
+                       "on|as|group|by|order|having|limit|offset|with|union|all|"
+                       "distinct|case|when|then|else|end|and|or|not|null|true|"
+                       "false|is|in|like|ilike|between|asc|desc|over|partition|"
+                       "filter|qualify|unnest|cast|count|sum|avg|min|max)\\b"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression numbers(
+        QStringLiteral("\\b(?:0x[0-9A-Fa-f]+|\\d+(?:\\.\\d+)?)\\b"));
+    static const QRegularExpression strings(
+        QStringLiteral("'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\""));
+    static const QRegularExpression lineComment(QStringLiteral("--[^\\n]*"));
+    auto paint = [&](const QRegularExpression &re, const QTextCharFormat &fmt) {
+      auto it = re.globalMatch(text);
+      while (it.hasNext()) {
+        const auto match = it.next();
+        setFormat(match.capturedStart(), match.capturedLength(), fmt);
+      }
+    };
+    paint(keywords, m_keyword);
+    paint(numbers, m_number);
+    paint(strings, m_string);
+    paint(lineComment, m_comment);
+
+    setCurrentBlockState(0);
+    int start = previousBlockState() == 1
+                    ? 0
+                    : text.indexOf(QStringLiteral("/*"));
+    while (start >= 0) {
+      const int end = text.indexOf(QStringLiteral("*/"), start + 2);
+      const bool open = end < 0;
+      const int length = open ? text.size() - start : end - start + 2;
+      setFormat(start, length, m_comment);
+      if (open) {
+        setCurrentBlockState(1);
+        break;
+      }
+      start = text.indexOf(QStringLiteral("/*"), start + length);
+    }
+  }
+
+private:
+  QTextCharFormat m_keyword;
+  QTextCharFormat m_string;
+  QTextCharFormat m_number;
+  QTextCharFormat m_comment;
+  QTextCharFormat m_normal;
+};
+
+} // namespace
 
 HostApi::HostApi(DirectoryModel *model, FilterProxy *proxy, NavStack *nav,
                  HandlerRegistry *registry, HandlerLoader *loader, XdgOpen *xdg,
@@ -245,9 +327,92 @@ QUrl HostApi::panelSource(const QString &id) const {
   return QUrl::fromLocalFile(path);
 }
 
+QString HostApi::panelRelevance(const QString &id) const {
+  if (!m_registry || !m_registry->contains(id))
+    return {};
+  return m_registry->handler(id)
+      .manifest.panel.value(QStringLiteral("relevance"))
+      .toString();
+}
+
+QVariantMap HostApi::panelInfo(const QString &id) const {
+  QVariantMap out;
+  if (!m_registry || !m_registry->contains(id))
+    return out;
+  const HandlerRegistry::Record rec = m_registry->handler(id);
+  if (!rec.enabled || !rec.manifest.kinds.contains(QStringLiteral("panel")))
+    return out;
+  out.insert(QStringLiteral("id"), rec.manifest.id);
+  out.insert(QStringLiteral("name"), rec.manifest.name);
+  out.insert(QStringLiteral("glyph"),
+             rec.manifest.panel.value(QStringLiteral("glyph")).toString());
+  out.insert(QStringLiteral("group"),
+             rec.manifest.panel.value(QStringLiteral("group")).toString());
+  return out;
+}
+
+QVariantList HostApi::panelPeers(const QString &id) const {
+  QVariantList out;
+  if (!m_registry || !m_registry->contains(id))
+    return out;
+  const QString group = m_registry->handler(id)
+                            .manifest.panel.value(QStringLiteral("group"))
+                            .toString();
+  struct Peer {
+    int order = 0;
+    QVariantMap info;
+  };
+  QVector<Peer> peers;
+  for (const HandlerRegistry::Record &rec : m_registry->handlers()) {
+    if (!rec.enabled ||
+        !rec.manifest.kinds.contains(QStringLiteral("panel")))
+      continue;
+    const QString candidate =
+        rec.manifest.panel.value(QStringLiteral("group")).toString();
+    if ((group.isEmpty() && rec.manifest.id != id) ||
+        (!group.isEmpty() && candidate != group))
+      continue;
+    Peer peer;
+    peer.order = rec.manifest.panel.value(QStringLiteral("order")).toInt();
+    peer.info.insert(QStringLiteral("id"), rec.manifest.id);
+    peer.info.insert(QStringLiteral("name"), rec.manifest.name);
+    peer.info.insert(QStringLiteral("glyph"),
+                     rec.manifest.panel.value(QStringLiteral("glyph")).toString());
+    peer.info.insert(QStringLiteral("group"), candidate);
+    peers.append(peer);
+  }
+  std::sort(peers.begin(), peers.end(), [](const Peer &a, const Peer &b) {
+    if (a.order != b.order)
+      return a.order < b.order;
+    return a.info.value(QStringLiteral("id")).toString() <
+           b.info.value(QStringLiteral("id")).toString();
+  });
+  for (const Peer &peer : peers)
+    out.append(peer.info);
+  return out;
+}
+
+bool HostApi::attachSqlHighlighter(QObject *quickDocument,
+                                   const QColor &keyword,
+                                   const QColor &stringColor,
+                                   const QColor &number,
+                                   const QColor &comment,
+                                   const QColor &normal) const {
+  auto *quick = qobject_cast<QQuickTextDocument *>(quickDocument);
+  QTextDocument *document = quick ? quick->textDocument() : nullptr;
+  if (!document)
+    return false;
+  auto *highlighter = dynamic_cast<SqlEditorHighlighter *>(
+      document->findChild<QObject *>(QStringLiteral("synchroSqlHighlighter"),
+                                    Qt::FindDirectChildrenOnly));
+  if (!highlighter)
+    highlighter = new SqlEditorHighlighter(document);
+  highlighter->setColors(keyword, stringColor, number, comment, normal);
+  return true;
+}
+
 // Panels whose pills should be parked right now: "always" panels plus
-// any whose manifest match rules hit the current selection. Relevance
-// gates the affordance only — an open panel is never closed by this.
+// any whose manifest match rules hit the single explicit selection.
 QVariantList HostApi::relevantPanels() const {
   QVariantList out;
   if (!m_registry)
@@ -272,6 +437,11 @@ QVariantList HostApi::relevantPanels() const {
         QLatin1String("always"))
       push(rec);
   }
+  // A cursor is not sufficient context for an app panel. In particular,
+  // Ctrl-clicking the selected item off must withdraw the DuckDB affordance
+  // even though the listing cursor remains on that row.
+  if (m_sel && m_sel->selectedCount() != 1)
+    return out;
   const int row = m_proxy ? m_proxy->currentIndex()
                           : (m_model ? m_model->currentIndex() : -1);
   const Manifest::Item item = itemAt(row);
@@ -393,6 +563,43 @@ QString HostApi::terminalBackground() const {
       .value(QStringLiteral("background"));
 }
 
+static void *qmlTermWidgetHandle() {
+  static void *handle = [] {
+    const QString plugin =
+        QLibraryInfo::path(QLibraryInfo::QmlImportsPath) +
+        QStringLiteral("/QMLTermWidget/libqmltermwidget.so");
+    void *loaded = dlopen(QFile::encodeName(plugin).constData(),
+                          RTLD_LAZY | RTLD_NOLOAD);
+    if (!loaded)
+      loaded = dlopen("libqmltermwidget.so", RTLD_LAZY);
+    return loaded;
+  }();
+  return handle;
+}
+
+// qmltermwidget exposes background opacity only as a public C++ method, not
+// as a QML property. Resolve that method from the already-loaded plugin so the
+// terminal can paint its glyphs over Synchro's themed panel background.
+bool HostApi::setTerminalBackgroundOpacity(QObject *terminal,
+                                           double opacity) const {
+  if (!terminal || !terminal->inherits("Konsole::TerminalDisplay"))
+    return false;
+  using SetOpacityFn = void (*)(void *, double);
+  static SetOpacityFn setOpacity = [] {
+    void *handle = qmlTermWidgetHandle();
+    return handle ? reinterpret_cast<SetOpacityFn>(
+                        dlsym(handle,
+                              "_ZN7Konsole15TerminalDisplay10setOpacityEd"))
+                  : nullptr;
+  }();
+  if (!setOpacity)
+    return false;
+  setOpacity(terminal, qBound(0.0, opacity, 1.0));
+  if (auto *item = qobject_cast<QQuickItem *>(terminal))
+    item->update();
+  return true;
+}
+
 // qmltermwidget's name lookup only ever checks the FIRST scheme directory
 // (findColorSchemePath uses dirs.first()), so registered custom dirs are
 // unreachable by name. ColorSchemeManager::loadCustomColorScheme(path) is
@@ -405,13 +612,7 @@ bool loadSchemeFile(const QString &path) {
   static InstanceFn instanceFn = nullptr;
   static LoadFn loadFn = nullptr;
   static bool resolved = [] {
-    const QString plugin =
-        QLibraryInfo::path(QLibraryInfo::QmlImportsPath) +
-        QStringLiteral("/QMLTermWidget/libqmltermwidget.so");
-    void *handle = dlopen(QFile::encodeName(plugin).constData(),
-                          RTLD_LAZY | RTLD_NOLOAD);
-    if (!handle)
-      handle = dlopen("libqmltermwidget.so", RTLD_LAZY);
+    void *handle = qmlTermWidgetHandle();
     if (!handle)
       return false;
     instanceFn = reinterpret_cast<InstanceFn>(

@@ -1,8 +1,10 @@
 #include "Config.h"
 #include "DirectoryModel.h"
 #include "FileOpEngine.h"
+#include "FileCatalog.h"
 #include "FilterProxy.h"
 #include "HandlerLoader.h"
+#include "IconImageProvider.h"
 #include "HandlerRegistry.h"
 #include "HostApi.h"
 #include "KeyMachine.h"
@@ -25,6 +27,7 @@
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QSurfaceFormat>
 #include <QTimer>
 #include <QVariantMap>
 #include <QtQml/QQmlExtensionPlugin>
@@ -63,6 +66,13 @@ int main(int argc, char *argv[]) {
   // would recurse if the session FileChooser is synchro.
   if (argvHasFlag(argc, argv, "--portal"))
     qputenv("QT_NO_XDG_DESKTOP_PORTAL", QByteArrayLiteral("1"));
+
+  // Preserve per-pixel alpha for the QML work surface. The window itself
+  // remains at the compositor's configured opacity; only explicitly
+  // translucent canvas pixels expose Hyprland's backdrop blur.
+  QSurfaceFormat surfaceFormat = QSurfaceFormat::defaultFormat();
+  surfaceFormat.setAlphaBufferSize(8);
+  QSurfaceFormat::setDefaultFormat(surfaceFormat);
 
   QGuiApplication::setDesktopFileName(QStringLiteral("org.omarchy.synchro"));
   QGuiApplication app(argc, argv);
@@ -183,6 +193,7 @@ int main(int argc, char *argv[]) {
     startPath = config.lastPath();
 
   DirectoryModel directoryModel;
+  FileCatalog fileCatalog(&directoryModel);
   SearchModel searchModel;
   directoryModel.setSearchModel(&searchModel);
   directoryModel.setShowHidden(config.showHidden());
@@ -244,6 +255,7 @@ int main(int argc, char *argv[]) {
   engine.addImportPath(QCoreApplication::applicationDirPath() +
                        QStringLiteral("/qml"));
   ThumbImageProvider::install(&engine);
+  IconImageProvider::install(&engine);
   engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
                                            &directoryModel);
   engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
@@ -256,6 +268,8 @@ int main(int argc, char *argv[]) {
                                            &locationChips);
   engine.rootContext()->setContextProperty(QStringLiteral("appConfig"),
                                            &config);
+  engine.rootContext()->setContextProperty(QStringLiteral("fileCatalog"),
+                                           &fileCatalog);
 
   HostApi hostApi(&directoryModel, &filterProxy, &navStack, &handlerRegistry,
                   &handlerLoader, &xdgOpen, &mimeMap, &engine);
@@ -339,6 +353,10 @@ int main(int argc, char *argv[]) {
   QObject::connect(&config, &Config::panelChanged, &config,
                    [&] { schedulePersist(); });
   QObject::connect(&config, &Config::pinsChanged, &config,
+                   [&] { schedulePersist(); });
+  QObject::connect(&config, &Config::sqlBookmarksChanged, &config,
+                   [&] { schedulePersist(); });
+  QObject::connect(&config, &Config::gridSizeChanged, &config,
                    [&] { schedulePersist(); });
   QObject::connect(&app, &QCoreApplication::aboutToQuit, &config, [&] {
     persistTimer.stop();

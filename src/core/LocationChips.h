@@ -41,8 +41,11 @@ public:
   Q_INVOKABLE bool pin(const QString &path);
   Q_INVOKABLE bool unpin(const QString &path);
   Q_INVOKABLE bool isPinned(const QString &path) const;
+  Q_INVOKABLE bool removeSqlBookmark(const QString &id);
   static QString pinId(const QString &path);
   static bool isPinId(const QString &id);
+  static QString sqlBookmarkId(const QString &id);
+  static bool isSqlBookmarkId(const QString &id);
 
   static QString expandPath(const QString &path);
   static bool allowedInChooser(const QString &adapter, const QString &runtime);
@@ -50,10 +53,13 @@ public:
 signals:
   void chipsChanged();
   void chooserModeChanged();
+  void sqlBookmarkActivated(const QString &name, const QString &sql,
+                            const QString &cwd, const QString &id);
 
 private:
   QVariantMap chipMap(const QString &id) const;
   QVariantMap pinChipMap(const QString &path) const;
+  QVariantMap sqlBookmarkChipMap(const QString &id) const;
   bool chipActive(const QVariantMap &chip) const;
   QVariantList chipsInGroup(const QString &group) const;
   void persistPins();

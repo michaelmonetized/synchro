@@ -6,6 +6,7 @@
 #include <QObject>
 #include <QString>
 #include <QTimer>
+#include <QVariantMap>
 #include <QtQml/qqmlregistration.h>
 
 // Survives omarchy-theme-set replacing theme/ (inode death).
@@ -29,6 +30,9 @@ class ThemeBridge : public QObject {
   Q_PROPERTY(qreal spacingScale READ spacingScale NOTIFY themeChanged)
   Q_PROPERTY(
       bool spacingScaleWithFont READ spacingScaleWithFont NOTIFY themeChanged)
+  Q_PROPERTY(QVariantMap tokens READ tokens NOTIFY themeChanged)
+  Q_PROPERTY(QString iconTheme READ iconTheme NOTIFY themeChanged)
+  Q_PROPERTY(int epoch READ epoch NOTIFY themeChanged)
 
 public:
   explicit ThemeBridge(QObject *parent = nullptr);
@@ -48,6 +52,9 @@ public:
   int fontBaseSize() const { return m_fontBaseSize; }
   qreal spacingScale() const { return m_spacingScale; }
   bool spacingScaleWithFont() const { return m_spacingScaleWithFont; }
+  QVariantMap tokens() const { return m_tokens; }
+  QString iconTheme() const { return m_iconTheme; }
+  int epoch() const { return m_epoch; }
 
   Q_INVOKABLE int space(int px) const;
 
@@ -66,6 +73,8 @@ private:
   void loadColors(const QString &raw);
   QHash<QString, QString> parseShell(const QString &raw) const;
   void applyShellValues(const QHash<QString, QString> &values);
+  void rebuildTokens(const QHash<QString, QString> &values);
+  void loadIconTheme();
   void composeDerived();
   void publish();
   void refreshHyprland();
@@ -87,11 +96,15 @@ private:
   QString m_themeNamePath;
   QString m_colorsPath;
   QString m_themeShellPath;
+  QString m_iconThemePath;
   QString m_userConfigDir;
   QString m_userShellPath;
 
   QHash<QString, QString> m_themeShell;
   QHash<QString, QString> m_userShell;
+  QHash<QString, QColor> m_colorTokens;
+  QVariantMap m_tokens;
+  QString m_iconTheme;
 
   QColor m_foreground;
   QColor m_background;
@@ -121,4 +134,5 @@ private:
   int m_missingRetries = 0;
   bool m_appliedAny = false;
   bool m_hadThemeFiles = false;
+  int m_epoch = 0;
 };

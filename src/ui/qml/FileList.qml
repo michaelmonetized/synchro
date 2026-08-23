@@ -16,7 +16,8 @@ ListView {
     readonly property int thumbSizePx: 128
     readonly property bool dndLive: dndEnabled && fileOps && fileModel &&
                                     !fileModel.isTrash && !fileModel.isRecent &&
-                                    !fileModel.isSearch && !fileModel.isVolumes
+                                    !fileModel.isSearch && !fileModel.isVolumes &&
+                                    !fileModel.isSql
     readonly property bool searching: fileModel && fileModel.isSearch
 
     signal viewToggleRequested()
@@ -27,6 +28,7 @@ ListView {
     // Keys belong to a panel: keep the cursor visible (panel apps target
     // the selected file) but dimmed so focus stays legible.
     readonly property bool cursorDim: keyMachine && keyMachine.panelFocused
+    readonly property real contentInset: Math.max(0, (width - Theme.space(1600)) / 2)
 
     readonly property Component folderMarkComp: Component { FolderMark {} }
     readonly property Component fileMarkComp: Component { FileMark {} }
@@ -45,7 +47,7 @@ ListView {
     // Recents and search keep their own order; headers stay informative
     // but stop offering sort there.
     readonly property bool headerSortable: fileModel && !fileModel.isRecent &&
-                                           !fileModel.isSearch
+                                           !fileModel.isSearch && !fileModel.isSql
 
     function fmtSize(n) {
         if (n === undefined || n === null || n < 0)
@@ -106,7 +108,8 @@ ListView {
                   : head.label
             color: head.active ? Theme.accent : Theme.muted
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontBody
+            font.pixelSize: Theme.fontBodySmall
+            font.bold: head.active
             elide: Text.ElideRight
         }
 
@@ -123,8 +126,8 @@ ListView {
     model: list.visible ? list.rows : null
     clip: true
     reuseItems: !list.searching
-    readonly property int sectionH: Math.max(Theme.fontBody + Theme.space(10), 24)
-    readonly property int rowInner: Math.max(Theme.fontBody + Theme.space(8), 20)
+    readonly property int sectionH: Math.max(Theme.controlHeight, 28)
+    readonly property int rowInner: Math.max(Theme.controlHeight + Theme.spaceMD, 34)
     boundsBehavior: Flickable.StopAtBounds
     keyNavigationEnabled: false
     highlightFollowsCurrentItem: true
@@ -138,7 +141,7 @@ ListView {
     Rectangle {
         anchors.fill: parent
         z: -2
-        color: Theme.opaqueBackground
+        color: "transparent"
     }
 
     Item {
@@ -153,7 +156,7 @@ ListView {
 
         Rectangle {
             anchors.fill: parent
-            color: Theme.opaqueBackground
+            color: Theme.darkBackground
         }
 
         Rectangle {
@@ -168,7 +171,8 @@ ListView {
             role: "name"
             label: "Name"
             anchors.left: parent.left
-            anchors.leftMargin: Theme.space(8) + Theme.fontBody + Theme.space(4)
+            anchors.leftMargin: list.contentInset + Theme.space(12) +
+                                Theme.space(24) + Theme.spaceLG
             anchors.right: headerCols.left
             anchors.top: parent.top
             anchors.bottom: parent.bottom
@@ -177,7 +181,7 @@ ListView {
         Row {
             id: headerCols
             anchors.right: parent.right
-            anchors.rightMargin: Theme.space(8)
+            anchors.rightMargin: list.contentInset + Theme.space(12)
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             spacing: Theme.space(6)
@@ -383,7 +387,7 @@ ListView {
 
         Rectangle {
             anchors.fill: parent
-            color: Theme.opaqueBackground
+            color: "transparent"
         }
 
         Loader {
@@ -412,8 +416,8 @@ ListView {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    anchors.leftMargin: Theme.space(8)
-                    anchors.rightMargin: Theme.space(8)
+                    anchors.leftMargin: list.contentInset + Theme.space(12)
+                    anchors.rightMargin: list.contentInset + Theme.space(12)
                     text: list.folderLabel(row.parentPath)
                     color: Theme.accent
                     font.family: Theme.fontFamily
@@ -439,7 +443,8 @@ ListView {
 
         Rectangle {
             anchors.fill: parent
-            visible: list.showCursorChrome && row.ListView.isCurrentItem
+            visible: list.showCursorChrome && row.ListView.isCurrentItem &&
+                     row.picked
             color: Theme.selectedFill
             opacity: list.cursorDim ? 0.45 : 1
         }
@@ -455,6 +460,16 @@ ListView {
             anchors.fill: parent
             visible: hover.hovered && !row.ListView.isCurrentItem
             color: Theme.hoverFill
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: list.contentInset
+            anchors.rightMargin: list.contentInset
+            height: 1
+            color: Theme.alpha(Theme.foreground, 0.045)
         }
 
         Rectangle {
@@ -480,14 +495,23 @@ ListView {
 
         Item {
             id: iconBox
-            width: Theme.fontBody
-            height: Theme.fontBody
+            width: Theme.space(24)
+            height: Theme.space(24)
             anchors.left: parent.left
-            anchors.leftMargin: Theme.space(8)
+            anchors.leftMargin: list.contentInset + Theme.space(12)
             anchors.verticalCenter: parent.verticalCenter
+
+            Rectangle {
+                anchors.fill: parent
+                color: Theme.darkBackground
+                border.color: Theme.alpha(Theme.foreground, 0.10)
+                border.width: 1
+                radius: Theme.radius
+            }
 
             Image {
                 anchors.fill: parent
+                anchors.margins: 1
                 visible: row.thumbnail.length > 0
                 source: row.thumbnail
                 asynchronous: true
@@ -514,7 +538,8 @@ ListView {
             anchors.rightMargin: Theme.space(8)
             anchors.verticalCenter: parent.verticalCenter
             text: row.name
-            color: Theme.foreground
+            color: row.ListView.isCurrentItem || row.picked
+                   ? Theme.brightForeground : Theme.foreground
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontBody
             elide: Text.ElideMiddle
@@ -534,27 +559,27 @@ ListView {
                 visible: list.showSizeCol
                 horizontalAlignment: Text.AlignRight
                 text: row.isDir ? "—" : list.fmtSize(row.size)
-                color: Theme.muted
+                color: Theme.darkForeground
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontBody
+                font.pixelSize: Theme.fontBodySmall
                 elide: Text.ElideRight
             }
             Text {
                 width: list.typeColW
                 visible: list.showTypeCol
                 text: row.typeLabel
-                color: Theme.muted
+                color: Theme.darkForeground
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontBody
+                font.pixelSize: Theme.fontBodySmall
                 elide: Text.ElideRight
             }
             Text {
                 width: list.mtimeColW
                 visible: list.showMtimeCol
                 text: list.fmtMtime(row.mtime)
-                color: Theme.muted
+                color: Theme.darkForeground
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontBody
+                font.pixelSize: Theme.fontBodySmall
                 elide: Text.ElideRight
             }
         }
@@ -563,7 +588,7 @@ ListView {
             id: chrome
             objectName: "listingRowChrome"
             anchors.right: parent.right
-            anchors.rightMargin: Theme.space(8)
+            anchors.rightMargin: list.contentInset + Theme.space(12)
             anchors.verticalCenter: parent.verticalCenter
             width: Math.min(implicitWidth, parent.width * 0.55)
             height: parent.height

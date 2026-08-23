@@ -282,7 +282,13 @@ Item {
                     highlightFollowsCurrentItem: true
                     highlightMoveDuration: 0
 
-                    highlight: Rectangle { color: Theme.selectedFill }
+                    highlight: Rectangle {
+                        objectName: "databaseTableSelection"
+                        color: Theme.selectedFill
+                        border.color: Theme.accent
+                        border.width: 2
+                        radius: Theme.radius
+                    }
 
                     delegate: Item {
                         id: trow

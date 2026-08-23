@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QUuid>
 
 namespace {
 
@@ -48,6 +49,24 @@ QString sanitizeLastPath(const QString &path) {
   return t;
 }
 
+QVariantMap normalizeSqlBookmark(const QVariantMap &raw) {
+  QVariantMap out;
+  QString id = raw.value(QStringLiteral("id")).toString().trimmed();
+  const QString name = raw.value(QStringLiteral("name")).toString().trimmed();
+  const QString sql = raw.value(QStringLiteral("sql")).toString().trimmed();
+  QString cwd = Config::normalizePin(
+      raw.value(QStringLiteral("cwd")).toString());
+  if (name.isEmpty() || sql.isEmpty() || cwd.isEmpty())
+    return out;
+  if (id.isEmpty())
+    id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  out.insert(QStringLiteral("id"), id.left(80));
+  out.insert(QStringLiteral("name"), name.left(80));
+  out.insert(QStringLiteral("sql"), sql.left(32768));
+  out.insert(QStringLiteral("cwd"), cwd);
+  return out;
+}
+
 } // namespace
 
 Config::Config(QObject *parent) : Config(QString(), parent) {}
@@ -80,11 +99,13 @@ void Config::applyDefaults() {
   m_sortOrder = QStringLiteral("asc");
   m_chips = defaultLocationChips();
   m_pins.clear();
+  m_sqlBookmarks.clear();
   m_lastPath.clear();
   m_panelSide = QStringLiteral("bottom");
   m_panelSize = 260;
   m_panelOpen = false;
   m_panelApp = QStringLiteral("synchro.panel.terminal");
+  m_gridSize = 132;
 }
 
 static QString normalizePanelSide(const QString &side) {
@@ -137,6 +158,8 @@ bool Config::load() {
     if (!app.isEmpty())
       m_panelApp = app;
   }
+  if (obj.contains(QStringLiteral("gridSize")))
+    m_gridSize = qBound(88, obj.value(QStringLiteral("gridSize")).toInt(132), 240);
   if (obj.contains(QStringLiteral("pins"))) {
     QStringList pins;
     for (const QString &raw :
@@ -146,6 +169,16 @@ bool Config::load() {
         pins.append(pin);
     }
     m_pins = pins;
+  }
+  const QJsonArray sqlBookmarks =
+      obj.value(QStringLiteral("sqlBookmarks")).toArray();
+  for (const QJsonValue &value : sqlBookmarks) {
+    if (m_sqlBookmarks.size() >= 24 || !value.isObject())
+      break;
+    const QVariantMap bookmark =
+        normalizeSqlBookmark(value.toObject().toVariantMap());
+    if (!bookmark.isEmpty())
+      m_sqlBookmarks.append(bookmark);
   }
   return true;
 }
@@ -172,6 +205,8 @@ bool Config::save() const {
   for (const QString &path : m_pins)
     pins.append(path);
   obj.insert(QStringLiteral("pins"), pins);
+  obj.insert(QStringLiteral("sqlBookmarks"),
+             QJsonArray::fromVariantList(m_sqlBookmarks));
   obj.insert(QStringLiteral("lastPath"), m_lastPath);
   QJsonObject panel;
   panel.insert(QStringLiteral("side"), m_panelSide);
@@ -179,6 +214,7 @@ bool Config::save() const {
   panel.insert(QStringLiteral("open"), m_panelOpen);
   panel.insert(QStringLiteral("app"), m_panelApp);
   obj.insert(QStringLiteral("panel"), panel);
+  obj.insert(QStringLiteral("gridSize"), m_gridSize);
   QSaveFile out(m_path);
   if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
     return false;
@@ -245,6 +281,52 @@ void Config::setPins(const QStringList &paths) {
   emit pinsChanged();
 }
 
+QString Config::saveSqlBookmark(const QString &name, const QString &sql,
+                                const QString &cwd) {
+  QVariantMap next = normalizeSqlBookmark(
+      {{QStringLiteral("name"), name},
+       {QStringLiteral("sql"), sql},
+       {QStringLiteral("cwd"), cwd}});
+  if (next.isEmpty())
+    return {};
+
+  const QString wanted = next.value(QStringLiteral("name")).toString();
+  for (int i = 0; i < m_sqlBookmarks.size(); ++i) {
+    QVariantMap prior = m_sqlBookmarks.at(i).toMap();
+    if (prior.value(QStringLiteral("name"))
+            .toString()
+            .compare(wanted, Qt::CaseInsensitive) != 0)
+      continue;
+    next.insert(QStringLiteral("id"),
+                prior.value(QStringLiteral("id")).toString());
+    if (prior == next)
+      return next.value(QStringLiteral("id")).toString();
+    m_sqlBookmarks[i] = next;
+    emit sqlBookmarksChanged();
+    return next.value(QStringLiteral("id")).toString();
+  }
+  if (m_sqlBookmarks.size() >= 24)
+    return {};
+  next.insert(QStringLiteral("id"),
+              QUuid::createUuid().toString(QUuid::WithoutBraces));
+  m_sqlBookmarks.append(next);
+  emit sqlBookmarksChanged();
+  return next.value(QStringLiteral("id")).toString();
+}
+
+bool Config::removeSqlBookmark(const QString &id) {
+  const QString wanted = id.trimmed();
+  for (int i = 0; i < m_sqlBookmarks.size(); ++i) {
+    if (m_sqlBookmarks.at(i).toMap().value(QStringLiteral("id")).toString() !=
+        wanted)
+      continue;
+    m_sqlBookmarks.removeAt(i);
+    emit sqlBookmarksChanged();
+    return true;
+  }
+  return false;
+}
+
 void Config::setLocationChips(const QStringList &ids) {
   const QStringList next = ids.isEmpty() ? defaultLocationChips() : ids;
   if (m_chips == next)
@@ -289,4 +371,12 @@ void Config::setPanelApp(const QString &id) {
     return;
   m_panelApp = id;
   emit panelChanged();
+}
+
+void Config::setGridSize(int px) {
+  const int next = qBound(88, px, 240);
+  if (m_gridSize == next)
+    return;
+  m_gridSize = next;
+  emit gridSizeChanged();
 }

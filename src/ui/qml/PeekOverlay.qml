@@ -23,17 +23,45 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.background
-        opacity: root.folderPeek ? 0.62 : 0.86
+        color: Theme.darkerBackground
+        opacity: root.folderPeek ? 0.76 : 0.70
+    }
+
+    MouseArea {
+        id: modalBlocker
+        objectName: "peekModalBlocker"
+        anchors.fill: parent
+        z: 1
+        onClicked: if (root.keys) root.keys.escape()
     }
 
     Rectangle {
         id: frame
-        anchors.fill: parent
-        anchors.margins: Theme.space(root.folderPeek ? 36 : 24)
-        color: Theme.background
-        border.color: Theme.normalBorder
-        border.width: 1
+        objectName: "peekPanel"
+        z: 2
+        anchors.centerIn: parent
+        width: Math.max(0, Math.min(parent.width - Theme.space(24),
+                        Math.max(Theme.space(root.folderPeek ? 660 : 580),
+                                 parent.width * (root.folderPeek ? 0.92 : 0.84))))
+        height: Math.max(0, Math.min(parent.height - Theme.space(24),
+                         Math.max(Theme.space(420), parent.height * 0.88)))
+        color: Theme.opaqueBackground
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: Theme.controlHeight + Theme.spaceLG
+            color: Theme.darkBackground
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 1
+                color: Theme.alpha(Theme.accent, 0.46)
+            }
+        }
 
         Text {
             id: caption
@@ -42,17 +70,18 @@ Item {
             anchors.left: parent.left
             anchors.right: fileNameCaption.visible ? fileNameCaption.left
                                                    : parent.right
-            anchors.margins: Theme.space(8)
+            anchors.margins: Theme.spaceLG
             anchors.rightMargin: fileNameCaption.visible ? Theme.space(12)
                                                          : Theme.space(8)
             text: {
                 if (root.host && root.host.folderPath.length)
-                    return "peek  " + root.host.folderPath
-                return "peek"
+                    return "PREVIEW  ·  " + root.host.folderPath
+                return "PREVIEW"
             }
-            color: Theme.muted
+            color: Theme.accent
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontBody
+            font.pixelSize: Theme.fontCaption
+            font.bold: true
             elide: Text.ElideMiddle
         }
 
@@ -63,11 +92,12 @@ Item {
                      root.host.peekFileName.length > 0
             anchors.top: parent.top
             anchors.right: parent.right
-            anchors.margins: Theme.space(8)
+            anchors.margins: Theme.spaceLG
             text: root.host ? root.host.peekFileName : ""
-            color: Theme.foreground
+            color: Theme.brightForeground
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontBody
+            font.pixelSize: Theme.fontBodySmall
+            font.bold: true
             elide: Text.ElideMiddle
             width: Math.min(implicitWidth, parent.width * 0.42)
             horizontalAlignment: Text.AlignRight
@@ -87,6 +117,12 @@ Item {
             visible: root.host && root.host.folderPeek
             opacity: root.host && root.host.folderListing ? 1 : 0
             enabled: root.host && root.host.folderListing
+
+            Rectangle {
+                objectName: "peekFolderSurfaceBackground"
+                anchors.fill: parent
+                color: Theme.opaqueBackground
+            }
         }
 
         Item {
@@ -120,6 +156,12 @@ Item {
                               Math.max(Theme.space(fileIndex.grid ? 128 : 112),
                                        parent.width * (fileIndex.grid ? 0.26 : 0.22)))
                    : 0
+
+            Rectangle {
+                objectName: "peekIndexBackground"
+                anchors.fill: parent
+                color: Theme.darkBackground
+            }
 
             function activateAt(i) {
                 if (fileIndex.grid && fileIndex.fileRows)
@@ -156,15 +198,6 @@ Item {
                 files.requestVisibleThumbs(first, last, fileIndex.thumbPx)
             }
 
-            Rectangle {
-                anchors.fill: parent
-                color: "transparent"
-                border.width: fileIndex.visible && root.host &&
-                              !root.host.peekPreviewFocused ? 1 : 0
-                border.color: Theme.accent
-                radius: Theme.radius
-            }
-
             ListView {
                 id: indexList
                 objectName: "peekFileIndexList"
@@ -189,7 +222,13 @@ Item {
                         positionViewAtIndex(currentIndex, ListView.Contain)
                 }
 
-                highlight: Rectangle { color: Theme.selectedFill }
+                highlight: Rectangle {
+                    objectName: "peekIndexSelection"
+                    color: Theme.selectedFill
+                    border.color: Theme.accent
+                    border.width: 2
+                    radius: Theme.radius
+                }
 
                 delegate: Item {
                     id: idxRow
@@ -261,7 +300,10 @@ Item {
                 }
 
                 highlight: Rectangle {
+                    objectName: "peekIndexSelection"
                     color: Theme.selectedFill
+                    border.color: Theme.accent
+                    border.width: 2
                     radius: Theme.radius
                 }
 
@@ -351,11 +393,17 @@ Item {
             visible: root.filePeekVisible
 
             Rectangle {
+                objectName: "peekFileSurfaceBackground"
+                anchors.fill: parent
+                color: Theme.darkBackground
+            }
+
+            Rectangle {
                 anchors.fill: parent
                 z: 20
                 visible: root.host && root.host.peekPreviewFocused
                 color: "transparent"
-                border.width: 1
+                border.width: 2
                 border.color: Theme.accent
                 radius: Theme.radius
             }
@@ -401,6 +449,18 @@ Item {
             elide: Text.ElideMiddle
             width: parent.width - Theme.space(24)
             horizontalAlignment: Text.AlignHCenter
+        }
+
+        // Paint the modal perimeter after every child surface. A border on
+        // `frame` itself sits below its children, so the header used to cover
+        // the top edge and make the body look like a separate stacked box.
+        Rectangle {
+            objectName: "peekModalKeyline"
+            anchors.fill: parent
+            z: 100
+            color: "transparent"
+            border.color: Theme.accent
+            border.width: 2
         }
     }
 

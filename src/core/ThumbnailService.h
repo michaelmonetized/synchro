@@ -21,6 +21,8 @@ struct ThumbnailJob {
   qint64 mtime = 0;
   int sizePx = 128;
   int priority = 0;
+  QStringList mosaicPaths;
+  QString mosaicLabel;
 };
 
 class ThumbnailEngine;
@@ -35,6 +37,7 @@ public:
   Q_INVOKABLE void request(const QString &path, qint64 mtime, int sizePx);
   void request(const QVector<ThumbnailJob> &jobs);
   void requestVisible(const QVector<ThumbnailJob> &jobs);
+  void invalidate(const QString &path);
   void cancelAll();
   void setThumbnailerDirectories(const QStringList &dirs);
   void setHandlerThumbnailers(const QVector<ExecThumbnailer> &list);
@@ -61,22 +64,28 @@ public:
   // Decode via Qt plugins, then libwebp (this distro ships no Qt WebP plugin).
   static QImage decodeRaster(const QString &path, int maxEdge = 0);
   static QString ensureRasterPng(const QString &path, qint64 mtime, int maxEdge);
-  // Immediate children only: 2x2, prefer images, at most one video.
+  // Immediate children, with progressively denser layouts up to ten tiles.
   static bool renderFolderMosaic(const QString &dirPath, const QString &dest,
                                  int sizePx);
   static QImage renderFolderMosaicImage(const QString &dirPath, int sizePx);
+  static QImage renderPathMosaicImage(const QStringList &paths,
+                                      const QString &label, int sizePx);
   static QString packedUrl(const QString &path, qint64 mtime, int sizePx);
 
 signals:
   void thumbnailReady(const QString &path, const QString &url);
   void submitted(const QVector<ThumbnailJob> &jobs, bool exclusive);
   void cancelRequested();
+  void invalidateRequested(const QString &path);
   void thumbnailerDirectoriesChanged(const QStringList &dirs);
   void handlerThumbnailersChanged(const QVector<ExecThumbnailer> &list);
 
 private:
+  QString displayUrl(const QString &path, const QString &url) const;
+
   QThread m_thread;
   ThumbnailEngine *m_engine = nullptr;
+  QHash<QString, quint64> m_displayRevisions;
 };
 
 Q_DECLARE_METATYPE(ThumbnailJob)

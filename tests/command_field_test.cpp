@@ -150,6 +150,7 @@ private slots:
   void typeLabelsForColumns();
   void kindFilterFilesFoldersAll();
   void termPanelCommands();
+  void sqlPanelCommand();
   void escCommandSingleStep();
   void colonDoesNotReplaceListVerbs();
   void unknownAndAmbiguousStayInField();
@@ -1376,6 +1377,41 @@ void CommandFieldTest::termPanelCommands() {
   QCOMPARE(keys.statusMessage(),
            QStringLiteral("no terminal in picker windows"));
   keys.setChooserMode(false);
+}
+
+void CommandFieldTest::sqlPanelCommand() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  QSignalSpy focusSpy(&keys, &KeyMachine::panelFocusRequested);
+  QSignalSpy scanSpy(&keys, &KeyMachine::sqlScanRequested);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":sql"));
+  keys.acceptField();
+  QCOMPARE(keys.panelId(), QStringLiteral("synchro.panel.sql"));
+  QCOMPARE(focusSpy.size(), 1);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":sql scan"));
+  keys.acceptField();
+  QCOMPARE(keys.panelId(), QStringLiteral("synchro.panel.sql"));
+  QCOMPARE(scanSpy.size(), 1);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":panel off"));
+  keys.acceptField();
+  QVERIFY(keys.panelId().isEmpty());
+
+  keys.setChooserMode(true);
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":sql"));
+  keys.acceptField();
+  QVERIFY(keys.panelId().isEmpty());
+  QCOMPARE(keys.statusMessage(),
+           QStringLiteral("no SQL workbench in picker windows"));
 }
 
 // :files / :folders / :all hide the kind you are not hunting for; the

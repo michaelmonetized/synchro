@@ -24,6 +24,8 @@
   ],
   "panel": {
     "relevance": "always",
-    "glyph": "❯"
+    "glyph": "❯",
+    "group": "workspace",
+    "order": 10
   }
 }

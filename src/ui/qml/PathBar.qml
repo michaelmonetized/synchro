@@ -17,8 +17,8 @@ Item {
     readonly property bool hasDisks: (root.diskChips && root.diskChips.length > 0) ||
                                      !!(root.volumesChip && root.volumesChip.id)
 
-    readonly property int crumbH: Math.max(Theme.fontBody + Theme.space(8), 22)
-    readonly property int tabH: Math.max(Theme.fontBody + Theme.space(6), 20)
+    readonly property int crumbH: Theme.controlHeight + Theme.spaceMD
+    readonly property int tabH: Theme.controlHeight
     readonly property bool disksInline: {
         if (!root.hasDisks || diskRow.width <= 0 || crumbLine.width <= 0)
             return false
@@ -66,19 +66,38 @@ Item {
                         Math.max(0, flick.contentWidth - flick.width))
     }
 
+    function iconForLocation(id) {
+        if (id.indexOf("home") >= 0) return "user-home-symbolic"
+        if (id.indexOf("recent") >= 0) return "document-open-recent-symbolic"
+        if (id.indexOf("trash") >= 0) return "user-trash-symbolic"
+        if (id.indexOf("volumes") >= 0) return "drive-harddisk-symbolic"
+        if (id.indexOf("volume:") === 0) return "drive-harddisk-symbolic"
+        if (id.indexOf("pin:") === 0) return "emblem-favorite-symbolic"
+        if (id.indexOf("sql-bookmark:") === 0) return "text-x-script-symbolic"
+        return "folder-symbolic"
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.darkBackground
+        z: -2
+    }
+
     component LocTab: Item {
         id: tab
         property string tabId: ""
         property string label: ""
         property bool current: false
         property bool titleTab: false
+        property bool removable: false
         property var flick: null
         signal activated()
+        signal removeRequested()
 
         objectName: tab.tabId.length ? tab.tabId : "locationChip"
         width: visible
-               ? Math.min(tabLabel.implicitWidth + Theme.space(tab.titleTab ? 12 : 16),
-                          Theme.space(148))
+               ? Math.min(tabContent.implicitWidth + Theme.controlPaddingX * 2,
+                          Theme.space(176))
                : 0
         height: parent ? parent.height : root.tabH
 
@@ -89,31 +108,63 @@ Item {
 
         Rectangle {
             anchors.fill: parent
-            visible: !tab.titleTab
             color: tab.current ? Theme.selectedFill
-                   : (tabHover.hovered ? Theme.hoverFill : "transparent")
+                   : (tabHover.hovered ? Theme.hoverFill : Theme.normalFill)
+            border.color: tab.current ? Theme.selectedBorder : Theme.normalBorder
+            border.width: tab.current ? Math.max(1, Theme.selectedBorderWidth)
+                                      : Theme.normalBorderWidth
+            radius: Theme.radius
         }
 
-        Text {
-            id: tabLabel
-            anchors.fill: parent
-            anchors.leftMargin: Theme.space(tab.titleTab ? 6 : 8)
-            anchors.rightMargin: Theme.space(tab.titleTab ? 6 : 8)
-            text: tab.label
-            color: tab.current || tabHover.hovered ? Theme.foreground
-                                                   : Theme.muted
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontBody
-            elide: Text.ElideMiddle
-            verticalAlignment: Text.AlignVCenter
-            horizontalAlignment: Text.AlignHCenter
+        Row {
+            id: tabContent
+            anchors.centerIn: parent
+            spacing: Theme.spaceSM
+
+            AppIcon {
+                width: Theme.fontIcon
+                height: Theme.fontIcon
+                iconSize: Theme.fontIcon
+                name: root.iconForLocation(tab.tabId)
+                fallback: tab.titleTab ? "▥" : "◇"
+            }
+
+            Text {
+                id: tabLabel
+                anchors.verticalCenter: parent.verticalCenter
+                text: tab.label
+                color: tab.current || tabHover.hovered ? Theme.brightForeground
+                                                       : Theme.darkForeground
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontBodySmall
+                font.bold: tab.current
+                elide: Text.ElideMiddle
+            }
+
+            Text {
+                id: removeGlyph
+                visible: tab.removable
+                opacity: tabHover.hovered ? 1 : 0
+                text: "×"
+                color: Theme.muted
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontBody
+                z: 2
+
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -Theme.spaceSM
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: tab.removeRequested()
+                }
+            }
         }
 
         Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: tab.titleTab ? 1 : 2
+            height: 2
             color: Theme.accent
             visible: tab.current
         }
@@ -125,7 +176,13 @@ Item {
         MouseArea {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
-            onClicked: tab.activated()
+            onClicked: function (mouse) {
+                if (tab.removable && mouse.button === Qt.MiddleButton)
+                    tab.removeRequested()
+                else
+                    tab.activated()
+            }
+            acceptedButtons: Qt.LeftButton | Qt.MiddleButton
         }
     }
 
@@ -138,21 +195,51 @@ Item {
         height: root.crumbH
         z: 1
 
-        Text {
+        Row {
             id: brand
             anchors.left: parent.left
-            anchors.leftMargin: Theme.space(8)
+            anchors.leftMargin: Theme.spaceLG
             anchors.verticalCenter: parent.verticalCenter
-            text: "synchro"
-            color: Theme.muted
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontBody
+            spacing: Theme.spaceSM
+
+            ChromeButton {
+                width: Theme.controlHeight
+                height: Theme.controlHeight
+                compact: true
+                iconName: "go-previous-symbolic"
+                fallbackGlyph: "‹"
+                enabled: root.navStack && root.navStack.canGoBack
+                toolTip: "Back  ·  Alt+Left"
+                onTriggered: if (root.navStack) root.navStack.goBack()
+            }
+
+            ChromeButton {
+                width: Theme.controlHeight
+                height: Theme.controlHeight
+                compact: true
+                iconName: "go-next-symbolic"
+                fallbackGlyph: "›"
+                enabled: root.navStack && root.navStack.canGoForward
+                toolTip: "Forward  ·  Alt+Right"
+                onTriggered: if (root.navStack) root.navStack.goForward()
+            }
+
+            ChromeButton {
+                width: Theme.controlHeight
+                height: Theme.controlHeight
+                compact: true
+                iconName: "go-up-symbolic"
+                fallbackGlyph: "↑"
+                enabled: !!root.navStack
+                toolTip: "Parent folder  ·  Alt+Up"
+                onTriggered: if (root.navStack) root.navStack.goUp()
+            }
         }
 
         Flickable {
             id: crumbFlick
             anchors.left: brand.right
-            anchors.leftMargin: Theme.space(12)
+            anchors.leftMargin: Theme.spaceLG
             anchors.right: parent.right
             anchors.rightMargin: root.disksInline
                                  ? diskStrip.width + Theme.space(8)
@@ -185,14 +272,36 @@ Item {
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
                             visible: crumb.index > 0
-                            text: " / "
+                            text: "  ›  "
                             color: Theme.muted
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontBody
                         }
 
-                        Text {
+                        Item {
+                            id: crumbButton
+                            width: Math.min(crumbLabel.implicitWidth + Theme.controlPaddingX * 2,
+                                            Theme.space(240))
+                            height: crumbRow.height - Theme.spaceSM * 2
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Rectangle {
+                                anchors.fill: parent
+                                color: crumbHover.hovered ? Theme.hoverFill : Theme.normalFill
+                                border.color: crumbHover.hovered ? Theme.hoverBorder
+                                                                      : Theme.normalBorder
+                                border.width: crumbHover.hovered ? Theme.hoverBorderWidth
+                                                                : Theme.normalBorderWidth
+                                radius: Theme.radius
+                            }
+
+                            Text {
                             id: crumbLabel
+                            anchors.fill: parent
+                            anchors.leftMargin: Theme.controlPaddingX
+                            anchors.rightMargin: Theme.controlPaddingX
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideMiddle
                             anchors.verticalCenter: parent.verticalCenter
                             text: {
                                 var label = crumb.modelData.label
@@ -212,10 +321,11 @@ Item {
                                 if (crumb.modelData.label === "search")
                                     return Theme.accent
                                 return crumbHover.hovered ? Theme.accent
-                                                          : Theme.foreground
+                                                          : Theme.brightForeground
                             }
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontBody
+                            font.pixelSize: Theme.fontBodySmall
+                            }
 
                             HoverHandler {
                                 id: crumbHover
@@ -262,7 +372,7 @@ Item {
             Row {
                 id: diskRow
                 height: diskFlick.height
-                spacing: 0
+                spacing: Theme.spaceSM
 
                 LocTab {
                     visible: !!(root.volumesChip && root.volumesChip.id)
@@ -342,7 +452,7 @@ Item {
             id: tabFlick
             objectName: "locationTabFlick"
             anchors.fill: parent
-            anchors.leftMargin: Theme.space(4)
+            anchors.leftMargin: Theme.spaceLG
             anchors.rightMargin: Theme.space(4)
             clip: true
             contentWidth: tabRow.width
@@ -354,7 +464,7 @@ Item {
             Row {
                 id: tabRow
                 height: tabFlick.height
-                spacing: 0
+                spacing: Theme.spaceSM
 
                 Repeater {
                     model: root.placeChips
@@ -364,9 +474,12 @@ Item {
                         tabId: modelData && modelData.id ? modelData.id : ""
                         label: modelData && modelData.label ? modelData.label : ""
                         current: !!(modelData && modelData.active)
+                        removable: !!(modelData && modelData.runtime === "sql")
                         flick: tabFlick
                         onActivated: if (root.locationChips && tabId)
                             root.locationChips.activate(tabId)
+                        onRemoveRequested: if (root.locationChips && tabId)
+                            root.locationChips.removeSqlBookmark(tabId)
                     }
                 }
 

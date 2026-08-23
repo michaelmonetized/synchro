@@ -48,6 +48,8 @@ void LocationChips::setConfig(Config *config) {
     connect(m_config, &Config::locationChipsChanged, this,
             &LocationChips::rebuild);
     connect(m_config, &Config::pinsChanged, this, &LocationChips::rebuild);
+    connect(m_config, &Config::sqlBookmarksChanged, this,
+            &LocationChips::rebuild);
   }
   rebuild();
 }
@@ -164,6 +166,16 @@ bool LocationChips::isPinId(const QString &id) {
   return id.startsWith(QLatin1String("pin:"));
 }
 
+QString LocationChips::sqlBookmarkId(const QString &id) {
+  const QString clean = id.trimmed();
+  return clean.isEmpty() ? QString()
+                         : QStringLiteral("sql-bookmark:") + clean;
+}
+
+bool LocationChips::isSqlBookmarkId(const QString &id) {
+  return id.startsWith(QLatin1String("sql-bookmark:"));
+}
+
 QVariantMap LocationChips::pinChipMap(const QString &path) const {
   const QString abs = Config::normalizePin(path);
   QVariantMap out;
@@ -181,6 +193,33 @@ QVariantMap LocationChips::pinChipMap(const QString &path) const {
   out.insert(QStringLiteral("pinned"), true);
   out.insert(QStringLiteral("group"), QStringLiteral("place"));
   out.insert(QStringLiteral("active"), chipActive(out));
+  return out;
+}
+
+QVariantMap LocationChips::sqlBookmarkChipMap(const QString &id) const {
+  QVariantMap out;
+  if (!m_config || m_chooserMode)
+    return out;
+  const QString wanted = isSqlBookmarkId(id) ? id.mid(13) : id;
+  for (const QVariant &value : m_config->sqlBookmarks()) {
+    const QVariantMap bookmark = value.toMap();
+    if (bookmark.value(QStringLiteral("id")).toString() != wanted)
+      continue;
+    const QString name = bookmark.value(QStringLiteral("name")).toString();
+    out.insert(QStringLiteral("id"), sqlBookmarkId(wanted));
+    out.insert(QStringLiteral("name"), name);
+    out.insert(QStringLiteral("label"), name);
+    out.insert(QStringLiteral("runtime"), QStringLiteral("sql"));
+    out.insert(QStringLiteral("sql"),
+               bookmark.value(QStringLiteral("sql")));
+    out.insert(QStringLiteral("cwd"),
+               bookmark.value(QStringLiteral("cwd")));
+    out.insert(QStringLiteral("bookmarkId"), wanted);
+    out.insert(QStringLiteral("pinned"), true);
+    out.insert(QStringLiteral("group"), QStringLiteral("place"));
+    out.insert(QStringLiteral("active"), chipActive(out));
+    return out;
+  }
   return out;
 }
 
@@ -229,9 +268,18 @@ bool LocationChips::unpin(const QString &path) {
   return true;
 }
 
+bool LocationChips::removeSqlBookmark(const QString &id) {
+  if (!m_config)
+    return false;
+  const QString bookmarkId = isSqlBookmarkId(id) ? id.mid(13) : id;
+  return m_config->removeSqlBookmark(bookmarkId);
+}
+
 QVariantMap LocationChips::chipMap(const QString &id) const {
   if (isPinId(id))
     return pinChipMap(id.mid(4));
+  if (isSqlBookmarkId(id))
+    return sqlBookmarkChipMap(id);
   if (id.startsWith(QLatin1String("volume:"))) {
     const QString mount = id.mid(7);
     const auto v = VolumeStore::instance().findMount(mount);
@@ -290,6 +338,9 @@ bool LocationChips::chipActive(const QVariantMap &chip) const {
   const QString cwd = m_model->path();
   const QString id = chip.value(QStringLiteral("id")).toString();
   const QString target = chip.value(QStringLiteral("path")).toString();
+  if (isSqlBookmarkId(id))
+    return m_model->isSql() &&
+           m_model->sqlLabel() == chip.value(QStringLiteral("name")).toString();
   if (target.isEmpty())
     return false;
   if (id.startsWith(QLatin1String("volume:"))) {
@@ -318,15 +369,24 @@ void LocationChips::rebuild() {
                              : Config::defaultLocationChips();
   if (ids.isEmpty())
     ids = Config::defaultLocationChips();
-  bool injectedPins = false;
-  auto appendPins = [&] {
-    if (injectedPins || !m_config)
+  bool injectedSavedLocations = false;
+  auto appendSavedLocations = [&] {
+    if (injectedSavedLocations || !m_config)
       return;
-    injectedPins = true;
+    injectedSavedLocations = true;
     for (const QString &path : m_config->pins()) {
       const QVariantMap pin = pinChipMap(path);
       if (!pin.isEmpty())
         next.append(pin);
+    }
+    if (!m_chooserMode) {
+      for (const QVariant &value : m_config->sqlBookmarks()) {
+        const QVariantMap bookmark = value.toMap();
+        const QVariantMap chip = sqlBookmarkChipMap(
+            bookmark.value(QStringLiteral("id")).toString());
+        if (!chip.isEmpty())
+          next.append(chip);
+      }
     }
   };
   for (const QString &id : ids) {
@@ -334,9 +394,9 @@ void LocationChips::rebuild() {
     if (!chip.isEmpty())
       next.append(chip);
     if (id == QLatin1String("synchro.location.home"))
-      appendPins();
+      appendSavedLocations();
   }
-  appendPins();
+  appendSavedLocations();
   bool hasVolumes = false;
   for (const QVariant &row : next) {
     if (row.toMap().value(QStringLiteral("id")).toString() ==
@@ -370,6 +430,14 @@ void LocationChips::activate(const QString &id) {
   QVariantMap chip = chipMap(id);
   if (chip.isEmpty())
     return;
+  if (isSqlBookmarkId(id)) {
+    emit sqlBookmarkActivated(
+        chip.value(QStringLiteral("name")).toString(),
+        chip.value(QStringLiteral("sql")).toString(),
+        chip.value(QStringLiteral("cwd")).toString(),
+        chip.value(QStringLiteral("bookmarkId")).toString());
+    return;
+  }
   const QString dest = chip.value(QStringLiteral("path")).toString();
   if (dest.isEmpty())
     return;

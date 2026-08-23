@@ -65,7 +65,7 @@ an always-focused omnibar.
 | `Space` | Peek (look). Esc / Q / Space again leave. |
 | `Ctrl+Enter` / right-click | Do-layer (sticky actions + params) |
 | `/` · `Ctrl+K` | Filter the listing |
-| `:` | Command palette (`:trash` `:home` `:volumes` `:hidden` `:help`) |
+| `:` | Command palette (`:trash` `:home` `:volumes` `:sql` `:help`) |
 | `Ctrl+L` | Jump (current path selected) |
 | `?name` | Name search via `fd` |
 | `v` | List / grid. `V` is visual select. |
@@ -105,8 +105,43 @@ the registry.
 | `folder` | Entering a matching directory | Banner QML only (v1) |
 | `location` | Jump chip / `:name` | Path, core adapter, or chrome QML |
 | `thumbnail` | Listing / mosaic tiles | Core verb or system `.thumbnailer` |
+| `panel` | Dockable sidecar surface | In-process QML |
 
 A pack may declare more than one kind (preview + action is common).
+
+**SQL files.** `:sql` opens a read-only DuckDB workbench over Synchro's
+SQLite metadata catalog. `here` follows the current folder, `selection`
+is an execution-time snapshot of selected rows, and the recursive `tree`
+relation indexes itself the first time a query needs it. `:sql scan` forces a
+refresh without adding a permanent toolbar control. Tree scans are recursive,
+uncapped, and incremental: committed batches are immediately queryable while
+the dedicated scan worker continues, and active tree results refresh at a
+controlled cadence. Completed scan roots and row counts are persisted alongside
+the catalog, so relaunching reuses the existing tree instead of rebuilding it;
+an indexed parent also covers queries rooted in its subfolders. Real
+directories including `.git` and `node_modules` are indexed; directory
+symlinks are listed but not followed to avoid loops.
+Progress appears in the browser's bottom status rail. All
+three expose raw byte
+`size`, 1024-based floating-point `kb`,
+`mb`, and `gb` rounded to two decimal places, plus boolean `hidden` (with
+`is_hidden` retained for compatibility). Results containing `path` are live:
+click to reveal and
+double-click to enter/open. Query rows always replace the main listing while
+keeping the real folder as their context. Aggregate rows
+without a path become temporary, drillable relation folders; a simple
+`GROUP BY extension` therefore browses like a folder of file types instead of
+leaving you in a detached result grid. Those folders use stable representative
+content for formats with useful previews (images, video, text, archives, and
+Parquet); opaque formats keep a clear extension identity card instead of a
+misleading generic-file mosaic. Browser Back returns from a drilled group to
+its parent aggregate query. SQL and Terminal declare the same
+`panel.group` and appear as modes of one workspace dock; third-party panels can
+opt into another group without hard-coded UI changes. The disposable catalog lives at
+`~/.local/share/synchro/catalog.sqlite`; browsing never depends on it.
+Use **save** in the SQL panel to name a query (for example, “big webp files”);
+it becomes a persistent location beside pinned folders and reopens against the
+folder context it was saved from.
 
 Location handlers may also ship **listing chrome** — `entryPoints.row` and
 `entryPoints.thumb` — QML that paints on each visible row or grid thumb.
@@ -294,6 +329,7 @@ and a Synchro manifest, not a Nautilus Python extension.
 | `synchro.location.trash` | location | XDG trash |
 | `synchro.location.volumes` | location | Disks / USB as a listing + root trees |
 | `synchro.action.eject` | action | Unmount / power-off a removable volume |
+| `synchro.panel.sql` | panel | `:sql` read-only DuckDB over `here`, `tree`, and `selection` |
 
 Office docs, audio, 7z, fonts, and a few more previews are still on the
 [preview backlog](PREVIEW-BACKLOG.md).

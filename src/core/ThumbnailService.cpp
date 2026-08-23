@@ -14,6 +14,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFont>
+#include <QFontMetrics>
 #include <QImage>
 #include <QImageReader>
 #include <QMetaObject>
@@ -243,13 +244,13 @@ bool renderParquetCard(const QString &src, const QString &dest, int sizePx) {
   img.fill(th.background);
   QPainter p(&img);
   p.setRenderHint(QPainter::TextAntialiasing);
-  p.setPen(th.border);
-  p.drawRect(0, 0, px - 1, px - 1);
   QFont head(th.fontFamily, qMax(8, px / 14));
   head.setBold(true);
   p.setFont(head);
   p.setPen(th.foreground);
-  const QRect headRect(5, 3, px - 10, qMax(16, px / 6));
+  const int rail = qMax(3, px / 28);
+  p.fillRect(0, 0, rail, px, th.accent);
+  const QRect headRect(rail + 6, 3, px - rail - 11, qMax(16, px / 5));
   p.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine,
              QStringLiteral("parquet"));
   if (px >= 72) {
@@ -282,13 +283,13 @@ bool renderArchiveCard(const QString &src, const QString &dest, int sizePx) {
   img.fill(th.background);
   QPainter p(&img);
   p.setRenderHint(QPainter::TextAntialiasing);
-  p.setPen(th.border);
-  p.drawRect(0, 0, px - 1, px - 1);
   QFont head(th.fontFamily, qMax(8, px / 14));
   head.setBold(true);
   p.setFont(head);
   p.setPen(th.foreground);
-  const QRect headRect(5, 3, px - 10, qMax(16, px / 6));
+  const int rail = qMax(3, px / 28);
+  p.fillRect(0, 0, rail, px, th.accent);
+  const QRect headRect(rail + 6, 3, px - rail - 11, qMax(16, px / 5));
   const QString kind = info.format.isEmpty() ? QStringLiteral("archive")
                                              : info.format;
   p.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine,
@@ -383,10 +384,10 @@ bool looksLikeVideo(const QString &path, const QString &mimeHint) {
 QString cachePathFor(const QString &path) {
   const QString theme = ThumbTheme::current().cacheId();
   if (QFileInfo(path).isDir())
-    return path + QLatin1String("#mosaic-v5-") + theme;
+    return path + QLatin1String("#mosaic-v8-") + theme;
   if (looksLikeImage(path, QString()) || looksLikeVideo(path, QString()))
     return path;
-  return path + QLatin1String("#card-v1-") + theme;
+  return path + QLatin1String("#card-v5-") + theme;
 }
 
 bool looksLikeWebP(const QString &path, const QString &mimeHint) {
@@ -418,6 +419,16 @@ QImage cropToSquare(const QImage &src, int edge) {
   const int x = qMax(0, (s.width() - edge) / 2);
   const int y = qMax(0, (s.height() - edge) / 2);
   return s.copy(x, y, edge, edge);
+}
+
+QImage cropToAspect(const QImage &src, const QSize &size) {
+  if (src.isNull() || size.width() <= 0 || size.height() <= 0)
+    return {};
+  QImage scaled = src.scaled(size, Qt::KeepAspectRatioByExpanding,
+                             Qt::SmoothTransformation);
+  const int x = qMax(0, (scaled.width() - size.width()) / 2);
+  const int y = qMax(0, (scaled.height() - size.height()) / 2);
+  return scaled.copy(x, y, size.width(), size.height());
 }
 
 #ifdef SYNCHRO_HAVE_WEBP
@@ -543,12 +554,7 @@ struct MosaicPick {
   bool isDir = false;
 };
 
-bool mosaicFileOk(const QString &path, const QString &mime) {
-  if (looksLikeImage(path, mime))
-    return QFileInfo(path).size() <= 16ll * 1024 * 1024;
-  return looksLikeVideo(path, mime) || looksLikeText(path, mime) ||
-         looksLikeParquet(path, mime) || looksLikeArchive(path, mime);
-}
+constexpr int kMaxMosaicTiles = 10;
 
 void sortMosaicPicks(QVector<MosaicPick> &picks) {
   std::sort(picks.begin(), picks.end(),
@@ -606,8 +612,6 @@ QVector<MosaicPick> scanMosaicEntries(const QString &dirPath, int cap,
     ++scanned;
     const QString mime =
         db.mimeTypeForFile(resolved, QMimeDatabase::MatchExtension).name();
-    if (!mosaicFileOk(resolved, mime))
-      continue;
     MosaicPick pick;
     pick.path = resolved;
     pick.mime = mime;
@@ -621,8 +625,8 @@ QVector<MosaicPick> scanMosaicEntries(const QString &dirPath, int cap,
 QVector<MosaicPick> pickMosaicChildren(const QString &dirPath) {
   QVector<MosaicPick> picks = scanMosaicEntries(dirPath, 512, true);
   sortMosaicPicks(picks);
-  if (picks.size() > 4)
-    picks.resize(4);
+  if (picks.size() > kMaxMosaicTiles)
+    picks.resize(kMaxMosaicTiles);
   return picks;
 }
 
@@ -647,32 +651,34 @@ QImage renderFolderCard(const QString &name, const QImage &face, int px) {
   p.setRenderHint(QPainter::Antialiasing, false);
   p.setRenderHint(QPainter::TextAntialiasing);
   p.setRenderHint(QPainter::SmoothPixmapTransform);
-  const int tabH = qMax(3, px / 8);
-  const int tabW = qBound(8, px / 2, px - 2);
+  const int margin = qMax(2, px / 32);
+  const QRect body(margin, margin, px - margin * 2, px - margin * 2);
+  p.fillRect(body, th.surfaceRaised);
   if (!face.isNull()) {
-    p.drawImage(QRect(0, 0, px, px), cropToSquare(face, px));
-    p.fillRect(0, 0, tabW, tabH, th.accent);
-    const int barH = qMax(12, px / 3);
+    const int inset = qMax(3, px / 24);
+    const QRect cover = body.adjusted(inset, inset, -inset, -inset);
+    p.drawImage(cover, cropToSquare(face, qMax(cover.width(), cover.height())));
+    const int barH = qMax(12, px / 4);
     QColor bar = th.background;
-    bar.setAlpha(200);
-    p.fillRect(0, px - barH, px, barH, bar);
+    bar.setAlpha(218);
+    p.fillRect(body.left(), body.bottom() - barH + 1, body.width(), barH, bar);
     QFont f(th.fontFamily, qMax(6, px / 9));
     p.setFont(f);
     p.setPen(th.foreground);
-    p.drawText(QRect(3, px - barH, px - 6, barH),
+    p.drawText(QRect(body.left() + 3, body.bottom() - barH + 1,
+                     body.width() - 6, barH),
                Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, name);
   } else {
-    p.fillRect(1, tabH, px - 2, px - tabH - 1, th.background);
-    p.fillRect(1, 1, tabW, tabH + 1, th.accent);
-    p.setPen(th.border);
-    p.drawRect(0, tabH, px - 1, px - tabH - 1);
     QFont f(th.fontFamily, qMax(6, px / 8));
     f.setBold(true);
     p.setFont(f);
     p.setPen(th.foreground);
-    p.drawText(QRect(3, tabH + px / 3, px - 6, px - tabH - px / 3 - 3),
+    p.drawText(body.adjusted(5, body.height() / 4, -5, -5),
                Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap, name);
   }
+  p.setBrush(Qt::NoBrush);
+  p.setPen(th.border);
+  p.drawRect(body.adjusted(0, 0, -1, -1));
   p.end();
   return img;
 }
@@ -705,14 +711,24 @@ QImage renderUnknownFileImage(const QString &path, int px) {
   p.setBrush(earFill);
   p.drawPolygon(ear);
   QString ext = QFileInfo(path).suffix().toUpper();
-  if (ext.size() > 4)
-    ext = ext.left(4);
+  if (ext.size() > 8)
+    ext = ext.left(8);
   if (!ext.isEmpty() && px >= 28) {
-    QFont f(th.fontFamily, qMax(6, px / 6));
+    QFont f(th.fontFamily, qMax(6, px / 12));
     f.setBold(true);
     p.setFont(f);
-    p.setPen(th.muted);
-    p.drawText(page.adjusted(2, fold, -2, -2),
+    const QFontMetrics fm(f);
+    const int padX = qMax(3, px / 32);
+    const int padY = qMax(2, px / 48);
+    const int chipW = qMin(page.width() - 4, fm.horizontalAdvance(ext) + padX * 2);
+    const int chipH = fm.height() + padY * 2;
+    const QRect chip(page.right() - chipW - 3, page.bottom() - chipH - 3,
+                     chipW, chipH);
+    QColor chipFill = th.background;
+    chipFill.setAlpha(220);
+    p.fillRect(chip, chipFill);
+    p.setPen(th.accent);
+    p.drawText(chip.adjusted(padX, padY, -padX, -padY),
                Qt::AlignCenter | Qt::TextSingleLine, ext);
   }
   p.end();
@@ -739,6 +755,11 @@ QImage fileTileImage(const MosaicPick &pick, int tilePx,
     img = decodeVideoFrame(pick.path, tilePx, scratch);
   if (img.isNull() && looksLikeText(pick.path, pick.mime) &&
       renderTextCard(pick.path, scratch, tilePx)) {
+    img = QImage(scratch);
+    QFile::remove(scratch);
+  }
+  if (img.isNull() && looksLikeParquet(pick.path, pick.mime) &&
+      renderParquetCard(pick.path, scratch, tilePx)) {
     img = QImage(scratch);
     QFile::remove(scratch);
   }
@@ -769,7 +790,7 @@ bool renderTextCard(const QString &src, const QString &dest, int sizePx) {
   QFile f(src);
   if (!f.open(QIODevice::ReadOnly))
     return false;
-  QByteArray raw = f.read(1200);
+  QByteArray raw = f.read(4096);
   if (raw.left(qMin(raw.size(), 256)).contains('\0'))
     return false;
   const QString text = QString::fromUtf8(raw);
@@ -779,23 +800,35 @@ bool renderTextCard(const QString &src, const QString &dest, int sizePx) {
   img.fill(th.background);
   QPainter p(&img);
   p.setRenderHint(QPainter::TextAntialiasing);
-  p.setPen(th.border);
-  p.drawRect(0, 0, px - 1, px - 1);
-  const QFileInfo fi(src);
-  QFont head(th.fontFamily, qMax(8, px / 14));
-  head.setBold(true);
-  p.setFont(head);
-  p.setPen(th.foreground);
-  const QRect headRect(5, 3, px - 10, qMax(16, px / 6));
-  p.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine,
-             fi.fileName());
-  if (px >= 72) {
-    QFont body(th.fontFamily, qMax(6, px / 22));
-    p.setFont(body);
-    p.setPen(th.muted);
-    p.drawText(QRect(5, headRect.bottom() + 3, px - 10,
-                     px - headRect.bottom() - 8),
-               Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, text);
+  const int rail = qMax(3, px / 28);
+  p.fillRect(0, 0, rail, px, th.accent);
+  // The filename and extension already sit directly below the tile. Use the
+  // image surface for content instead of repeating that metadata over it.
+  QStringList previewLines;
+  const QStringList rawLines = text.split(QLatin1Char('\n'));
+  for (QString line : rawLines) {
+    line = line.simplified();
+    if (line.isEmpty())
+      continue;
+    previewLines.append(line);
+    if (previewLines.size() >= 12)
+      break;
+  }
+  QFont body(th.fontFamily);
+  body.setPixelSize(qMax(7, px / 17));
+  p.setFont(body);
+  p.setPen(th.subtleForeground);
+  const QFontMetrics fm(body);
+  const int left = rail + qMax(5, px / 28);
+  const int right = qMax(5, px / 28);
+  const int top = qMax(5, px / 28);
+  const int lineH = qMax(fm.height(), px / 14);
+  const int maxLines = qMax(1, (px - top * 2) / lineH);
+  for (int i = 0; i < qMin(maxLines, previewLines.size()); ++i) {
+    const QString line = fm.elidedText(previewLines.at(i), Qt::ElideRight,
+                                       px - left - right);
+    p.drawText(QRect(left, top + i * lineH, px - left - right, lineH),
+               Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, line);
   }
   p.end();
   QDir().mkpath(QFileInfo(dest).absolutePath());
@@ -856,6 +889,35 @@ public:
       killActive(0, false);
   }
 
+  void invalidate(const QString &path) {
+    if (path.isEmpty())
+      return;
+    ThumbCache::instance().removePath(cachePathFor(path));
+    const QString prefix = path + QLatin1Char('\n');
+    for (auto it = m_pending.begin(); it != m_pending.end();) {
+      if (it.value().path == path)
+        it = m_pending.erase(it);
+      else
+        ++it;
+    }
+    for (auto it = m_ready.begin(); it != m_ready.end();) {
+      if (it.key().startsWith(prefix))
+        it = m_ready.erase(it);
+      else
+        ++it;
+    }
+    for (auto it = m_failed.begin(); it != m_failed.end();) {
+      if (it->startsWith(prefix))
+        it = m_failed.erase(it);
+      else
+        ++it;
+    }
+    for (int i = m_active.size() - 1; i >= 0; --i) {
+      if (m_active.at(i).path == path)
+        killActive(i, false);
+    }
+  }
+
   void submit(const QVector<ThumbnailJob> &jobs, bool exclusive) {
     QSet<QString> keep;
     keep.reserve(jobs.size());
@@ -871,12 +933,18 @@ public:
       job.mtime = in.mtime;
       job.sizePx = in.sizePx;
       job.priority = in.priority;
+      job.mosaicPaths = in.mosaicPaths;
+      job.mosaicLabel = in.mosaicLabel;
       keep.insert(job.key);
 
       if (const auto it = m_ready.constFind(job.key); it != m_ready.cend()) {
-        if (notify)
-          notify(job.path, it.value());
-        continue;
+        if (ThumbCache::instance().contains(cachePath(job), job.mtime,
+                                            job.sizePx)) {
+          if (notify)
+            notify(job.path, it.value());
+          continue;
+        }
+        m_ready.erase(it);
       }
       if (m_failed.contains(job.key)) {
         if (notify)
@@ -925,6 +993,8 @@ private:
     qint64 mtime = 0;
     int sizePx = 128;
     int priority = 0;
+    QStringList mosaicPaths;
+    QString mosaicLabel;
   };
 
   struct Active {
@@ -945,7 +1015,12 @@ private:
     return false;
   }
 
-  QString cachePath(const Job &job) const { return cachePathFor(job.path); }
+  QString cachePath(const Job &job) const {
+    if (!job.mosaicLabel.isEmpty())
+      return job.path + QStringLiteral("#query-mosaic-v3-") +
+             ThumbTheme::current().cacheId();
+    return cachePathFor(job.path);
+  }
 
   QString packedUrl(const Job &job) const {
     return ThumbCache::imageUrl(cachePath(job), job.mtime, job.sizePx);
@@ -1052,6 +1127,21 @@ private:
       m_ready.insert(job.key, hit);
       if (notify)
         notify(job.path, hit);
+      kick();
+      return;
+    }
+
+    if (!job.mosaicPaths.isEmpty() || !job.mosaicLabel.isEmpty()) {
+      const QImage mosaic = ThumbnailService::renderPathMosaicImage(
+          job.mosaicPaths, job.mosaicLabel, job.sizePx);
+      if (!mosaic.isNull() && storePackedImage(job, mosaic)) {
+        const QString url = packedUrl(job);
+        m_ready.insert(job.key, url);
+        if (notify)
+          notify(job.path, url);
+      } else {
+        fail(job.key, job.path);
+      }
       kick();
       return;
     }
@@ -1624,6 +1714,55 @@ QString ThumbnailService::ensureRasterPng(const QString &path, qint64 mtime,
   return dest;
 }
 
+namespace {
+
+QVector<QRect> adaptiveMosaicTargets(const QRect &area, int gap, int count) {
+  QVector<QRect> out;
+  count = qBound(0, count, kMaxMosaicTiles);
+  if (count == 0 || area.width() < 1 || area.height() < 1)
+    return out;
+  if (count == 1) {
+    out.append(area);
+    return out;
+  }
+  const int leftW = qMax(1, (area.width() - gap) / 2);
+  const int rightW = qMax(1, area.width() - gap - leftW);
+  if (count == 2) {
+    out.append(QRect(area.left(), area.top(), leftW, area.height()));
+    out.append(QRect(area.left() + leftW + gap, area.top(), rightW,
+                     area.height()));
+    return out;
+  }
+  const int topH = qMax(1, (area.height() - gap) / 2);
+  const int bottomH = qMax(1, area.height() - gap - topH);
+  if (count == 3) {
+    out.append(QRect(area.left(), area.top(), leftW, area.height()));
+    out.append(QRect(area.left() + leftW + gap, area.top(), rightW, topH));
+    out.append(QRect(area.left() + leftW + gap, area.top() + topH + gap,
+                     rightW, bottomH));
+    return out;
+  }
+
+  const auto appendRow = [&](int rowCount, int y, int height) {
+    const int available = qMax(rowCount, area.width() - gap * (rowCount - 1));
+    int x = area.left();
+    for (int column = 0; column < rowCount; ++column) {
+      const int next = area.left() +
+                       ((column + 1) * available) / rowCount + column * gap;
+      const int width = qMax(1, next - x);
+      out.append(QRect(x, y, width, height));
+      x = next + gap;
+    }
+  };
+  const int topCount = (count + 1) / 2;
+  const int bottomCount = count / 2;
+  appendRow(topCount, area.top(), topH);
+  appendRow(bottomCount, area.top() + topH + gap, bottomH);
+  return out;
+}
+
+} // namespace
+
 QImage ThumbnailService::renderFolderMosaicImage(const QString &dirPath,
                                                  int sizePx) {
   if (dirPath.isEmpty())
@@ -1636,40 +1775,122 @@ QImage ThumbnailService::renderFolderMosaicImage(const QString &dirPath,
   if (kids.isEmpty())
     return renderFolderCard(dirInfo.fileName(), QImage(), px);
 
-  const int gap = qMax(1, px / 32);
-  const int cell = (px - gap * 3) / 2;
-  if (cell < 8)
+  const ThumbTheme th = ThumbTheme::current();
+  const int gap = qMax(2, px / 32);
+  const QRect body(gap, gap, px - gap * 2, px - gap * 2);
+  const QRect contact = body.adjusted(gap, gap, -gap, -gap);
+  if (contact.width() < 8 || contact.height() < 8)
     return {};
 
   QImage canvas(px, px, QImage::Format_ARGB32_Premultiplied);
   canvas.fill(Qt::transparent);
   QPainter p(&canvas);
   p.setRenderHint(QPainter::SmoothPixmapTransform);
+  p.fillRect(body, th.surfaceRaised);
 
   const QString scratchDir = ThumbCache::homeDir() + QStringLiteral("/tmp");
   QDir().mkpath(scratchDir);
   const QString scratchBase =
       scratchDir + QLatin1Char('/') +
       ThumbCache::makeKey(dirPath, 0, sizePx) + QStringLiteral(".tile");
-  int painted = 0;
-  for (int i = 0; i < kids.size() && painted < 4; ++i) {
+  QVector<QImage> tiles;
+  const QVector<QRect> expectedTargets =
+      adaptiveMosaicTargets(contact, gap, kids.size());
+  for (int i = 0; i < kids.size() && tiles.size() < kMaxMosaicTiles; ++i) {
     const QString scratch =
         scratchBase + QLatin1Char('.') + QString::number(i) +
         QStringLiteral(".png");
-    const QImage tile = tileForChild(kids.at(i), cell, scratch);
+    const QRect expected = expectedTargets.value(i, contact);
+    const int tilePx = qMax(expected.width(), expected.height());
+    const QImage tile = tileForChild(kids.at(i), tilePx, scratch);
     QFile::remove(scratch);
     if (tile.isNull())
       continue;
-    const int col = painted % 2;
-    const int row = painted / 2;
-    const QRect r(gap + col * (cell + gap), gap + row * (cell + gap), cell,
-                  cell);
-    p.drawImage(r, tile);
-    ++painted;
+    tiles.append(tile);
   }
+  const QVector<QRect> targets =
+      adaptiveMosaicTargets(contact, gap, tiles.size());
+  for (int i = 0; i < tiles.size(); ++i)
+    p.drawImage(targets.at(i), cropToAspect(tiles.at(i),
+                                            targets.at(i).size()));
+  p.setBrush(Qt::NoBrush);
+  p.setPen(th.border);
+  p.drawRect(body.adjusted(0, 0, -1, -1));
   p.end();
-  if (painted == 0)
+  if (tiles.isEmpty())
     return renderFolderCard(dirInfo.fileName(), QImage(), px);
+  return canvas;
+}
+
+QImage ThumbnailService::renderPathMosaicImage(const QStringList &paths,
+                                               const QString &label,
+                                               int sizePx) {
+  QVector<MosaicPick> picks;
+  QMimeDatabase db;
+  for (const QString &raw : paths) {
+    const QFileInfo fi(raw);
+    if (!fi.exists() || !fi.isReadable())
+      continue;
+    MosaicPick pick;
+    pick.path = fi.absoluteFilePath();
+    pick.name = fi.fileName();
+    pick.isDir = fi.isDir();
+    pick.mime = pick.isDir
+                    ? QStringLiteral("inode/directory")
+                    : db.mimeTypeForFile(pick.path,
+                                         QMimeDatabase::MatchExtension)
+                          .name();
+    picks.append(pick);
+    if (picks.size() >= kMaxMosaicTiles)
+      break;
+  }
+
+  const int px = qBound(64, sizePx, 512);
+  if (picks.isEmpty())
+    return renderFolderCard(label, QImage(), px);
+  const ThumbTheme th = ThumbTheme::current();
+  const int gap = qMax(2, px / 32);
+  const QRect body(gap, gap, px - gap * 2, px - gap * 2);
+  const QRect contact = body.adjusted(gap, gap, -gap, -gap);
+  if (contact.width() < 8 || contact.height() < 8)
+    return {};
+
+  QImage canvas(px, px, QImage::Format_ARGB32_Premultiplied);
+  canvas.fill(Qt::transparent);
+  QPainter painter(&canvas);
+  painter.setRenderHint(QPainter::SmoothPixmapTransform);
+  painter.fillRect(body, th.surfaceRaised);
+  const QString scratchDir = ThumbCache::homeDir() + QStringLiteral("/tmp");
+  QDir().mkpath(scratchDir);
+  const QString scratchBase =
+      scratchDir + QLatin1Char('/') +
+      ThumbCache::makeKey(paths.join(QLatin1Char('\n')), 0, sizePx) +
+      QStringLiteral(".query-tile");
+  QVector<QImage> tiles;
+  const QVector<QRect> expectedTargets =
+      adaptiveMosaicTargets(contact, gap, picks.size());
+  for (int i = 0; i < picks.size() && tiles.size() < kMaxMosaicTiles; ++i) {
+    const QString scratch = scratchBase + QLatin1Char('.') +
+                            QString::number(i) + QStringLiteral(".png");
+    const QRect expected = expectedTargets.value(i, contact);
+    const int tilePx = qMax(expected.width(), expected.height());
+    const QImage tile = tileForChild(picks.at(i), tilePx, scratch);
+    QFile::remove(scratch);
+    if (tile.isNull())
+      continue;
+    tiles.append(tile);
+  }
+  const QVector<QRect> targets =
+      adaptiveMosaicTargets(contact, gap, tiles.size());
+  for (int i = 0; i < tiles.size(); ++i)
+    painter.drawImage(targets.at(i), cropToAspect(tiles.at(i),
+                                                  targets.at(i).size()));
+  painter.setBrush(Qt::NoBrush);
+  painter.setPen(th.border);
+  painter.drawRect(body.adjusted(0, 0, -1, -1));
+  painter.end();
+  if (tiles.isEmpty())
+    return renderFolderCard(label, QImage(), px);
   return canvas;
 }
 
@@ -1696,7 +1917,8 @@ ThumbnailService::ThumbnailService(QObject *parent) : QObject(parent) {
   m_engine = new ThumbnailEngine;
   m_engine->notify = [this](const QString &path, const QString &url) {
     QMetaObject::invokeMethod(
-        this, [this, path, url] { emit thumbnailReady(path, url); },
+        this,
+        [this, path, url] { emit thumbnailReady(path, displayUrl(path, url)); },
         Qt::QueuedConnection);
   };
   m_engine->moveToThread(&m_thread);
@@ -1721,6 +1943,9 @@ ThumbnailService::ThumbnailService(QObject *parent) : QObject(parent) {
         eng->setHandlerThumbnailers(list);
       },
       Qt::QueuedConnection);
+  connect(this, &ThumbnailService::invalidateRequested, m_engine,
+          [eng = m_engine](const QString &path) { eng->invalidate(path); },
+          Qt::QueuedConnection);
   m_thread.start();
 }
 
@@ -1779,7 +2004,7 @@ void ThumbnailService::request(const QVector<ThumbnailJob> &jobs) {
   for (const ThumbnailJob &job : jobs) {
     QString url;
     if (hydratePacked(job, &url))
-      emit thumbnailReady(job.path, url);
+      emit thumbnailReady(job.path, displayUrl(job.path, url));
     else
       miss.append(job);
   }
@@ -1793,11 +2018,32 @@ void ThumbnailService::requestVisible(const QVector<ThumbnailJob> &jobs) {
   for (const ThumbnailJob &job : jobs) {
     QString url;
     if (hydratePacked(job, &url))
-      emit thumbnailReady(job.path, url);
+      emit thumbnailReady(job.path, displayUrl(job.path, url));
     else
       miss.append(job);
   }
   emit submitted(miss, true);
+}
+
+void ThumbnailService::invalidate(const QString &path) {
+  if (path.isEmpty())
+    return;
+  // Remove the packed entry before request() performs its synchronous cache
+  // lookup. The engine signal remains queued so its pending/active maps are
+  // cleared before the subsequently queued generation request.
+  ThumbCache::instance().removePath(cachePathFor(path));
+  ++m_displayRevisions[path];
+  emit invalidateRequested(path);
+}
+
+QString ThumbnailService::displayUrl(const QString &path,
+                                     const QString &url) const {
+  if (url.isEmpty())
+    return url;
+  const quint64 revision = m_displayRevisions.value(path);
+  return revision > 0
+             ? url + QStringLiteral("/r") + QString::number(revision)
+             : url;
 }
 
 void ThumbnailService::cancelAll() { emit cancelRequested(); }

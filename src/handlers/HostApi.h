@@ -121,11 +121,22 @@ public:
   Q_INVOKABLE QVariantMap stat(const QUrl &url) const;
   // Panel handler support (synchro.panel.*)
   Q_INVOKABLE QUrl panelSource(const QString &id) const;
+  Q_INVOKABLE QString panelRelevance(const QString &id) const;
+  Q_INVOKABLE QVariantMap panelInfo(const QString &id) const;
+  Q_INVOKABLE QVariantList panelPeers(const QString &id) const;
   Q_INVOKABLE QVariantList relevantPanels() const;
+  Q_INVOKABLE bool attachSqlHighlighter(QObject *quickDocument,
+                                        const QColor &keyword,
+                                        const QColor &stringColor,
+                                        const QColor &number,
+                                        const QColor &comment,
+                                        const QColor &normal) const;
   Q_INVOKABLE QString processCwd(int pid) const;
   Q_INVOKABLE QString defaultShell() const;
   Q_INVOKABLE QString terminalColorScheme() const;
   Q_INVOKABLE QString terminalBackground() const;
+  Q_INVOKABLE bool setTerminalBackgroundOpacity(QObject *terminal,
+                                                 double opacity) const;
   Q_INVOKABLE void registerSurface(QObject *surface);
   Q_INVOKABLE bool openFile(const QString &path, const QString &mime);
   Q_INVOKABLE bool runOpen(const QString &handlerId);

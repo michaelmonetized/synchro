@@ -304,6 +304,36 @@ bool ThumbCache::ingestFile(const QString &path, qint64 mtime, int sizePx,
   return true;
 }
 
+void ThumbCache::removePath(const QString &path) {
+  if (path.isEmpty())
+    return;
+  QMutexLocker lock(&m_mutex);
+  if (!ensureOpen())
+    return;
+  sqlite3_stmt *keys = nullptr;
+  if (sqlite3_prepare_v2(m_db, "SELECT key FROM thumbs WHERE path=?;", -1,
+                         &keys, nullptr) == SQLITE_OK) {
+    const QByteArray p = path.toUtf8();
+    sqlite3_bind_text(keys, 1, p.constData(), p.size(), SQLITE_TRANSIENT);
+    while (sqlite3_step(keys) == SQLITE_ROW) {
+      const QString key = QString::fromUtf8(
+          reinterpret_cast<const char *>(sqlite3_column_text(keys, 0)));
+      m_lru.remove(key);
+      m_lruOrder.removeAll(key);
+    }
+  }
+  if (keys)
+    sqlite3_finalize(keys);
+  sqlite3_stmt *del = nullptr;
+  if (sqlite3_prepare_v2(m_db, "DELETE FROM thumbs WHERE path=?;", -1, &del,
+                         nullptr) != SQLITE_OK)
+    return;
+  const QByteArray p = path.toUtf8();
+  sqlite3_bind_text(del, 1, p.constData(), p.size(), SQLITE_TRANSIENT);
+  sqlite3_step(del);
+  sqlite3_finalize(del);
+}
+
 int ThumbCache::entryCount() {
   QMutexLocker lock(&m_mutex);
   if (!ensureOpen())

@@ -7,7 +7,9 @@
 // fallbacks so listing cards and mosaic tiles use the same palette as peek.
 struct ThumbTheme {
   QColor foreground;
+  QColor subtleForeground;
   QColor background;
+  QColor surfaceRaised;
   QColor muted;
   QColor accent;
   QColor border;

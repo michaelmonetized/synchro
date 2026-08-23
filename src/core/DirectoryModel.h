@@ -35,6 +35,10 @@ class DirectoryModel : public QAbstractListModel {
   Q_PROPERTY(bool isTrash READ isTrash NOTIFY pathChanged)
   Q_PROPERTY(bool isRecent READ isRecent NOTIFY pathChanged)
   Q_PROPERTY(bool isSearch READ isSearch NOTIFY pathChanged)
+  Q_PROPERTY(bool isSql READ isSql NOTIFY pathChanged)
+  Q_PROPERTY(QString sqlContext READ sqlContext NOTIFY pathChanged)
+  Q_PROPERTY(QString sqlLabel READ sqlLabel NOTIFY pathChanged)
+  Q_PROPERTY(int currentSqlRow READ currentSqlRow NOTIFY currentIndexChanged)
   Q_PROPERTY(QString searchQuery READ searchQuery NOTIFY searchQueryChanged)
   Q_PROPERTY(bool isContentSearch READ isContentSearch NOTIFY searchQueryChanged)
   Q_PROPERTY(QString searchRoot READ searchRoot NOTIFY searchQueryChanged)
@@ -94,7 +98,11 @@ public:
   bool isTrash() const;
   bool isRecent() const;
   bool isSearch() const;
+  bool isSql() const;
   bool isVolumes() const;
+  QString sqlContext() const { return m_sqlContext; }
+  QString sqlLabel() const { return m_sqlLabel; }
+  int currentSqlRow() const;
   QString searchQuery() const;
   bool isContentSearch() const;
   QString searchRoot() const;
@@ -105,6 +113,7 @@ public:
 
   static bool isVirtualPath(const QString &path);
   static bool isSearchPath(const QString &path);
+  static bool isSqlPath(const QString &path);
   static bool isTrashPath(const QString &path);
   static bool isRecentPath(const QString &path);
   static bool isVolumesPath(const QString &path);
@@ -133,6 +142,12 @@ public:
   bool fsnListing() const { return m_fsnListing; }
   Q_INVOKABLE void requestVisibleThumbs(int first, int last, int sizePx);
   Q_INVOKABLE void refreshThumbs(const QStringList &paths);
+  Q_INVOKABLE void showSqlResult(const QVariantMap &result,
+                                 const QString &label = QString());
+  Q_INVOKABLE bool selectPath(const QString &path);
+  Q_INVOKABLE bool selectSqlRow(int queryRow);
+  Q_INVOKABLE void setSqlBackAvailable(bool available);
+  bool requestSqlBack();
   void requestSourceThumbs(const QVector<int> &sourceRows, int sizePx);
   QVariantMap cachedStat(const QString &path) const;
   // Direct entry access for FilterProxy's sort/filter hot path: no QVariant
@@ -162,6 +177,10 @@ signals:
   void volumeHintChanged();
   // Once per stat batch: the paths whose size/mtime/mime just landed.
   void statsApplied(const QStringList &paths);
+  // Persistent catalog mirrors watcher removals without rescanning a folder.
+  void catalogPathsRemoved(const QStringList &paths);
+  void sqlDrillRequested(const QString &sql, const QString &label);
+  void sqlBackRequested();
   void fsnBoxesChanged();
   void fsnListingChanged();
 
@@ -197,6 +216,7 @@ private:
   void loadTrashListing();
   void loadRecentListing();
   void loadVolumesListing();
+  void loadSqlListing(const QVariantMap &result);
   void updateVolumeRoot(const QString &previous, const QString &next);
   void navigateToExistingParent();
   void reload();
@@ -217,6 +237,10 @@ private:
   QString m_path;
   QString m_returnPath;
   QString m_volumeRoot;
+  QString m_sqlContext;
+  QString m_sqlLabel;
+  QHash<QString, QVariantMap> m_sqlRows;
+  quint64 m_sqlEpoch = 0;
   QString m_error;
   QString m_pendingActivate;
   QString m_pendingSelect;
@@ -236,6 +260,7 @@ private:
   bool m_showHidden = false;
   bool m_listing = false;
   bool m_searching = false;
+  bool m_sqlBackAvailable = false;
   bool m_loggedFirst = false;
   qint64 m_lastFirstRowsMs = -1;
   QElapsedTimer m_listTimer;

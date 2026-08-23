@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.panel.sql",
+  "name": "SQL",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Read-only DuckDB workbench over Synchro's live SQLite file catalog. Open with :sql.",
+  "kinds": [
+    "panel"
+  ],
+  "priority": 55,
+  "entryPoints": {
+    "panel": "Panel.qml"
+  },
+  "panel": {
+    "relevance": "manual",
+    "glyph": "⌗",
+    "group": "workspace",
+    "order": 20
+  },
+  "permissions": [
+    "fs-read",
+    "exec"
+  ]
+}

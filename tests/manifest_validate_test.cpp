@@ -195,6 +195,9 @@ void ManifestValidateTest::firstPartyPanelTerminalValid() {
            QStringLiteral("Panel.qml"));
   QCOMPARE(panel.manifest.panel.value(QStringLiteral("relevance")).toString(),
            QStringLiteral("always"));
+  QCOMPARE(panel.manifest.panel.value(QStringLiteral("group")).toString(),
+           QStringLiteral("workspace"));
+  QCOMPARE(panel.manifest.panel.value(QStringLiteral("order")).toInt(), 10);
 
   const auto data = validateManifestDir(
       QDir(root).filePath(QStringLiteral("synchro.panel.duckdb")), true);
@@ -203,6 +206,18 @@ void ManifestValidateTest::firstPartyPanelTerminalValid() {
   QVERIFY(data.manifest.match.suffix.contains(QStringLiteral(".parquet")));
   QCOMPARE(data.manifest.panel.value(QStringLiteral("relevance")).toString(),
            QStringLiteral("match"));
+
+  const auto sql = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.panel.sql")), true);
+  QVERIFY2(sql.ok, qPrintable(sql.errors.join(QLatin1Char(';'))));
+  QVERIFY(sql.manifest.kinds.contains(QStringLiteral("panel")));
+  QCOMPARE(sql.manifest.entryPoints.value(QStringLiteral("panel")),
+           QStringLiteral("Panel.qml"));
+  QCOMPARE(sql.manifest.panel.value(QStringLiteral("relevance")).toString(),
+           QStringLiteral("manual"));
+  QCOMPARE(sql.manifest.panel.value(QStringLiteral("group")).toString(),
+           QStringLiteral("workspace"));
+  QCOMPARE(sql.manifest.panel.value(QStringLiteral("order")).toInt(), 20);
 }
 
 void ManifestValidateTest::actionCoreRequiresVerb() {

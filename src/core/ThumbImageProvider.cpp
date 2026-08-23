@@ -9,7 +9,10 @@ ThumbImageProvider::ThumbImageProvider()
 
 QImage ThumbImageProvider::requestImage(const QString &id, QSize *size,
                                         const QSize &) {
-  const QImage img = ThumbCache::instance().imageForKey(id);
+  // A suffix gives QML a fresh source URL after explicit invalidation while
+  // the packed cache key remains stable for the real filesystem mtime.
+  const QImage img = ThumbCache::instance().imageForKey(
+      id.section(QLatin1Char('/'), 0, 0));
   if (size)
     *size = img.size();
   return img;

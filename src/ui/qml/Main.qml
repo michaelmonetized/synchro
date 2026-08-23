@@ -12,6 +12,7 @@ Window {
     readonly property var keys: keyMachine
     readonly property var chips: typeof locationChips !== "undefined" ? locationChips : null
     readonly property var selection: typeof selectionModel !== "undefined" ? selectionModel : null
+    readonly property var config: typeof appConfig !== "undefined" ? appConfig : null
     readonly property bool gridMode: root.keys ? root.keys.gridMode : false
     readonly property bool fsnMode: root.keys ? root.keys.fsnMode : false
 
@@ -20,8 +21,12 @@ Window {
     minimumWidth: 480
     minimumHeight: 320
     visible: true
-    title: root.files && root.files.path.length ? root.files.path : "Synchro"
-    color: Theme.background
+    title: root.files && root.files.isSql
+           ? "SQL " + root.files.sqlLabel + " — " + root.files.sqlContext +
+             " — Synchro"
+           : (root.files && root.files.path.length
+              ? root.files.path + " — Synchro" : "Synchro")
+    color: "transparent"
 
     PathBar {
         id: pathBar
@@ -46,12 +51,27 @@ Window {
     }
 
     Rectangle {
+        id: browserCanvas
         anchors.top: commandField.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: statusLine.top
-        color: Theme.opaqueBackground
+        color: "transparent"
+        gradient: Gradient {
+            orientation: Gradient.Vertical
+            GradientStop { position: 0.0; color: Theme.canvasGlassTop }
+            GradientStop { position: 0.42; color: Theme.canvasGlassMiddle }
+            GradientStop { position: 1.0; color: Theme.canvasGlassBottom }
+        }
         z: 0
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: Theme.canvasGlassEdge
+        }
     }
 
     // ---- dock panel (synchro.panel.*), e.g. the terminal ----
@@ -78,6 +98,8 @@ Window {
     // pills) and which have been opened this session (kept alive).
     property var relevantPanels: []
     property var openedPanels: []
+    property var pendingSqlBookmark: null
+    property bool pendingSqlScan: false
 
     function refreshRelevantPanels() {
         if (typeof hostApi === "undefined" || !hostApi)
@@ -87,14 +109,48 @@ Window {
             root.panelMeta[list[i].id] = { name: list[i].name,
                                            glyph: list[i].glyph }
         root.relevantPanels = list
+        // Match-scoped apps cease to be a valid surface when their target
+        // selection disappears. "always" panels (the terminal) remain in
+        // the list, so they are never closed by this rule.
+        if (root.keys && root.keys.panelId.length) {
+            var activeStillRelevant = false
+            for (var j = 0; j < list.length; ++j) {
+                if (list[j].id === root.keys.panelId) {
+                    activeStillRelevant = true
+                    break
+                }
+            }
+            if (!activeStillRelevant &&
+                    hostApi.panelRelevance(root.keys.panelId) === "match")
+                root.keys.panelId = ""
+        }
     }
 
-    // Remember name/glyph for every app we have seen, so pills for
-    // opened-but-no-longer-relevant apps stay labeled.
+    // Remember name/glyph for keep-alive panel instances and drag labels.
     property var panelMeta: ({})
+    readonly property var activePanelPeers: {
+        if (!root.panelId.length || typeof hostApi === "undefined" || !hostApi)
+            return []
+        return hostApi.panelPeers(root.panelId)
+    }
+
+    function activePeer(id) {
+        for (var i = 0; i < root.activePanelPeers.length; ++i) {
+            if (root.activePanelPeers[i].id === id)
+                return true
+        }
+        return false
+    }
 
     function panelNameFor(id) {
         var m = root.panelMeta[id]
+        if ((!m || !m.name) && typeof hostApi !== "undefined" && hostApi) {
+            var info = hostApi.panelInfo(id)
+            if (info && info.name) {
+                root.panelMeta[id] = info
+                m = info
+            }
+        }
         if (m && m.name)
             return m.name
         var dot = id.lastIndexOf(".")
@@ -109,7 +165,8 @@ Window {
         return n.length ? n.charAt(0).toUpperCase() : "?"
     }
 
-    // Parked pills: relevant + opened apps, minus the one on the dock.
+    // Parked pills represent availability now, not panel history. Opened
+    // contextual apps stay alive internally but do not leave stale launchers.
     readonly property var parkedPanels: {
         var out = []
         var seen = {}
@@ -117,16 +174,9 @@ Window {
         var i
         for (i = 0; i < root.relevantPanels.length; ++i) {
             var rp = root.relevantPanels[i]
-            if (rp.id !== cur && !seen[rp.id]) {
+            if (rp.id !== cur && !root.activePeer(rp.id) && !seen[rp.id]) {
                 seen[rp.id] = true
                 out.push({ id: rp.id, name: rp.name })
-            }
-        }
-        for (i = 0; i < root.openedPanels.length; ++i) {
-            var oid = root.openedPanels[i]
-            if (oid !== cur && !seen[oid]) {
-                seen[oid] = true
-                out.push({ id: oid, name: root.panelNameFor(oid) })
             }
         }
         return out
@@ -139,6 +189,31 @@ Window {
             it.focusContent()
         else if (it)
             it.forceActiveFocus()
+    }
+
+    function deliverPendingSqlAction() {
+        var panel = panelDock.panelItems["synchro.panel.sql"]
+        if (!panel)
+            return
+        if (root.pendingSqlBookmark && panel.openBookmark) {
+            var saved = root.pendingSqlBookmark
+            root.pendingSqlBookmark = null
+            panel.openBookmark(saved.name, saved.sql, saved.cwd)
+        }
+        if (root.pendingSqlScan && panel.forceTreeScan) {
+            root.pendingSqlScan = false
+            panel.forceTreeScan()
+        }
+    }
+
+    function openSqlBookmark(name, sql, cwd, bookmarkId) {
+        if (!root.keys)
+            return
+        root.pendingSqlBookmark = { name: name, sql: sql, cwd: cwd,
+                                    id: bookmarkId }
+        root.keys.panelId = "synchro.panel.sql"
+        Qt.callLater(root.deliverPendingSqlAction)
+        Qt.callLater(root.focusPanel)
     }
 
     // Shared drop rule for both grip gestures: an edge zone docks (and
@@ -169,6 +244,9 @@ Window {
             Qt.callLater(root.focusPanel)
         } else if (panelDock.activeFocus) {
             root.focusListingForce()
+        } else if (root.panelId !== "synchro.panel.terminal") {
+            root.keys.panelId = "synchro.panel.terminal"
+            Qt.callLater(root.focusPanel)
         } else {
             root.focusPanel()
         }
@@ -249,6 +327,7 @@ Window {
             selection: root.selection
             host: typeof hostApi !== "undefined" ? hostApi : null
             fileOps: typeof fileOpEngine !== "undefined" ? fileOpEngine : null
+            config: typeof appConfig !== "undefined" ? appConfig : null
             onViewToggleRequested: if (root.keys) root.keys.gridMode = false
             onDoRequested: if (typeof hostApi !== "undefined" && hostApi)
                 hostApi.openDoLayer()
@@ -267,6 +346,7 @@ Window {
         filterProxy: root.listing
         host: typeof hostApi !== "undefined" ? hostApi : null
         fileOps: typeof fileOpEngine !== "undefined" ? fileOpEngine : null
+        catalog: typeof fileCatalog !== "undefined" ? fileCatalog : null
     }
 
     Confirm {
@@ -283,8 +363,14 @@ Window {
                                          ? hostApi.panelSource(root.panelId)
                                          : ""
         property var panelItems: ({})
-        readonly property int span: appConfig
-                                    ? Math.min(appConfig.panelSize,
+        readonly property int headerH: Theme.controlHeight + Theme.spaceSM
+        readonly property string targetLabel: {
+            var s = root.files && root.files.currentStat
+                    ? root.files.currentStat : null
+            return s && s.name ? s.name : (root.files ? root.files.path : "")
+        }
+        readonly property int span: root.config
+                                    ? Math.min(root.config.panelSize,
                                                (root.panelHorizontal
                                                 ? root.height
                                                 : root.width) * 0.7)
@@ -313,7 +399,117 @@ Window {
 
         Rectangle {
             anchors.fill: parent
-            color: Theme.opaqueBackground
+            color: Theme.darkerBackground
+        }
+
+        Rectangle {
+            id: panelHeader
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: panelDock.headerH
+            color: Theme.darkBackground
+
+            Row {
+                anchors.left: parent.left
+                anchors.leftMargin: Theme.spaceLG
+                anchors.right: panelHeaderActions.left
+                anchors.rightMargin: Theme.spaceLG
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Theme.spaceLG
+
+                Repeater {
+                    model: root.activePanelPeers
+
+                    delegate: Rectangle {
+                        id: modeTab
+                        required property var modelData
+                        readonly property bool current: modelData.id === root.panelId
+                        width: modeLabel.implicitWidth + Theme.controlPaddingX * 2
+                        height: Theme.space(22)
+                        color: current ? Theme.accent
+                                       : (modeHover.hovered ? Theme.hoverFill
+                                                            : "transparent")
+                        border.color: current ? Theme.accent : Theme.normalBorder
+                        border.width: 1
+                        radius: Theme.radius
+
+                        Text {
+                            id: modeLabel
+                            anchors.centerIn: parent
+                            text: modeTab.modelData.glyph + "  " +
+                                  modeTab.modelData.name
+                            color: modeTab.current ? Theme.background
+                                                   : Theme.darkForeground
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontCaption
+                            font.bold: modeTab.current
+                        }
+
+                        HoverHandler { id: modeHover }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (!root.keys || modeTab.current)
+                                    return
+                                root.keys.panelId = modeTab.modelData.id
+                                Qt.callLater(root.focusPanel)
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    width: Math.max(0, parent.width - x)
+                    text: panelDock.targetLabel
+                    color: Theme.darkForeground
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontCaption
+                    elide: Text.ElideMiddle
+                }
+            }
+
+            Row {
+                id: panelHeaderActions
+                anchors.right: parent.right
+                anchors.rightMargin: Theme.spaceLG
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Theme.spaceSM
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: panelDock.activeFocus
+                    text: "KEYBOARD"
+                    color: Theme.accent
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontCaption
+                    font.bold: true
+                }
+
+                ChromeButton {
+                    height: Theme.space(24)
+                    compact: true
+                    iconName: "view-restore-symbolic"
+                    fallbackGlyph: "↻"
+                    toolTip: "Move panel to next edge"
+                    onTriggered: {
+                        if (!root.keys) return
+                        var sides = ["bottom", "right", "top", "left"]
+                        var i = sides.indexOf(root.panelSide)
+                        root.keys.panelSide = sides[(i + 1) % sides.length]
+                    }
+                }
+
+                ChromeButton {
+                    height: Theme.space(24)
+                    compact: true
+                    iconName: "window-close-symbolic"
+                    fallbackGlyph: "×"
+                    toolTip: "Hide panel"
+                    onTriggered: if (root.keys) root.keys.panelId = ""
+                }
+            }
         }
 
         // One keep-alive Loader per opened panel app: hidden panels stay
@@ -324,7 +520,7 @@ Window {
             Loader {
                 required property string modelData
                 anchors.fill: parent
-                anchors.topMargin: root.panelBottom ? 6 : 0
+                anchors.topMargin: panelDock.headerH + (root.panelBottom ? 6 : 0)
                 anchors.bottomMargin: root.panelTopSide ? 6 : 0
                 anchors.leftMargin: root.panelRight ? 6 : 0
                 anchors.rightMargin: root.panelLeft ? 6 : 0
@@ -340,9 +536,17 @@ Window {
                                                                    : null
                     if (item.fileModel !== undefined)
                         item.fileModel = root.files
+                    if (item.selectionModel !== undefined)
+                        item.selectionModel = root.selection
                     if (item.navStack !== undefined)
                         item.navStack = root.history
+                    if (item.catalog !== undefined)
+                        item.catalog = typeof fileCatalog !== "undefined"
+                                     ? fileCatalog : null
+                    if (item.config !== undefined)
+                        item.config = root.config
                     panelDock.panelItems[modelData] = item
+                    Qt.callLater(root.deliverPendingSqlAction)
                 }
             }
         }
@@ -394,15 +598,15 @@ Window {
             property real startSize: 0
             property real startY: 0
             onPressed: function (mouse) {
-                startSize = appConfig ? appConfig.panelSize : 260
+                startSize = root.config ? root.config.panelSize : 260
                 startY = mapToItem(null, mouse.x, mouse.y).y
             }
             onPositionChanged: function (mouse) {
-                if (!pressed || !appConfig)
+                if (!pressed || !root.config)
                     return
                 var y = mapToItem(null, mouse.x, mouse.y).y
                 var delta = root.panelBottom ? (startY - y) : (y - startY)
-                appConfig.panelSize = Math.round(startSize + delta)
+                root.config.panelSize = Math.round(startSize + delta)
             }
         }
         Item {
@@ -478,15 +682,15 @@ Window {
             property real startSize: 0
             property real startX: 0
             onPressed: function (mouse) {
-                startSize = appConfig ? appConfig.panelSize : 300
+                startSize = root.config ? root.config.panelSize : 300
                 startX = mapToItem(null, mouse.x, mouse.y).x
             }
             onPositionChanged: function (mouse) {
-                if (!pressed || !appConfig)
+                if (!pressed || !root.config)
                     return
                 var x = mapToItem(null, mouse.x, mouse.y).x
                 var delta = root.panelRight ? (startX - x) : (x - startX)
-                appConfig.panelSize = Math.round(startSize + delta)
+                root.config.panelSize = Math.round(startSize + delta)
             }
         }
     }
@@ -737,6 +941,10 @@ Window {
     Connections {
         target: root.keys
         function onPanelFocusRequested() { Qt.callLater(root.focusPanel) }
+        function onSqlScanRequested() {
+            root.pendingSqlScan = true
+            Qt.callLater(root.deliverPendingSqlAction)
+        }
         function onPanelChanged() {
             var id = root.keys.panelId
             if (id.length && root.openedPanels.indexOf(id) < 0)
@@ -745,9 +953,21 @@ Window {
     }
 
     Connections {
+        target: root.chips
+        function onSqlBookmarkActivated(name, sql, cwd, bookmarkId) {
+            root.openSqlBookmark(name, sql, cwd, bookmarkId)
+        }
+    }
+
+    Connections {
         target: root.files
         function onCurrentStatChanged() { root.refreshRelevantPanels() }
         function onPathChanged() { root.refreshRelevantPanels() }
+    }
+
+    Connections {
+        target: root.selection
+        function onSelectionChanged() { root.refreshRelevantPanels() }
     }
 
     PeekOverlay {
@@ -820,8 +1040,7 @@ Window {
 
         Rectangle {
             anchors.fill: parent
-            color: Theme.background
-            opacity: 0.9
+            color: Theme.alpha(Theme.darkerBackground, 0.88)
             MouseArea {
                 anchors.fill: parent
                 onClicked: if (root.keys) root.keys.escape()
@@ -857,15 +1076,69 @@ Window {
             width: (twoCol ? colW * 2 + Theme.space(32) : colW) +
                    Theme.space(40)
             height: Math.min(parent.height - Theme.space(40),
-                             helpFlick.contentHeight + Theme.space(36))
-            color: Theme.background
-            border.color: Theme.normalBorder
+                             helpFlick.contentHeight + Theme.space(96))
+            color: Theme.lighterBackground
+            border.color: Theme.focusBorder
             border.width: 1
+
+            Item {
+                id: helpHeader
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.leftMargin: Theme.space(18)
+                anchors.rightMargin: Theme.space(12)
+                height: Theme.space(48)
+
+                Column {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Theme.spaceXXS
+
+                    Text {
+                        text: "Synchro controls"
+                        color: Theme.brightForeground
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontTitle
+                        font.bold: true
+                    }
+                    Text {
+                        text: "Keyboard-first, mouse-friendly"
+                        color: Theme.darkForeground
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontCaption
+                    }
+                }
+
+                ChromeButton {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    compact: true
+                    iconName: "window-close-symbolic"
+                    fallbackGlyph: "×"
+                    toolTip: "Close help  ·  Esc"
+                    onTriggered: if (root.keys) root.keys.escape()
+                }
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: 1
+                    color: Theme.normalBorder
+                }
+            }
 
             Flickable {
                 id: helpFlick
-                anchors.fill: parent
-                anchors.margins: Theme.space(18)
+                anchors.top: helpHeader.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: Theme.space(18)
+                anchors.rightMargin: Theme.space(18)
+                anchors.topMargin: Theme.space(12)
+                anchors.bottomMargin: Theme.space(18)
                 contentHeight: helpBody.height
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
@@ -896,7 +1169,7 @@ Window {
                                         text: helpSection.modelData.title
                                         color: Theme.accent
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontBody
+                                        font.pixelSize: Theme.fontSubtitle
                                         font.bold: true
                                     }
 
@@ -907,18 +1180,15 @@ Window {
                                             id: helpRowItem
                                             required property var modelData
                                             width: helpPanel.colW
-                                            height: Theme.fontBody +
-                                                    Theme.space(5)
+                                            height: Math.max(Theme.controlHeight,
+                                                             helpKey.implicitHeight)
 
-                                            Text {
+                                            Keycap {
+                                                id: helpKey
                                                 width: helpPanel.keyColW
                                                 anchors.verticalCenter:
                                                     parent.verticalCenter
-                                                text: helpRowItem.modelData.keys
-                                                color: Theme.foreground
-                                                font.family: Theme.fontFamily
-                                                font.pixelSize: Theme.fontBody
-                                                elide: Text.ElideRight
+                                                label: helpRowItem.modelData.keys
                                             }
                                             Text {
                                                 x: helpPanel.keyColW +
@@ -927,7 +1197,8 @@ Window {
                                                 anchors.verticalCenter:
                                                     parent.verticalCenter
                                                 text: helpRowItem.modelData.what
-                                                color: Theme.muted
+                                                color: Theme.lightForeground
+                                                opacity: 0.74
                                                 font.family: Theme.fontFamily
                                                 font.pixelSize: Theme.fontBody
                                                 elide: Text.ElideRight

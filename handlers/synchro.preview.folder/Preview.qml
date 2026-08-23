@@ -72,7 +72,13 @@ HandlerSurface {
         currentIndex: root.rows ? root.rows.currentIndex : -1
         focus: false
 
-        highlight: Rectangle { color: Theme.selectedFill }
+        highlight: Rectangle {
+            objectName: "peekFolderSelection"
+            color: Theme.selectedFill
+            border.color: Theme.accent
+            border.width: 2
+            radius: Theme.radius
+        }
 
         onContentYChanged: listThumbs.restart()
         onHeightChanged: listThumbs.restart()
@@ -164,7 +170,10 @@ HandlerSurface {
         onCellWidthChanged: root.syncStride()
 
         highlight: Rectangle {
+            objectName: "peekFolderSelection"
             color: Theme.selectedFill
+            border.color: Theme.accent
+            border.width: 2
             radius: Theme.radius
         }
 

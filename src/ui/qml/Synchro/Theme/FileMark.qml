@@ -50,24 +50,28 @@ Item {
     readonly property color _watch: Theme.background
     on_WatchChanged: page.requestPaint()
 
-    Text {
+    Rectangle {
         visible: root.suffix.length > 0 && root.height >= 22
-        anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.top: parent.top
-        anchors.topMargin: root.fold + root.inset
-        anchors.leftMargin: root.inset + 1
-        anchors.rightMargin: root.inset + 1
-        text: root.suffix
-        color: Theme.muted
-        font.family: Theme.fontFamily
-        font.pixelSize: Math.max(8, Math.round(root.height * 0.22))
-        font.bold: true
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-        elide: Text.ElideRight
-        wrapMode: Text.NoWrap
-        maximumLineCount: 1
+        anchors.rightMargin: root.inset + 2
+        anchors.bottomMargin: root.inset + 2
+        width: Math.min(root.width - root.inset * 2,
+                        suffixText.implicitWidth + Theme.spaceSM * 2)
+        height: suffixText.implicitHeight + Theme.spaceXS * 2
+        color: Theme.alpha(Theme.darkBackground, 0.88)
+        radius: Theme.radius
+
+        Text {
+            id: suffixText
+            anchors.centerIn: parent
+            text: root.suffix
+            color: Theme.muted
+            font.family: Theme.fontFamily
+            font.pixelSize: Math.max(7, Math.round(root.height * 0.13))
+            font.bold: true
+            elide: Text.ElideRight
+            maximumLineCount: 1
+        }
     }
 }

@@ -86,9 +86,13 @@ private slots:
   void folderMosaicMarkdownIsReadable();
   void folderMosaicFromChildFolders();
   void folderMosaicNestedChildImage();
+  void pathMosaicFromExplicitFiles();
+  void adaptivePathMosaicLayouts();
+  void pathMosaicIncludesUnknownFiles();
   void emptyFolderGetsFolderCard();
   void unknownFileGetsFallbackCard();
   void packedCacheRoundTrip();
+  void invalidateDropsOldPackedEntry();
 
 private:
   QTemporaryDir m_cache;
@@ -253,7 +257,7 @@ void ThumbnailServiceTest::invalidXdgFallsThroughToGenerate() {
   QVERIFY(!url.isEmpty());
   QCOMPARE(url, ThumbnailService::packedUrl(src, mtime, 128));
   const QString noteKey =
-      src + QStringLiteral("#card-v1-") + ThumbTheme::current().cacheId();
+      src + QStringLiteral("#card-v5-") + ThumbTheme::current().cacheId();
   QVERIFY(ThumbCache::instance().contains(noteKey, mtime, 128));
   QVERIFY(!QFileInfo::exists(
       ThumbnailService::synchroThumbPath(src, mtime, 128)));
@@ -291,7 +295,7 @@ void ThumbnailServiceTest::generateWritesOnlySynchroCache() {
   QCOMPARE(spy.at(0).at(1).toString(),
            ThumbnailService::packedUrl(src, mtime, 128));
   const QString docKey =
-      src + QStringLiteral("#card-v1-") + ThumbTheme::current().cacheId();
+      src + QStringLiteral("#card-v5-") + ThumbTheme::current().cacheId();
   QVERIFY(ThumbCache::instance().contains(docKey, mtime, 128));
   QVERIFY(!QFileInfo::exists(
       ThumbnailService::synchroThumbPath(src, mtime, 128)));
@@ -342,9 +346,11 @@ void ThumbnailServiceTest::textCardGeneratedWhenNoThumbnailer() {
   QVERIFY(!url.isEmpty());
   QCOMPARE(url, ThumbnailService::packedUrl(src, mtime, 128));
   const QString packedKey =
-      src + QStringLiteral("#card-v1-") + ThumbTheme::current().cacheId();
+      src + QStringLiteral("#card-v5-") + ThumbTheme::current().cacheId();
   QVERIFY(ThumbCache::instance().contains(packedKey, mtime, 128));
-  QVERIFY(!ThumbCache::instance().getImage(packedKey, mtime, 128).isNull());
+  const QImage card = ThumbCache::instance().getImage(packedKey, mtime, 128);
+  QVERIFY(!card.isNull());
+  QCOMPARE(card.pixelColor(120, 120), ThumbTheme::current().background);
 }
 
 void ThumbnailServiceTest::webpDecodesWithoutQtPlugin() {
@@ -512,9 +518,110 @@ void ThumbnailServiceTest::folderMosaicNestedChildImage() {
   QVERIFY(ThumbnailService::renderFolderMosaic(root, dest, 128));
   const QImage mosaic(dest);
   QVERIFY(!mosaic.isNull());
-  const QColor c = mosaic.pixelColor(28, 28);
-  QVERIFY2(c.red() > 150 && c.red() > c.blue(),
+  bool foundRed = false;
+  for (int y = 0; y < mosaic.height() && !foundRed; ++y) {
+    for (int x = 0; x < mosaic.width(); ++x) {
+      const QColor c = mosaic.pixelColor(x, y);
+      if (c.red() > 150 && c.red() > c.blue() * 2) {
+        foundRed = true;
+        break;
+      }
+    }
+  }
+  QVERIFY2(foundRed,
            "child-folder tile should show a nested image, not a blank card");
+}
+
+void ThumbnailServiceTest::pathMosaicFromExplicitFiles() {
+  const QString one = m_files.filePath(QStringLiteral("query-one.png"));
+  const QString two = m_files.filePath(QStringLiteral("query-two.png"));
+  QVERIFY(writeColorPng(one, qRgb(220, 40, 40)));
+  QVERIFY(writeColorPng(two, qRgb(40, 80, 220)));
+  const QImage mosaic = ThumbnailService::renderPathMosaicImage(
+      {one, two}, QStringLiteral("images"), 128);
+  QVERIFY(!mosaic.isNull());
+  QCOMPARE(mosaic.size(), QSize(128, 128));
+}
+
+void ThumbnailServiceTest::adaptivePathMosaicLayouts() {
+  const QString red = m_files.filePath(QStringLiteral("red.png"));
+  const QString green = m_files.filePath(QStringLiteral("green.png"));
+  const QString blue = m_files.filePath(QStringLiteral("blue.png"));
+  QVERIFY(writeColorPng(red, qRgb(220, 30, 30)));
+  QVERIFY(writeColorPng(green, qRgb(30, 220, 30)));
+  QVERIFY(writeColorPng(blue, qRgb(30, 30, 220)));
+
+  const QImage one = ThumbnailService::renderPathMosaicImage(
+      {red}, QStringLiteral("one"), 128);
+  QVERIFY(!one.isNull());
+  const QColor oneLowerRight = one.pixelColor(96, 96);
+  QVERIFY2(oneLowerRight.red() > oneLowerRight.green() * 2,
+           "a one-item query mosaic should fill the available face");
+
+  const QImage two = ThumbnailService::renderPathMosaicImage(
+      {red, green}, QStringLiteral("two"), 128);
+  QVERIFY(!two.isNull());
+  const QColor twoLowerLeft = two.pixelColor(32, 96);
+  const QColor twoLowerRight = two.pixelColor(96, 96);
+  QVERIFY2(twoLowerLeft.red() > twoLowerLeft.green() * 2,
+           "the first of two tiles should extend to the bottom edge");
+  QVERIFY2(twoLowerRight.green() > twoLowerRight.red() * 2,
+           "the second of two tiles should extend to the bottom edge");
+
+  const QImage three = ThumbnailService::renderPathMosaicImage(
+      {red, green, blue}, QStringLiteral("three"), 128);
+  QVERIFY(!three.isNull());
+  const QColor threeLowerLeft = three.pixelColor(32, 96);
+  const QColor threeUpperRight = three.pixelColor(96, 32);
+  const QColor threeLowerRight = three.pixelColor(96, 96);
+  QVERIFY(threeLowerLeft.red() > threeLowerLeft.green() * 2);
+  QVERIFY(threeUpperRight.green() > threeUpperRight.red() * 2);
+  QVERIFY(threeLowerRight.blue() > threeLowerRight.red() * 2);
+
+  const QImage empty = ThumbnailService::renderPathMosaicImage(
+      {}, QStringLiteral("empty group"), 128);
+  QVERIFY2(!empty.isNull(),
+           "a query group with no surviving previews still needs a card");
+}
+
+void ThumbnailServiceTest::pathMosaicIncludesUnknownFiles() {
+  QStringList opaquePaths;
+  for (int i = 0; i < 10; ++i) {
+    const QString path =
+        m_files.filePath(QStringLiteral("opaque-%1.rlib").arg(i));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("not an image");
+    file.close();
+    opaquePaths.append(path);
+  }
+
+  const QImage mosaic = ThumbnailService::renderPathMosaicImage(
+      opaquePaths, QStringLiteral("rlib"), 160);
+  QVERIFY(!mosaic.isNull());
+  QCOMPARE(mosaic.size(), QSize(160, 160));
+
+  const QColor surface = ThumbTheme::current().surfaceRaised;
+  int detailedCells = 0;
+  for (int row = 0; row < 2; ++row) {
+    for (int column = 0; column < 5; ++column) {
+      bool differs = false;
+      const QRect sample(column * 31 + 6, row * 76 + 6, 24, 64);
+      for (int y = sample.top(); y <= sample.bottom() && !differs; ++y) {
+        for (int x = sample.left(); x <= sample.right(); ++x) {
+          const QColor pixel = mosaic.pixelColor(x, y);
+          if (pixel.alpha() > 0 && pixel != surface) {
+            differs = true;
+            break;
+          }
+        }
+      }
+      if (differs)
+        ++detailedCells;
+    }
+  }
+  QVERIFY2(detailedCells == 10,
+           "all ten opaque files should produce visible fallback tiles");
 }
 
 void ThumbnailServiceTest::emptyFolderGetsFolderCard() {
@@ -526,6 +633,9 @@ void ThumbnailServiceTest::emptyFolderGetsFolderCard() {
   const QImage card(dest);
   QVERIFY(!card.isNull());
   QCOMPARE(card.width(), 128);
+  // Folder identity is the raised surface itself; the old accent tab is gone.
+  QCOMPARE(card.pixelColor(20, 8), ThumbTheme::current().surfaceRaised);
+  QVERIFY(card.pixelColor(20, 8) != ThumbTheme::current().accent);
   const QColor oldBlue(0xd2, 0xda, 0xe4);
   const QColor themeBg = ThumbTheme::current().background;
   int themed = 0;
@@ -564,7 +674,7 @@ void ThumbnailServiceTest::unknownFileGetsFallbackCard() {
   QVERIFY2(!url.isEmpty(), "unread types should still get a file glyph");
   QCOMPARE(url, ThumbnailService::packedUrl(src, mtime, 128));
   const QString key =
-      src + QStringLiteral("#card-v1-") + ThumbTheme::current().cacheId();
+      src + QStringLiteral("#card-v5-") + ThumbTheme::current().cacheId();
   const QImage card = ThumbCache::instance().getImage(key, mtime, 128);
   QVERIFY(!card.isNull());
   QVERIFY(card.width() >= 64);
@@ -589,7 +699,7 @@ void ThumbnailServiceTest::packedCacheRoundTrip() {
   }
   QVERIFY(QFileInfo::exists(ThumbCache::dbPath()));
   const QString packedKey =
-      src + QStringLiteral("#card-v1-") + ThumbTheme::current().cacheId();
+      src + QStringLiteral("#card-v5-") + ThumbTheme::current().cacheId();
   QVERIFY(ThumbCache::instance().contains(packedKey, mtime, 128));
   QVERIFY(!QFileInfo::exists(
       ThumbnailService::synchroThumbPath(src, mtime, 128)));
@@ -601,6 +711,32 @@ void ThumbnailServiceTest::packedCacheRoundTrip() {
   QCOMPARE(spy.count(), 1);
   QCOMPARE(spy.at(0).at(1).toString(),
            ThumbnailService::packedUrl(src, mtime, 128));
+}
+
+void ThumbnailServiceTest::invalidateDropsOldPackedEntry() {
+  const QString src = m_files.filePath(QStringLiteral("changing.md"));
+  QFile f(src);
+  QVERIFY(f.open(QIODevice::WriteOnly));
+  f.write("first rendering\n");
+  f.close();
+  const qint64 mtime = mtimeMsOf(src);
+  const QString identity =
+      src + QStringLiteral("#card-v5-") + ThumbTheme::current().cacheId();
+
+  ThumbnailService svc;
+  svc.setThumbnailerDirectories({});
+  QSignalSpy spy(&svc, &ThumbnailService::thumbnailReady);
+  svc.request(src, mtime, 128);
+  QVERIFY(QTest::qWaitFor([&] { return spy.count() >= 1; }, 2000));
+  QVERIFY(ThumbCache::instance().contains(identity, mtime, 128));
+
+  svc.invalidate(src);
+  QTRY_VERIFY_WITH_TIMEOUT(
+      !ThumbCache::instance().contains(identity, mtime, 128), 2000);
+  spy.clear();
+  svc.request(src, mtime, 128);
+  QVERIFY(QTest::qWaitFor([&] { return spy.count() >= 1; }, 2000));
+  QVERIFY(ThumbCache::instance().contains(identity, mtime, 128));
 }
 
 int main(int argc, char **argv) {

@@ -7,6 +7,7 @@
 #include "VolumeStore.h"
 
 #include <QDateTime>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -111,6 +112,7 @@ DirectoryModel::~DirectoryModel() {
 
 bool DirectoryModel::isVirtualPath(const QString &path) {
   return path.startsWith(QLatin1String("search:")) ||
+         path.startsWith(QLatin1String("sql:")) ||
          path.startsWith(QLatin1String("trash:")) ||
          path.startsWith(QLatin1String("recent:")) ||
          path.startsWith(QLatin1String("volumes:"));
@@ -118,6 +120,10 @@ bool DirectoryModel::isVirtualPath(const QString &path) {
 
 bool DirectoryModel::isSearchPath(const QString &path) {
   return path.startsWith(QLatin1String("search:"));
+}
+
+bool DirectoryModel::isSqlPath(const QString &path) {
+  return path.startsWith(QLatin1String("sql:"));
 }
 
 bool DirectoryModel::isTrashPath(const QString &path) {
@@ -139,6 +145,8 @@ bool DirectoryModel::isRecent() const { return isRecentPath(m_path); }
 bool DirectoryModel::isVolumes() const { return isVolumesPath(m_path); }
 
 bool DirectoryModel::isSearch() const { return isSearchPath(m_path); }
+
+bool DirectoryModel::isSql() const { return isSqlPath(m_path); }
 
 QString DirectoryModel::searchQuery() const {
   return m_search ? m_search->query() : QString();
@@ -341,6 +349,8 @@ int DirectoryModel::compareNamesForRows(int leftVisibleRow,
 QString DirectoryModel::normalizePath(const QString &path) {
   if (isSearchPath(path))
     return path;
+  if (isSqlPath(path))
+    return path;
   if (isRecentPath(path))
     return QStringLiteral("recent://");
   if (isVolumesPath(path))
@@ -532,6 +542,8 @@ void DirectoryModel::setPath(const QString &path, const QString &selectName,
     m_returnPath = m_path;
   updateVolumeRoot(previous, resolved);
   m_path = resolved;
+  if (!isSqlPath(resolved))
+    m_sqlBackAvailable = false;
   m_error.clear();
   m_pendingActivate.clear();
   m_pendingSelect = selectName;
@@ -842,6 +854,13 @@ void DirectoryModel::activateCurrent() {
     m_pendingActivate = e->name;
     return;
   }
+  if (e->dirKind == QLatin1String("sql-group")) {
+    const QVariantMap meta = m_sqlRows.value(e->path);
+    const QString sql = meta.value(QStringLiteral("sql")).toString();
+    if (!sql.isEmpty())
+      emit sqlDrillRequested(sql, e->name);
+    return;
+  }
   if (e->isDir)
     setPath(e->path);
   else
@@ -1039,6 +1058,207 @@ void DirectoryModel::loadRecentListing() {
   onFinished(m_gen, true, QString());
 }
 
+void DirectoryModel::showSqlResult(const QVariantMap &result,
+                                   const QString &label) {
+  const bool entering = !isSql();
+  if (entering)
+    emit aboutToNavigate();
+  ++m_gen;
+  if (m_lister)
+    m_lister->abandon(m_gen);
+  if (m_thumbs)
+    m_thumbs->cancelAll();
+  if (entering && !isVirtualPath(m_path) && !m_path.isEmpty())
+    m_returnPath = m_path;
+  resetListing();
+  m_searching = false;
+  m_listing = false;
+  m_error.clear();
+  m_sqlRows.clear();
+  m_sqlContext = result.value(QStringLiteral("cwd")).toString();
+  if (m_sqlContext.isEmpty())
+    m_sqlContext = m_returnPath;
+  m_sqlLabel = label.trimmed();
+  if (m_sqlLabel.isEmpty())
+    m_sqlLabel = result.value(QStringLiteral("sourceRelation"),
+                              QStringLiteral("result"))
+                     .toString();
+  ++m_sqlEpoch;
+  m_path = QStringLiteral("sql://result/%1").arg(m_sqlEpoch);
+  m_watcher.setPath(QString());
+  m_watchSerial = m_watcher.serial();
+  m_loggedFirst = false;
+  m_listTimer.start();
+  emit pathChanged();
+  emit folderGroupsChanged();
+  emit errorStringChanged();
+  emit listingChanged();
+  emitCurrentStat();
+  loadSqlListing(result);
+}
+
+void DirectoryModel::loadSqlListing(const QVariantMap &result) {
+  const QVariantList rows = result.value(QStringLiteral("rows")).toList();
+  const QVariantList columns = result.value(QStringLiteral("columns")).toList();
+  QVector<DirectoryEntry> batch;
+  batch.reserve(rows.size());
+  for (int i = 0; i < rows.size(); ++i) {
+    const QVariantMap row = rows.at(i).toMap();
+    const QString rawPath = row.value(QStringLiteral("path")).toString();
+    DirectoryEntry e;
+    if (!rawPath.isEmpty()) {
+      const QFileInfo fi(rawPath);
+      e.path = QDir::cleanPath(fi.absoluteFilePath());
+      e.name = row.value(QStringLiteral("name")).toString();
+      if (e.name.isEmpty())
+        e.name = fi.fileName().isEmpty() ? e.path : fi.fileName();
+      e.isDir = row.contains(QStringLiteral("is_dir"))
+                    ? row.value(QStringLiteral("is_dir")).toBool()
+                    : fi.isDir();
+      e.size = e.isDir ? 0 : row.value(QStringLiteral("size"), fi.size()).toLongLong();
+      e.mtime = row.value(QStringLiteral("mtime"),
+                          fi.lastModified().toMSecsSinceEpoch())
+                    .toLongLong();
+      e.mime = row.value(QStringLiteral("mime")).toString();
+      e.uri = QUrl::fromLocalFile(e.path);
+      e.isHidden = row.value(QStringLiteral("is_hidden"),
+                             e.name.startsWith(QLatin1Char('.')))
+                       .toBool();
+      e.isSymlink = row.value(QStringLiteral("is_symlink"), fi.isSymLink())
+                        .toBool();
+      e.iconName = e.isDir ? QStringLiteral("folder")
+                           : QStringLiteral("text-x-generic");
+      e.dirKind = QStringLiteral("sql-result");
+      e.origPath = e.path;
+      e.parentPath = row.value(QStringLiteral("parent"), fi.absolutePath())
+                         .toString();
+      e.perm = fi.exists() ? fileMode(e.path) : 0;
+    } else {
+      e.name = row.value(QStringLiteral("_synchro_label")).toString();
+      if (e.name.isEmpty())
+        e.name = QStringLiteral("result %1").arg(i + 1);
+      const QString drill =
+          row.value(QStringLiteral("_synchro_drill_sql")).toString();
+      if (drill.isEmpty()) {
+        e.path =
+            QStringLiteral("sql://result/%1/row/%2").arg(m_sqlEpoch).arg(i);
+      } else {
+        const QString key = QString::fromLatin1(
+            QCryptographicHash::hash(drill.toUtf8(),
+                                     QCryptographicHash::Sha1)
+                .toHex());
+        e.path = QStringLiteral("sql://group/%1").arg(key);
+      }
+      e.uri = QUrl(e.path);
+      e.isDir = !drill.isEmpty();
+      e.mime = e.isDir ? QStringLiteral("inode/directory")
+                       : QStringLiteral("application/x-synchro-sql-row");
+      e.iconName = e.isDir ? QStringLiteral("folder")
+                           : QStringLiteral("view-list-details");
+      e.typeLabel = e.isDir ? QStringLiteral("SQL group")
+                            : QStringLiteral("SQL row");
+      e.dirKind = e.isDir ? QStringLiteral("sql-group")
+                          : QStringLiteral("sql-row");
+      e.size = row.value(QStringLiteral("bytes"), -1).toLongLong();
+      const QVariantList previewValues =
+          row.value(QStringLiteral("_synchro_preview_paths")).toList();
+      QCryptographicHash previewRevision(QCryptographicHash::Sha1);
+      for (const QVariant &previewValue : previewValues) {
+        const QString previewPath = previewValue.toString();
+        const QFileInfo previewInfo(previewPath);
+        if (!previewPath.isEmpty() && previewInfo.exists()) {
+          e.previewPaths.append(previewInfo.absoluteFilePath());
+          previewRevision.addData(previewInfo.absoluteFilePath().toUtf8());
+          previewRevision.addData(QByteArray::number(
+              previewInfo.lastModified().toMSecsSinceEpoch()));
+          if (e.previewPaths.size() >= 10)
+            break;
+        }
+      }
+      if (e.previewPaths.isEmpty()) {
+        // SQL groups still need a stable placeholder thumbnail when an
+        // incremental index only has stale preview candidates (or the group
+        // is currently empty).
+        e.mtime = 1;
+      } else {
+        const QByteArray digest = previewRevision.result();
+        quint64 revision = 0;
+        for (int byte = 0; byte < qMin(8, digest.size()); ++byte)
+          revision = (revision << 8) | uchar(digest.at(byte));
+        e.mtime = qint64(revision & 0x7fffffffffffffffULL);
+        if (e.mtime <= 0)
+          e.mtime = 1;
+      }
+      QStringList facts;
+      for (const QVariant &column : columns) {
+        const QString name = column.toMap().value(QStringLiteral("name")).toString();
+        if (name.isEmpty() || name.startsWith(QLatin1Char('_')) ||
+            !row.contains(name) || name == QLatin1String("path"))
+          continue;
+        const QString value = row.value(name).toString();
+        if (!value.isEmpty() && value != e.name)
+          facts.append(name + QLatin1Char(' ') + value);
+      }
+      e.detail = facts.join(QStringLiteral(" · "));
+      QVariantMap meta;
+      meta.insert(QStringLiteral("sql"), drill);
+      m_sqlRows.insert(e.path, meta);
+    }
+    QVariantMap meta = m_sqlRows.value(e.path);
+    meta.insert(QStringLiteral("row"), row);
+    meta.insert(QStringLiteral("rowIndex"), i);
+    m_sqlRows.insert(e.path, meta);
+    batch.append(e);
+  }
+  onBatchReady(m_gen, batch);
+  onFinished(m_gen, true, QString());
+}
+
+bool DirectoryModel::selectPath(const QString &path) {
+  auto it = m_indexByPath.constFind(path);
+  if (it == m_indexByPath.cend())
+    it = m_indexByPath.constFind(QDir::cleanPath(path));
+  if (it == m_indexByPath.cend())
+    return false;
+  const auto visible = m_visibleRowByAll.constFind(it.value());
+  if (visible == m_visibleRowByAll.cend())
+    return false;
+  setCurrentIndex(visible.value());
+  return true;
+}
+
+int DirectoryModel::currentSqlRow() const {
+  if (!isSql())
+    return -1;
+  const DirectoryEntry *entry = entryAt(m_currentIndex);
+  if (!entry)
+    return -1;
+  return m_sqlRows.value(entry->path)
+      .value(QStringLiteral("rowIndex"), -1)
+      .toInt();
+}
+
+bool DirectoryModel::selectSqlRow(int queryRow) {
+  if (!isSql() || queryRow < 0)
+    return false;
+  for (auto it = m_sqlRows.cbegin(); it != m_sqlRows.cend(); ++it) {
+    if (it.value().value(QStringLiteral("rowIndex"), -1).toInt() == queryRow)
+      return selectPath(it.key());
+  }
+  return false;
+}
+
+void DirectoryModel::setSqlBackAvailable(bool available) {
+  m_sqlBackAvailable = available;
+}
+
+bool DirectoryModel::requestSqlBack() {
+  if (!isSql() || !m_sqlBackAvailable)
+    return false;
+  emit sqlBackRequested();
+  return true;
+}
+
 void DirectoryModel::onBatchReady(quint64 generation,
                                   const QVector<DirectoryEntry> &batch) {
   if (generation != m_gen)
@@ -1052,7 +1272,8 @@ void DirectoryModel::onBatchReady(quint64 generation,
     if (e.name.isEmpty())
       continue;
     // recent:// is unique by full path; two README.md must both show.
-    if (e.dirKind == QLatin1String("recent")) {
+    if (e.dirKind == QLatin1String("recent") ||
+        e.dirKind == QLatin1String("sql-result")) {
       if (e.path.isEmpty() || m_indexByPath.contains(e.path))
         continue;
     } else if (m_indexByName.contains(e.name) ||
@@ -1145,11 +1366,11 @@ void DirectoryModel::onStatsReady(quint64 generation,
     if (e.path.isEmpty())
       continue;
     applied.append(e.path);
-    const bool dirTouched =
-        e.isDir && oldMtime > 0 && e.mtime != oldMtime && hadThumb;
+    const bool contentTouched =
+        oldMtime > 0 && e.mtime != oldMtime && hadThumb;
     const bool pending = m_pendingThumbs.remove(e.path);
     const bool onScreen = visRow >= 0 && m_thumbRows.contains(visRow);
-    if (dirTouched || pending || (!hadThumb && onScreen))
+    if (contentTouched || pending || (!hadThumb && onScreen))
       thumbs.append(e.path);
   }
   // One dataChanged per contiguous run instead of one per entry: 50k
@@ -1304,6 +1525,9 @@ void DirectoryModel::removeByName(const QString &name) {
   if (it == m_indexByName.cend())
     return;
   const int allIndex = it.value();
+  QString removedPath;
+  if (allIndex >= 0 && allIndex < m_all.size())
+    removedPath = m_all.at(allIndex).path;
   removeVisible(allIndex);
   m_indexByName.remove(name);
   if (allIndex >= 0 && allIndex < m_all.size()) {
@@ -1311,6 +1535,8 @@ void DirectoryModel::removeByName(const QString &name) {
       m_indexByPath.remove(m_all[allIndex].path);
     m_all[allIndex] = DirectoryEntry{};
   }
+  if (!removedPath.isEmpty())
+    emit catalogPathsRemoved({removedPath});
 }
 
 void DirectoryModel::renameEntry(const QString &from, const QString &to) {
@@ -1325,6 +1551,7 @@ void DirectoryModel::renameEntry(const QString &from, const QString &to) {
   if (m_indexByName.contains(to))
     removeByName(to);
   DirectoryEntry &e = m_all[allIndex];
+  const QString oldPath = e.path;
   e.name = to;
   if (!e.path.isEmpty())
     m_indexByPath.remove(e.path);
@@ -1345,6 +1572,8 @@ void DirectoryModel::renameEntry(const QString &from, const QString &to) {
     const QModelIndex idx = index(m_visibleRowByAll.value(allIndex));
     emit dataChanged(idx, idx);
   }
+  if (!oldPath.isEmpty() && oldPath != e.path)
+    emit catalogPathsRemoved({oldPath});
 }
 
 void DirectoryModel::navigateToExistingParent() {
@@ -1497,6 +1726,9 @@ void DirectoryModel::requestSourceThumbs(const QVector<int> &sourceRows,
     job.mtime = mtime;
     job.sizePx = sizePx;
     job.priority = qAbs(i - center);
+    job.mosaicPaths = e->previewPaths;
+    if (e->dirKind == QLatin1String("sql-group"))
+      job.mosaicLabel = e->name;
     jobs.append(job);
   }
   m_thumbs->requestVisible(jobs);
@@ -1525,11 +1757,16 @@ void DirectoryModel::refreshThumbs(const QStringList &paths) {
     DirectoryEntry &e = m_all[allIndex];
     if (e.path.isEmpty())
       continue;
-    qint64 mtime = QFileInfo(e.path).lastModified().toMSecsSinceEpoch();
+    qint64 mtime = e.mtime;
+    if (mtime <= 0)
+      mtime = QFileInfo(e.path).lastModified().toMSecsSinceEpoch();
     if (mtime <= 0)
       mtime = QDateTime::currentMSecsSinceEpoch();
+    // Evict the old render explicitly. Fabricating a future mtime here made
+    // the generated key impossible to hit on the next normal viewport pass,
+    // which caused the same preview to regenerate repeatedly.
     if (!e.thumbnail.isEmpty())
-      mtime = qMax(mtime + 1, QDateTime::currentMSecsSinceEpoch());
+      m_thumbs->invalidate(e.path);
     ThumbnailJob job;
     job.path = e.path;
     job.mime = e.mime;

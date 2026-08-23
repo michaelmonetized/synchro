@@ -23,7 +23,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.opaqueBackground
+        color: "transparent"
         z: -1
     }
 
@@ -80,31 +80,31 @@ Item {
     readonly property bool picked: listing.selection &&
                                    listing.selectionEpoch >= 0 &&
                                    listing.selection.isSelected(cell.rowIndex)
+    Rectangle {
+        id: card
+        anchors.fill: parent
+        anchors.margins: Theme.spaceMD
+        color: "transparent"
+        border.color: listing.showCursorChrome && cell.picked
+                      ? Theme.accent
+                      : (hover.hovered ? Theme.alpha(Theme.hoverBorder, 0.55)
+                                       : "transparent")
+        border.width: listing.showCursorChrome && cell.picked ? 2 : 1
+        radius: Theme.radius
+    }
 
     Rectangle {
-        anchors.fill: parent
-        visible: listing.showCursorChrome && cell.picked && !cell.isCurrent
+        objectName: "gridSelectionFill"
+        anchors.fill: card
+        anchors.margins: card.border.width
+        visible: listing.showCursorChrome && cell.picked
         color: Theme.selectedFill
-        opacity: 0.45
+        opacity: cell.isCurrent ? (listing.cursorDim ? 0.45 : 1) : 0.45
         radius: Theme.radius
     }
 
     Rectangle {
-        anchors.fill: parent
-        visible: listing.showCursorChrome && cell.isCurrent
-        color: Theme.selectedFill
-        radius: Theme.radius
-    }
-
-    Rectangle {
-        anchors.fill: parent
-        visible: hover.hovered && !cell.isCurrent
-        color: Theme.hoverFill
-        radius: Theme.radius
-    }
-
-    Rectangle {
-        anchors.fill: parent
+        anchors.fill: card
         visible: folderDrop.hot
         color: "transparent"
         border.color: Theme.accent
@@ -127,14 +127,22 @@ Item {
 
     Item {
         id: preview
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.margins: Theme.space(8)
-        height: listing.cellInner
+        anchors.top: card.top
+        anchors.left: card.left
+        anchors.right: card.right
+        anchors.margins: Theme.spaceLG
+        height: Math.min(listing.cellInner, width)
+
+        Rectangle {
+            anchors.fill: parent
+            color: "transparent"
+            border.color: "transparent"
+            radius: Theme.radius
+        }
 
         Image {
             anchors.fill: parent
+            anchors.margins: Theme.spaceXS
             visible: cell.thumbnail.length > 0
             source: cell.thumbnail
             asynchronous: true
@@ -142,10 +150,12 @@ Item {
             fillMode: Image.PreserveAspectFit
             sourceSize.width: listing.cellInner
             sourceSize.height: listing.cellInner
+            opacity: 1
         }
 
         Loader {
             anchors.fill: parent
+            anchors.margins: Theme.spaceLG
             active: cell.thumbnail.length === 0
             sourceComponent: cell.isDir ? folderMarkComp : fileMarkComp
         }
@@ -189,22 +199,46 @@ Item {
             total: cell.total
             percent: cell.percent
         }
+
     }
 
     Text {
+        id: nameLabel
         anchors.top: preview.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.leftMargin: Theme.space(4)
-        anchors.rightMargin: Theme.space(4)
+        anchors.left: card.left
+        anchors.right: card.right
+        anchors.topMargin: Theme.spaceSM
+        anchors.leftMargin: Theme.spaceLG
+        anchors.rightMargin: Theme.spaceLG
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         text: cell.name
-        color: Theme.foreground
+        color: cell.picked ? Theme.brightForeground : Theme.foreground
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody
+        font.bold: cell.picked
         elide: Text.ElideMiddle
+    }
+
+    Text {
+        anchors.top: nameLabel.bottom
+        anchors.left: card.left
+        anchors.right: card.right
+        anchors.bottom: card.bottom
+        anchors.leftMargin: Theme.spaceLG
+        anchors.rightMargin: Theme.spaceLG
+        horizontalAlignment: Text.AlignHCenter
+        verticalAlignment: Text.AlignVCenter
+        text: cell.detail
+        color: Theme.darkForeground
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.fontCaption
+        elide: Text.ElideRight
+        opacity: hover.hovered || cell.picked ? 1 : 0
+
+        Behavior on opacity {
+            NumberAnimation { duration: 90 }
+        }
     }
 
     Item {

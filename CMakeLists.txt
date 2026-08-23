@@ -89,8 +89,10 @@ qt_add_executable(synchro
     src/core/TrashStore.cpp
     src/core/Config.cpp
     src/core/LocationChips.cpp
+    src/core/FileCatalog.cpp
     ${SYNCHRO_THUMB_SOURCES}
     src/core/ThumbImageProvider.cpp
+    src/core/IconImageProvider.cpp
     src/core/SearchService.cpp
     src/core/SearchModel.cpp
     src/core/SelectionModel.cpp
@@ -159,6 +161,11 @@ qt_add_qml_module(synchro_theme
         src/ui/qml/Synchro/Theme/FileMark.qml
         src/ui/qml/Synchro/Theme/EmptyListing.qml
         src/ui/qml/Synchro/Theme/ListingChrome.qml
+        src/ui/qml/Synchro/Theme/AppIcon.qml
+        src/ui/qml/Synchro/Theme/ChromeButton.qml
+        src/ui/qml/Synchro/Theme/SegmentedControl.qml
+        src/ui/qml/Synchro/Theme/Keycap.qml
+        src/ui/qml/Synchro/Theme/ToolTip.qml
     OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml/Synchro/Theme"
 )
 
@@ -664,6 +671,7 @@ if(BUILD_TESTING)
         src/core/TrashStore.cpp
         ${SYNCHRO_THUMB_SOURCES}
         src/core/ThumbImageProvider.cpp
+        src/core/IconImageProvider.cpp
         src/core/SearchService.cpp
         src/core/SearchModel.cpp
         src/core/MimeMap.cpp
@@ -763,6 +771,35 @@ if(BUILD_TESTING)
         target_compile_options(db_preview_test PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME db_preview_test COMMAND db_preview_test)
+
+    qt_add_executable(file_catalog_test
+        tests/file_catalog_test.cpp
+        src/core/FileCatalog.cpp
+        ${SYNCHRO_FS_SOURCES}
+        src/core/DirectoryLister.cpp
+        src/core/DirectoryWatcher.cpp
+        src/core/RecentStore.cpp
+        src/core/TrashStore.cpp
+        ${SYNCHRO_THUMB_SOURCES}
+        src/core/SearchService.cpp
+        src/core/SearchModel.cpp
+        src/core/MimeMap.cpp
+    )
+    target_include_directories(file_catalog_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core
+    )
+    target_link_libraries(file_catalog_test PRIVATE
+        Qt6::Test Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Concurrent
+    )
+    synchro_use_webp(file_catalog_test)
+    synchro_use_sqlite(file_catalog_test)
+    synchro_use_zlib(file_catalog_test)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(file_catalog_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME file_catalog_test COMMAND file_catalog_test)
+    set_tests_properties(file_catalog_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
     qt_add_executable(archive_meta_test
         tests/archive_meta_test.cpp

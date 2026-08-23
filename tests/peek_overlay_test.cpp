@@ -8,6 +8,7 @@
 #include "NavStack.h"
 #include "SearchModel.h"
 #include "SearchService.h"
+#include "SelectionModel.h"
 #include "ThumbImageProvider.h"
 #include "XdgOpen.h"
 
@@ -121,6 +122,7 @@ private slots:
   void searchGridDropsFolderTiles();
   void searchGridVirtualizesGroups();
   void fileGridFollowsProxySort();
+  void contextualPanelRelevanceFollowsSelection();
   void findInFilePastDefaultWindow();
   void textPeekFindCyclesHits();
   void textPeekFindJumpsPastWindow();
@@ -192,6 +194,12 @@ void PeekOverlayTest::spaceTogglesImagePeekAndJSteps() {
   window->show();
   QVERIFY(QTest::qWaitForWindowExposed(window));
 
+  const auto tooltips =
+      visualNamed(window->contentItem(), QStringLiteral("tooltipOverlay"));
+  QVERIFY(!tooltips.isEmpty());
+  for (QQuickItem *tooltip : tooltips)
+    QCOMPARE(tooltip->parentItem(), window->contentItem());
+
   auto *list = window->findChild<QQuickItem *>(QStringLiteral("fileList"));
   QVERIFY(list);
   auto *overlay = window->findChild<QQuickItem *>(QStringLiteral("peekOverlay"));
@@ -203,8 +211,31 @@ void PeekOverlayTest::spaceTogglesImagePeekAndJSteps() {
   QTest::keyClick(window, Qt::Key_Space);
   QVERIFY(QTest::qWaitFor([&] { return hostApi.isOpen(); }, 2000));
   QVERIFY(overlay->isVisible());
+  auto *frame = window->findChild<QQuickItem *>(QStringLiteral("peekPanel"));
+  auto *keyline = window->findChild<QQuickItem *>(
+      QStringLiteral("peekModalKeyline"));
+  auto *blocker = window->findChild<QQuickItem *>(
+      QStringLiteral("peekModalBlocker"));
+  QVERIFY(frame);
+  QVERIFY(keyline);
+  QVERIFY(blocker);
+  QVERIFY(blocker->isVisible());
+  QCOMPARE(keyline->width(), frame->width());
+  QCOMPARE(keyline->height(), frame->height());
+  QVERIFY(frame->x() > 0);
+  QVERIFY(frame->x() + frame->width() < overlay->width());
   QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
                           2000));
+  auto *fileBackground = window->findChild<QQuickItem *>(
+      QStringLiteral("peekFileSurfaceBackground"));
+  QVERIFY(fileBackground);
+  QVERIFY(fileBackground->isVisible());
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return !visualNamed(window->contentItem(),
+                            QStringLiteral("peekIndexSelection")).isEmpty();
+      },
+      1000));
   QVERIFY2(list->hasActiveFocus(),
            "preview must not steal list focus; KeyMachine owns peek keys");
 
@@ -1814,6 +1845,15 @@ void PeekOverlayTest::fileGridCellsFillWidth() {
                     grid->width()) < 1.0;
       },
       1000));
+
+  window->resize(1900, 700);
+  QVERIFY(QTest::qWaitFor([&] { return grid->width() > 1800; }, 1000));
+  const qreal layout = grid->property("layoutWidth").toReal();
+  QVERIFY(layout > 0);
+  QVERIFY(layout < grid->width());
+  QVERIFY(qAbs(grid->property("cellWidth").toReal() *
+                   grid->property("columns").toInt() -
+               layout) < 1.0);
 }
 
 void PeekOverlayTest::searchGridCellsMatchRows() {
@@ -2084,6 +2124,69 @@ void PeekOverlayTest::searchGridVirtualizesGroups() {
                                      "(expected viewport-sized)")
                           .arg(delegates)));
   QVERIFY(visualNamed(grid, QStringLiteral("gridCell")).size() < 30);
+}
+
+void PeekOverlayTest::contextualPanelRelevanceFollowsSelection() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  {
+    QFile db(tmp.filePath(QStringLiteral("sample.duckdb")));
+    QVERIFY(db.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QVERIFY(db.write("DUCK", 4) == 4);
+    QFile note(tmp.filePath(QStringLiteral("notes.txt")));
+    QVERIFY(note.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QVERIFY(note.write("plain", 5) == 5);
+  }
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  MimeMap mimeMap;
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user-handlers")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+  HandlerLoader loader;
+  XdgOpen xdg;
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const int dbRow = findProxy(proxy, QStringLiteral("sample.duckdb"));
+  const int noteRow = findProxy(proxy, QStringLiteral("notes.txt"));
+  QVERIFY(dbRow >= 0);
+  QVERIFY(noteRow >= 0);
+  proxy.setCurrentIndex(dbRow);
+  SelectionModel selection(&proxy, &model);
+
+  HostApi host(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+               nullptr);
+  host.setSelection(&selection);
+  const auto hasPanel = [&](const QString &id) {
+    const QVariantList panels = host.relevantPanels();
+    for (const QVariant &panel : panels) {
+      if (panel.toMap().value(QStringLiteral("id")).toString() == id)
+        return true;
+    }
+    return false;
+  };
+
+  QVERIFY(hasPanel(QStringLiteral("synchro.panel.terminal")));
+  QVERIFY(hasPanel(QStringLiteral("synchro.panel.duckdb")));
+
+  selection.ctrlClick(dbRow);
+  QCOMPARE(selection.selectedCount(), 0);
+  QVERIFY(!hasPanel(QStringLiteral("synchro.panel.duckdb")));
+  QVERIFY(hasPanel(QStringLiteral("synchro.panel.terminal")));
+
+  selection.click(noteRow);
+  QCOMPARE(selection.selectedCount(), 1);
+  QVERIFY(!hasPanel(QStringLiteral("synchro.panel.duckdb")));
+
+  selection.click(dbRow);
+  QVERIFY(hasPanel(QStringLiteral("synchro.panel.duckdb")));
 }
 
 void PeekOverlayTest::fileGridFollowsProxySort() {
@@ -2482,10 +2585,19 @@ void PeekOverlayTest::contentSearchPeekOpensFind() {
   model.setPath(tmp.path());
   QVERIFY(waitListingDone(model));
 
+  model.setPath(QStringLiteral("search://"));
   search.start(QStringLiteral("synchro_deeplink_token"), tmp.path(), false,
                true);
   QVERIFY(QTest::qWaitFor(
       [&] { return !search.listing() && search.count() == 1; }, 5000));
+  QVERIFY(keys.statusMessage().contains(QStringLiteral("content matches")));
+
+  // Search completion/status is contextual. Returning to a normal folder
+  // must not leave the last result count in the browser chrome.
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QVERIFY(keys.statusMessage().isEmpty());
+
   model.setPath(QStringLiteral("search://"));
   QCOMPARE(model.isContentSearch(), true);
   proxy.setCurrentIndex(0);

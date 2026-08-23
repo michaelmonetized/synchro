@@ -13,6 +13,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QStandardPaths>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -78,6 +79,8 @@ private slots:
   void lastPathNeverPersistsSearch();
   void pinChipAfterHomeAndActivate();
   void pinPersistsInConfig();
+  void sqlBookmarkPersistsAndUpdates();
+  void sqlBookmarkIsALocation();
   void colonPinAndShiftPToggle();
   void configUnknownVersionIsReadOnly();
   void currentStatHasSizeMtimePerm();
@@ -465,6 +468,7 @@ void LocationAdaptersTest::configPersistsHiddenAndSort() {
     cfg.setSortRole(QStringLiteral("mtime"));
     cfg.setSortOrder(QStringLiteral("desc"));
     cfg.setView(QStringLiteral("grid"));
+    cfg.setGridSize(176);
     cfg.setLastPath(QStringLiteral("/tmp"));
     QVERIFY(cfg.save());
   }
@@ -473,6 +477,7 @@ void LocationAdaptersTest::configPersistsHiddenAndSort() {
   QCOMPARE(loaded.sortRole(), QStringLiteral("mtime"));
   QCOMPARE(loaded.sortOrder(), QStringLiteral("desc"));
   QCOMPARE(loaded.view(), QStringLiteral("grid"));
+  QCOMPARE(loaded.gridSize(), 176);
   QCOMPARE(loaded.lastPath(), QStringLiteral("/tmp"));
 }
 
@@ -565,6 +570,83 @@ void LocationAdaptersTest::pinPersistsInConfig() {
   Config loaded(path);
   QCOMPARE(loaded.pins().size(), 1);
   QCOMPARE(loaded.pins().first(), Config::normalizePin(pinned));
+}
+
+void LocationAdaptersTest::sqlBookmarkPersistsAndUpdates() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString path = tmp.filePath(QStringLiteral("config.json"));
+  QString id;
+  {
+    Config cfg(path);
+    id = cfg.saveSqlBookmark(
+        QStringLiteral("big webp files"),
+        QStringLiteral("select * from tree where extension = 'webp' and mb > 5"),
+        tmp.path());
+    QVERIFY(!id.isEmpty());
+    QCOMPARE(cfg.saveSqlBookmark(
+                 QStringLiteral("BIG WEBP FILES"),
+                 QStringLiteral("select * from tree where extension = 'webp' and mb > 10"),
+                 tmp.path()),
+             id);
+    QCOMPARE(cfg.sqlBookmarks().size(), 1);
+    QVERIFY(cfg.save());
+  }
+  Config loaded(path);
+  QCOMPARE(loaded.sqlBookmarks().size(), 1);
+  const QVariantMap saved = loaded.sqlBookmarks().first().toMap();
+  QCOMPARE(saved.value(QStringLiteral("id")).toString(), id);
+  QCOMPARE(saved.value(QStringLiteral("name")).toString(),
+           QStringLiteral("BIG WEBP FILES"));
+  QVERIFY(saved.value(QStringLiteral("sql"))
+              .toString()
+              .contains(QStringLiteral("mb > 10")));
+  QVERIFY(loaded.removeSqlBookmark(id));
+  QVERIFY(loaded.sqlBookmarks().isEmpty());
+}
+
+void LocationAdaptersTest::sqlBookmarkIsALocation() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  Config cfg(tmp.filePath(QStringLiteral("config.json")));
+  const QString id = cfg.saveSqlBookmark(
+      QStringLiteral("big webp files"),
+      QStringLiteral("select path from tree where extension = 'webp'"),
+      tmp.path());
+  QVERIFY(!id.isEmpty());
+
+  HandlerRegistry reg;
+  reg.setScanEnv(false);
+  reg.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  reg.setUserDir(QStringLiteral("/tmp/synchro-no-user-handlers"));
+  reg.scan();
+  LocationChips chips;
+  chips.setRegistry(&reg);
+  chips.setConfig(&cfg);
+
+  const QString chipId = LocationChips::sqlBookmarkId(id);
+  QStringList ids;
+  for (const QVariant &value : chips.placeChips())
+    ids.append(value.toMap().value(QStringLiteral("id")).toString());
+  QCOMPARE(ids.indexOf(chipId),
+           ids.indexOf(QStringLiteral("synchro.location.home")) + 1);
+
+  QSignalSpy activated(&chips, &LocationChips::sqlBookmarkActivated);
+  chips.activate(chipId);
+  QCOMPARE(activated.size(), 1);
+  const QList<QVariant> args = activated.takeFirst();
+  QCOMPARE(args.at(0).toString(), QStringLiteral("big webp files"));
+  QVERIFY(args.at(1).toString().contains(QStringLiteral("extension = 'webp'")));
+  QCOMPARE(canon(args.at(2).toString()), canon(tmp.path()));
+  QCOMPARE(args.at(3).toString(), id);
+
+  chips.setChooserMode(true);
+  for (const QVariant &value : chips.chips())
+    QVERIFY(value.toMap().value(QStringLiteral("id")).toString() != chipId);
+  chips.setChooserMode(false);
+  QVERIFY(chips.removeSqlBookmark(chipId));
+  for (const QVariant &value : chips.chips())
+    QVERIFY(value.toMap().value(QStringLiteral("id")).toString() != chipId);
 }
 
 void LocationAdaptersTest::colonPinAndShiftPToggle() {

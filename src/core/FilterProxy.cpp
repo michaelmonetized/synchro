@@ -258,7 +258,8 @@ bool FilterProxy::keepSourceOrder() const {
     return false;
   // Recents is newest-first; search keeps fd order. Do not persist a
   // different global sort when entering those views.
-  return dm->isRecent() || DirectoryModel::isSearchPath(dm->path());
+  return dm->isRecent() || DirectoryModel::isSearchPath(dm->path()) ||
+         DirectoryModel::isSqlPath(dm->path());
 }
 
 void FilterProxy::applySort() {

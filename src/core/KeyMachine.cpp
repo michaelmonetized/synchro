@@ -121,18 +121,24 @@ void KeyMachine::setSearchModel(SearchModel *search) {
   connect(m_search, &SearchModel::errorStringChanged, this, [this] {
     if (!m_search)
       return;
+    if (!m_model || !DirectoryModel::isSearchPath(m_model->path()))
+      return;
     const QString err = m_search->errorString();
     if (!err.isEmpty())
-      setStatusMessage(err);
+      setSearchStatusMessage(err);
   });
   connect(m_search, &SearchModel::listingChanged, this, [this] {
     if (!m_search || m_search->listing())
+      return;
+    // A search worker may finish after the user has already returned to a
+    // real folder. Its summary only belongs to the search:// listing.
+    if (!m_model || !DirectoryModel::isSearchPath(m_model->path()))
       return;
     if (!m_search->errorString().isEmpty())
       return;
     const int n = m_search->count();
     if (n <= 0 && !m_search->query().isEmpty())
-      setStatusMessage(QStringLiteral("no matches"));
+      setSearchStatusMessage(QStringLiteral("no matches"));
     else if (n > 0) {
       const QString root = m_search->root();
       const QString home = QDir::homePath();
@@ -141,7 +147,7 @@ void KeyMachine::setSearchModel(SearchModel *search) {
         where = QStringLiteral("~");
       else if (root.startsWith(home + QLatin1Char('/')))
         where = QLatin1Char('~') + root.mid(home.size());
-      setStatusMessage(
+      setSearchStatusMessage(
           (m_search->contentSearch()
                ? QStringLiteral("%1 content matches in %2")
                : QStringLiteral("%1 matches in %2"))
@@ -300,6 +306,15 @@ void KeyMachine::nudgeCursor(int dx, int dy, bool leap) {
 }
 
 void KeyMachine::setStatusMessage(const QString &text) {
+  m_searchStatus = false;
+  if (m_status == text)
+    return;
+  m_status = text;
+  emit statusMessageChanged();
+}
+
+void KeyMachine::setSearchStatusMessage(const QString &text) {
+  m_searchStatus = !text.isEmpty();
   if (m_status == text)
     return;
   m_status = text;
@@ -381,6 +396,8 @@ void KeyMachine::onPathChanged() {
   // Entering search:// is the field-search destination; keep `?query`.
   if (m_model && DirectoryModel::isSearchPath(m_model->path()))
     return;
+  if (m_searchStatus)
+    setSearchStatusMessage(QString());
   if (m_holdSearchField)
     return;
   m_searchAnchor.clear();
@@ -855,7 +872,7 @@ void KeyMachine::runSearch() {
     cancelSearch();
     if (m_search)
       m_search->clear();
-    setStatusMessage(
+    setSearchStatusMessage(
         QStringLiteral("type %1+ characters for content search")
             .arg(kMinContentQueryChars));
     return;
@@ -865,18 +882,18 @@ void KeyMachine::runSearch() {
     cancelSearch();
     if (m_search)
       m_search->clear();
-    setStatusMessage(
+    setSearchStatusMessage(
         QStringLiteral("type %1+ characters to search")
             .arg(kMinNameQueryChars));
     return;
   }
   const QString loc = m_model ? m_model->path() : QString();
   if (DirectoryModel::isVirtualPath(loc) && !DirectoryModel::isSearchPath(loc)) {
-    setStatusMessage(QStringLiteral("search is not available"));
+    setSearchStatusMessage(QStringLiteral("search is not available"));
     return;
   }
   if (!m_search) {
-    setStatusMessage(QStringLiteral("search is not available"));
+    setSearchStatusMessage(QStringLiteral("search is not available"));
     return;
   }
   if (!DirectoryModel::isSearchPath(loc) &&
@@ -993,6 +1010,26 @@ void KeyMachine::runCommand(const QString &text) {
       finishCommand();
       if (!m_panelId.isEmpty())
         emit panelFocusRequested();
+      return;
+    }
+    if (head == QLatin1String("sql")) {
+      if (m_chooserMode) {
+        setStatusMessage(QStringLiteral("no SQL workbench in picker windows"));
+        return;
+      }
+      const bool forceScan = fsnToks.size() == 2 &&
+                             fsnToks.at(1).compare(
+                                 QLatin1String("scan"),
+                                 Qt::CaseInsensitive) == 0;
+      if (fsnToks.size() > 1 && !forceScan) {
+        setStatusMessage(QStringLiteral(":sql [scan]"));
+        return;
+      }
+      setPanelId(QStringLiteral("synchro.panel.sql"));
+      finishCommand();
+      if (forceScan)
+        emit sqlScanRequested();
+      emit panelFocusRequested();
       return;
     }
     if (head == QLatin1String("fsn") || head == QLatin1String("fsv") ||

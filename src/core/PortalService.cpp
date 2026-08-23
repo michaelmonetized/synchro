@@ -4,6 +4,7 @@
 #include "HandlerLoader.h"
 #include "HandlerRegistry.h"
 #include "HostApi.h"
+#include "IconImageProvider.h"
 #include "MimeMap.h"
 #include "XdgOpen.h"
 
@@ -1092,6 +1093,7 @@ PortalService::PortalService(QObject *parent)
   m_engine->addImportPath(QCoreApplication::applicationDirPath() +
                           QStringLiteral("/qml"));
   ThumbImageProvider::install(m_engine);
+  IconImageProvider::install(m_engine);
   m_registry = new HandlerRegistry;
   m_registry->scan();
   m_loader = new HandlerLoader();

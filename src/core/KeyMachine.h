@@ -168,6 +168,7 @@ signals:
   void fsnTreeViewChanged();
   void panelChanged();
   void panelFocusRequested();
+  void sqlScanRequested();
   void panelFocusedChanged();
   void gridStrideChanged();
   void helpOpenChanged();
@@ -182,6 +183,7 @@ signals:
 
 private:
   void setMode(Mode mode);
+  void setSearchStatusMessage(const QString &text);
   void setHelpOpen(bool on);
   void closePeek();
   void closeAction();
@@ -239,6 +241,7 @@ private:
   QString m_fieldText;
   QString m_seek;
   QString m_status;
+  bool m_searchStatus = false;
   QElapsedTimer m_seekClock;
   int m_jumpEpoch = 0;
   bool m_gridMode = false;

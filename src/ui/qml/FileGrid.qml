@@ -11,28 +11,32 @@ Item {
     property var selection
     property var host: null
     property var fileOps: null
+    property var config: null
     property bool dndEnabled: true
     readonly property int selectionEpoch: selection ? selection.epoch : 0
     readonly property bool dndLive: dndEnabled && fileOps && fileModel &&
                                     !fileModel.isTrash && !fileModel.isRecent &&
-                                    !fileModel.isSearch && !fileModel.isVolumes
+                                    !fileModel.isSearch && !fileModel.isVolumes &&
+                                    !fileModel.isSql
     readonly property bool searching: fileModel && fileModel.isSearch
     readonly property var rows: filterProxy ? filterProxy : fileModel
     readonly property bool showCursorChrome: !keyMachine || keyMachine.listFocused
     // Keys belong to a panel: keep the cursor visible (panel apps target
     // the selected file) but dimmed so focus stays legible.
     readonly property bool cursorDim: keyMachine && keyMachine.panelFocused
-    readonly property int thumbSizePx: 256
-    readonly property int preferredInner: 96
-    readonly property int cellPad: Theme.space(16)
+    readonly property int thumbSizePx: preferredInner >= 176 ? 512 : 256
+    readonly property int preferredInner: config ? config.gridSize : Theme.space(132)
+    readonly property int cellPad: Theme.spaceXXL * 2
     readonly property int preferredCell: preferredInner + cellPad
+    readonly property real layoutWidth: Math.min(width, Theme.space(1600))
     readonly property int columns: Math.max(
-                                       1, Math.floor(width / Math.max(1, preferredCell)))
+                                       1, Math.floor(layoutWidth / Math.max(1, preferredCell)))
     readonly property int cellInner: Math.max(
                                          Theme.space(48),
                                          Math.round(cellWidth - cellPad))
-    readonly property real cellWidth: width > 0 ? width / columns : preferredCell
-    readonly property real cellHeight: cellInner + Theme.fontBody + Theme.space(20)
+    readonly property real cellWidth: layoutWidth > 0 ? layoutWidth / columns
+                                                      : preferredCell
+    readonly property real cellHeight: cellInner + Theme.space(58)
     readonly property var groupModel: visible && searching && fileModel
                                       ? fileModel.folderGroupModel : null
     readonly property int sectionH: Math.max(Theme.fontBody + Theme.space(10), 24)
@@ -43,6 +47,19 @@ Item {
     focus: true
     activeFocusOnTab: true
     clip: true
+
+    WheelHandler {
+        acceptedModifiers: Qt.ControlModifier
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onWheel: function(event) {
+            if (!grid.config) return
+            var delta = event.angleDelta.y !== 0 ? event.angleDelta.y
+                                                 : event.pixelDelta.y
+            if (delta === 0) return
+            grid.config.setGridSize(grid.config.gridSize + (delta > 0 ? 12 : -12))
+            event.accepted = true
+        }
+    }
 
     onColumnsChanged: if (visible && keyMachine)
         keyMachine.gridStride = columns
@@ -170,7 +187,7 @@ Item {
     Rectangle {
         anchors.fill: parent
         z: -2
-        color: Theme.opaqueBackground
+        color: "transparent"
     }
 
     FileDragGhost {
@@ -193,7 +210,10 @@ Item {
         id: tilesComp
         GridView {
             objectName: "fileGridTiles"
-            anchors.fill: parent
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: grid.layoutWidth
             model: grid.rows
             clip: true
             reuseItems: true
@@ -207,12 +227,9 @@ Item {
             cacheBuffer: cellHeight * 4
             focus: false
 
-            highlight: Rectangle {
-                color: Theme.selectedFill
-                radius: Theme.radius
-                visible: grid.showCursorChrome
-                opacity: grid.cursorDim ? 0.45 : 1
-            }
+            // Selection chrome belongs to the delegate. A GridView highlight
+            // behind it made every tile read as a persistent card.
+            highlight: null
 
             delegate: FileGridCell {
                 required property int index
@@ -303,7 +320,8 @@ Item {
                     Item {
                         id: tilesHost
                         y: grid.sectionH
-                        width: parent.width
+                        width: grid.layoutWidth
+                        x: (parent.width - width) / 2
                         height: group.tileRows * grid.cellHeight
                         readonly property int visFirst: {
                             var cols = Math.max(1, grid.columns)

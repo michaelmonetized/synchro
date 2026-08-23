@@ -137,6 +137,7 @@ private slots:
   void pathSegmentsTildeAndRoot();
   void pathSegmentsWhenHomeIsSymlink();
   void samePathSetPathIsNoop();
+  void sqlResultProjectsFilesAndGroups();
   void staleWatchCreateDoesNotClobberNewPath();
   void staleDeleteSelfDoesNotKickNewPath();
   void deleteDuringListingIsNotResurrected();
@@ -1026,6 +1027,95 @@ void DirectoryModelTest::samePathSetPathIsNoop() {
   QCOMPARE(pathSpy.count(), 0);
   QCOMPARE(model.rowCount(), static_cast<int>(before));
   QVERIFY(!model.listing());
+}
+
+void DirectoryModelTest::sqlResultProjectsFilesAndGroups() {
+  DirectoryModel model;
+  model.setPath(m_scratch.path());
+  QVERIFY(waitListingDone(model));
+  NavStack nav(&model);
+  const QString filePath = m_scratch.filePath(QStringLiteral("scratch.txt"));
+
+  QVariantMap fileRow;
+  fileRow.insert(QStringLiteral("name"), QStringLiteral("scratch.txt"));
+  fileRow.insert(QStringLiteral("path"), filePath);
+  fileRow.insert(QStringLiteral("is_dir"), false);
+  fileRow.insert(QStringLiteral("size"), 1);
+  QVariantMap groupRow;
+  groupRow.insert(QStringLiteral("extension"), QStringLiteral("txt"));
+  groupRow.insert(QStringLiteral("files"), 12);
+  groupRow.insert(QStringLiteral("_synchro_label"), QStringLiteral("txt"));
+  groupRow.insert(QStringLiteral("_synchro_drill_sql"),
+                  QStringLiteral("select * from tree where extension='txt'"));
+  groupRow.insert(QStringLiteral("_synchro_preview_paths"),
+                  QVariantList{filePath});
+  QVariantMap emptyGroupRow;
+  emptyGroupRow.insert(QStringLiteral("extension"), QStringLiteral("gone"));
+  emptyGroupRow.insert(QStringLiteral("files"), 3);
+  emptyGroupRow.insert(QStringLiteral("_synchro_label"),
+                       QStringLiteral("gone"));
+  emptyGroupRow.insert(
+      QStringLiteral("_synchro_drill_sql"),
+      QStringLiteral("select * from tree where extension='gone'"));
+  emptyGroupRow.insert(
+      QStringLiteral("_synchro_preview_paths"),
+      QVariantList{m_scratch.filePath(QStringLiteral("missing.gone"))});
+  QVariantMap result;
+  result.insert(QStringLiteral("cwd"), m_scratch.path());
+  result.insert(QStringLiteral("sourceRelation"), QStringLiteral("tree"));
+  result.insert(QStringLiteral("columns"),
+                QVariantList{QVariantMap{{QStringLiteral("name"),
+                                          QStringLiteral("extension")}},
+                             QVariantMap{{QStringLiteral("name"),
+                                          QStringLiteral("files")}}});
+  result.insert(QStringLiteral("rows"),
+                QVariantList{fileRow, groupRow, emptyGroupRow});
+
+  model.showSqlResult(result, QStringLiteral("types"));
+  QVERIFY(model.isSql());
+  QCOMPARE(model.sqlContext(), m_scratch.path());
+  QCOMPARE(model.sqlLabel(), QStringLiteral("types"));
+  QCOMPARE(model.rowCount(), 3);
+  QCOMPARE(roleAt(model, 0, DirectoryModel::PathRole).toString(), filePath);
+  QCOMPARE(roleAt(model, 1, DirectoryModel::NameRole).toString(),
+           QStringLiteral("txt"));
+  QVERIFY(roleAt(model, 1, DirectoryModel::IsDirRole).toBool());
+  QCOMPARE(roleAt(model, 1, DirectoryModel::TypeLabelRole).toString(),
+           QStringLiteral("SQL group"));
+  QVERIFY(roleAt(model, 1, DirectoryModel::DetailRole)
+              .toString()
+              .contains(QStringLiteral("files 12")));
+  model.requestVisibleThumbs(1, 2, 128);
+  QTRY_VERIFY_WITH_TIMEOUT(
+      !roleAt(model, 1, DirectoryModel::ThumbnailRole).toString().isEmpty(),
+      4000);
+  QTRY_VERIFY_WITH_TIMEOUT(
+      !roleAt(model, 2, DirectoryModel::ThumbnailRole).toString().isEmpty(),
+      4000);
+
+  QVERIFY(model.selectSqlRow(0));
+  QCOMPARE(model.currentIndex(), 0);
+  QCOMPARE(model.currentSqlRow(), 0);
+  QSignalSpy drillSpy(&model, &DirectoryModel::sqlDrillRequested);
+  model.setCurrentIndex(1);
+  QCOMPARE(model.currentSqlRow(), 1);
+  model.activateCurrent();
+  QCOMPARE(drillSpy.size(), 1);
+  QCOMPARE(drillSpy.first().at(0).toString(),
+           QStringLiteral("select * from tree where extension='txt'"));
+  QCOMPARE(drillSpy.first().at(1).toString(), QStringLiteral("txt"));
+
+  QSignalSpy sqlBackSpy(&model, &DirectoryModel::sqlBackRequested);
+  model.setSqlBackAvailable(true);
+  nav.goBack();
+  QCOMPARE(sqlBackSpy.size(), 1);
+  QVERIFY(model.isSql());
+  QVERIFY(nav.canGoBack());
+  model.setSqlBackAvailable(false);
+  nav.goBack();
+  QCOMPARE(model.path(), m_scratch.path());
+  QVERIFY(!model.isSql());
+  QVERIFY(!nav.canGoForward());
 }
 
 void DirectoryModelTest::visibleThumbsFillPngAndFolderMosaic() {

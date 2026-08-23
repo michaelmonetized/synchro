@@ -54,6 +54,10 @@ void NavStack::onAboutToNavigate() {
     return;
   if (m_model->path().isEmpty())
     return;
+  // SQL results are a projection of the previous real folder, not a durable
+  // location that setPath() can reconstruct later.
+  if (DirectoryModel::isSqlPath(m_model->path()))
+    return;
   m_back.append(snapshot());
   m_forward.clear();
 }
@@ -74,10 +78,20 @@ void NavStack::navigate(const QString &path) {
 }
 
 void NavStack::goBack() {
-  if (!m_model || m_back.isEmpty())
+  if (!m_model)
+    return;
+  if (DirectoryModel::isSqlPath(m_model->path()) &&
+      m_model->requestSqlBack())
+    return;
+  if (m_back.isEmpty())
     return;
   const Frame dest = m_back.takeLast();
-  m_forward.append(snapshot());
+  // A SQL projection cannot be reconstructed by setPath(), so leaving it is
+  // intentionally a one-way return to its backing filesystem location.
+  if (DirectoryModel::isSqlPath(m_model->path()))
+    m_forward.clear();
+  else
+    m_forward.append(snapshot());
   restore(dest);
 }
 
@@ -94,6 +108,8 @@ void NavStack::goUp() {
     return;
   const QString path = m_model->path();
   if (path.isEmpty())
+    return;
+  if (DirectoryModel::isSqlPath(path) && m_model->requestSqlBack())
     return;
   if (DirectoryModel::isVirtualPath(path)) {
     const QString dest = m_model->returnPath();
@@ -139,6 +155,12 @@ QVariantList NavStack::segmentsFor(const QString &path) const {
 
   if (DirectoryModel::isSearchPath(path)) {
     add(QStringLiteral("search"), path);
+    return segs;
+  }
+  if (DirectoryModel::isSqlPath(path)) {
+    add(QStringLiteral("query"), path);
+    if (m_model && !m_model->sqlLabel().isEmpty())
+      add(m_model->sqlLabel(), path);
     return segs;
   }
   if (path.startsWith(QLatin1String("trash:"))) {

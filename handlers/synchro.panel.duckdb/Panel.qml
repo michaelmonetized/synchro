@@ -2,14 +2,15 @@ import QtQuick
 import Synchro.Handler 1.0
 import Synchro.Theme 1.0
 
-// Data-browser dock panel. Sticky selection-follow: landing the cursor on a
-// DuckDB / Parquet / CSV file retargets the workbench; anything else leaves
-// it pointed where it was, so browsing never resets your place in a table.
+// Data-browser dock panel. Its target exists only while one compatible file
+// is explicitly selected; Main closes the contextual surface when relevance
+// disappears, while this reset prevents a kept-alive instance going stale.
 Item {
     id: panel
 
     property var host: null
     property var fileModel: null
+    property var selectionModel: null
     property var navStack: null
 
     property string targetPath: ""
@@ -29,13 +30,22 @@ Item {
     }
 
     function maybeRetarget() {
-        if (!panel.fileModel)
+        if (!panel.fileModel || (panel.selectionModel &&
+                                 panel.selectionModel.selectedCount !== 1)) {
+            panel.targetPath = ""
             return
+        }
         var st = panel.fileModel.currentStat
-        if (!st || !st.path)
+        if (!st || !st.path) {
+            panel.targetPath = ""
             return
+        }
         var e = panel.engineFor(st.path)
-        if (!e || st.path === panel.targetPath)
+        if (!e) {
+            panel.targetPath = ""
+            return
+        }
+        if (st.path === panel.targetPath)
             return
         panel.engine = e
         panel.targetPath = st.path
@@ -46,7 +56,13 @@ Item {
         function onCurrentStatChanged() { panel.maybeRetarget() }
     }
 
+    Connections {
+        target: panel.selectionModel
+        function onSelectionChanged() { panel.maybeRetarget() }
+    }
+
     onFileModelChanged: maybeRetarget()
+    onSelectionModelChanged: maybeRetarget()
     Component.onCompleted: maybeRetarget()
 
     Rectangle {
