@@ -10,6 +10,7 @@ Item {
     required property bool isDir
     required property bool isSymlink
     required property string thumbnail
+    required property bool thumbnailPending
     required property string path
     required property string detail
     required property var used
@@ -35,6 +36,7 @@ Item {
         isDir = !!(rec && rec.isDir)
         isSymlink = !!(rec && rec.isSymlink)
         thumbnail = rec && rec.thumbnail ? rec.thumbnail : ""
+        thumbnailPending = !!(rec && rec.thumbnailPending)
         path = rec && rec.path ? rec.path : ""
         detail = rec && rec.detail ? rec.detail : ""
         used = rec && rec.used !== undefined ? rec.used : -1
@@ -141,6 +143,7 @@ Item {
         }
 
         Image {
+            id: thumbImage
             anchors.fill: parent
             anchors.margins: Theme.spaceXS
             visible: cell.thumbnail.length > 0
@@ -157,7 +160,15 @@ Item {
             anchors.fill: parent
             anchors.margins: Theme.spaceLG
             active: cell.thumbnail.length === 0
+            opacity: cell.thumbnailPending ? 0.2 : 1
             sourceComponent: cell.isDir ? folderMarkComp : fileMarkComp
+        }
+
+        ThumbLoadingGlyph {
+            anchors.fill: parent
+            running: cell.thumbnailPending ||
+                     (cell.thumbnail.length > 0 &&
+                      thumbImage.status === Image.Loading)
         }
 
         Component {

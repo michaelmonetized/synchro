@@ -3,6 +3,7 @@
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QMetaObject>
 #include <QQuickItem>
 
 #include <cstdio>
@@ -21,9 +22,15 @@ QQmlComponent *HandlerLoader::componentFor(QQmlEngine *engine,
                                            const QString &kind,
                                            const QUrl &url) {
   const QString key = rec.manifest.id + QLatin1Char('#') + kind;
-  if (rec.manifest.keepLoaded) {
-    if (auto *warm = m_warm.value(key))
+  if (auto *warm = m_warm.value(key)) {
+    if (warm->isReady())
       return warm;
+    // Modal Peek is allowed to win a race with ambient preparation. Give it
+    // an immediate component without disturbing the warming cache entry.
+    if (warm->isLoading())
+      return new QQmlComponent(engine, url, engine);
+    m_warm.remove(key);
+    warm->deleteLater();
   }
   auto *comp = new QQmlComponent(engine, url, engine);
   if (rec.manifest.keepLoaded)
@@ -31,11 +38,55 @@ QQmlComponent *HandlerLoader::componentFor(QQmlEngine *engine,
   return comp;
 }
 
+bool HandlerLoader::isReady(const HandlerRegistry::Record &rec,
+                            const QString &kind) const {
+  const QString key = rec.manifest.id + QLatin1Char('#') + kind;
+  const QQmlComponent *component = m_warm.value(key);
+  return component && component->isReady();
+}
+
+void HandlerLoader::prepareAsync(QQmlEngine *engine,
+                                 const HandlerRegistry::Record &rec,
+                                 const QString &kind, QObject *context,
+                                 std::function<void(bool)> finished) {
+  if (!engine || !context) {
+    finished(false);
+    return;
+  }
+  const QString key = rec.manifest.id + QLatin1Char('#') + kind;
+  QQmlComponent *component = m_warm.value(key);
+  if (!component) {
+    const QUrl url = entryPointUrl(rec, kind);
+    if (!url.isValid() || url.scheme() != QLatin1String("file")) {
+      finished(false);
+      return;
+    }
+    component = new QQmlComponent(engine, url, QQmlComponent::Asynchronous,
+                                  engine);
+    m_warm.insert(key, component);
+  }
+  if (component->isReady() || component->isError()) {
+    const bool ready = component->isReady();
+    QMetaObject::invokeMethod(
+        context, [finished = std::move(finished), ready] { finished(ready); },
+        Qt::QueuedConnection);
+    return;
+  }
+  QObject::connect(
+      component, &QQmlComponent::statusChanged, context,
+      [component, finished = std::move(finished)](QQmlComponent::Status status) {
+        if (status == QQmlComponent::Ready || status == QQmlComponent::Error)
+          finished(status == QQmlComponent::Ready);
+      },
+      Qt::SingleShotConnection);
+}
+
 QQuickItem *HandlerLoader::create(QQmlEngine *engine,
                                   const HandlerRegistry::Record &rec,
                                   const QString &kind, QObject *host,
                                   const QUrl &file,
-                                  const QVariantList &selection) {
+                                  const QVariantList &selection,
+                                  const QVariantMap &initialProperties) {
   m_error.clear();
   if (!engine) {
     m_error = QStringLiteral("no engine");
@@ -51,12 +102,14 @@ QQuickItem *HandlerLoader::create(QQmlEngine *engine,
     m_error = QStringLiteral("failed to create component");
     return nullptr;
   }
+  const QString cacheKey = rec.manifest.id + QLatin1Char('#') + kind;
+  const bool cached = m_warm.value(cacheKey) == comp;
   if (comp->isError() || !comp->isReady()) {
     QStringList lines;
     for (const QQmlError &e : comp->errors())
       lines.append(e.toString());
     m_error = lines.join(QLatin1Char('\n'));
-    if (!rec.manifest.keepLoaded)
+    if (!cached)
       delete comp;
     return nullptr;
   }
@@ -66,7 +119,7 @@ QQuickItem *HandlerLoader::create(QQmlEngine *engine,
   if (!item) {
     delete obj;
     m_error = QStringLiteral("entry point did not create an Item");
-    if (!rec.manifest.keepLoaded)
+    if (!cached)
       delete comp;
     return nullptr;
   }
@@ -74,8 +127,11 @@ QQuickItem *HandlerLoader::create(QQmlEngine *engine,
   item->setProperty("host", QVariant::fromValue(host));
   item->setProperty("selection", selection);
   item->setProperty("manifest", rec.manifest.toVariantMap());
+  for (auto it = initialProperties.cbegin();
+       it != initialProperties.cend(); ++it)
+    item->setProperty(it.key().toUtf8().constData(), it.value());
   comp->completeCreate();
-  if (!rec.manifest.keepLoaded)
+  if (!cached)
     delete comp;
   return item;
 }

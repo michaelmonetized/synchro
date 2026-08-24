@@ -51,12 +51,19 @@ bool argvHasFlag(int argc, char **argv, const char *flag) {
 } // namespace
 
 int main(int argc, char *argv[]) {
-  if (argc >= 2 && std::strcmp(argv[1], "handler") == 0) {
+  if (argc >= 2 &&
+      (std::strcmp(argv[1], "handler") == 0 ||
+       std::strcmp(argv[1], "query") == 0 ||
+       std::strcmp(argv[1], "mcp") == 0)) {
     QCoreApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("synchro"));
     app.setApplicationVersion(QStringLiteral(SYNCHRO_VERSION));
     app.setOrganizationName(QStringLiteral("omarchy"));
     app.setOrganizationDomain(QStringLiteral("omarchy.org"));
+    if (std::strcmp(argv[1], "query") == 0)
+      return runQueryCli(argc, argv);
+    if (std::strcmp(argv[1], "mcp") == 0)
+      return runMcpCli(argc, argv);
     return runHandlerCli(argc, argv);
   }
 
@@ -126,6 +133,21 @@ int main(int argc, char *argv[]) {
       QStringLiteral("Suggested file name for --chooser --save."),
       QStringLiteral("name"));
   parser.addOption(currentNameOption);
+  const QCommandLineOption sqlQueryOption(
+      QStringLiteral("sql-query"),
+      QStringLiteral("Open a read-only SQL result in Synchro."),
+      QStringLiteral("query"));
+  parser.addOption(sqlQueryOption);
+  const QCommandLineOption sqlCwdOption(
+      QStringLiteral("sql-cwd"),
+      QStringLiteral("Folder bound to here/tree for --sql-query."),
+      QStringLiteral("path"));
+  parser.addOption(sqlCwdOption);
+  const QCommandLineOption sqlLabelOption(
+      QStringLiteral("sql-label"),
+      QStringLiteral("Result label for --sql-query."),
+      QStringLiteral("label"));
+  parser.addOption(sqlLabelOption);
   parser.addPositionalArgument(QStringLiteral("path"),
                                QStringLiteral("Directory to open."),
                                QStringLiteral("[path]"));
@@ -186,7 +208,9 @@ int main(int argc, char *argv[]) {
   Config config;
   QString startPath = QDir::homePath();
   const QStringList positional = parser.positionalArguments();
-  if (!positional.isEmpty())
+  if (parser.isSet(sqlCwdOption))
+    startPath = parser.value(sqlCwdOption);
+  else if (!positional.isEmpty())
     startPath = positional.first();
   else if (!config.lastPath().isEmpty() &&
            !config.lastPath().startsWith(QLatin1String("search:")))
@@ -275,6 +299,7 @@ int main(int argc, char *argv[]) {
                   &handlerLoader, &xdgOpen, &mimeMap, &engine);
   hostApi.setSelection(&selectionModel);
   hostApi.setFileOps(&fileOpEngine);
+  hostApi.setFileCatalog(&fileCatalog);
   keyMachine.setPeekHost(&hostApi);
   hostApi.setGridMode(keyMachine.gridMode());
   QObject::connect(&keyMachine, &KeyMachine::gridModeChanged, &hostApi, [&] {
@@ -393,6 +418,27 @@ int main(int argc, char *argv[]) {
   engine.loadFromModule("Synchro", "Main");
   if (engine.rootObjects().isEmpty())
     return -1;
+
+  if (parser.isSet(sqlQueryOption)) {
+    QObject *root = engine.rootObjects().constFirst();
+    const QVariant label =
+        parser.value(sqlLabelOption).isEmpty()
+            ? QVariant(QStringLiteral("agent result"))
+            : QVariant(parser.value(sqlLabelOption));
+    const QVariant sql = parser.value(sqlQueryOption);
+    const QVariant cwd = parser.isSet(sqlCwdOption)
+                             ? QVariant(parser.value(sqlCwdOption))
+                             : QVariant(startPath);
+    QTimer::singleShot(0, root, [root, label, sql, cwd] {
+      if (!QMetaObject::invokeMethod(
+              root, "openSqlBookmark", Q_ARG(QVariant, label),
+              Q_ARG(QVariant, sql), Q_ARG(QVariant, cwd),
+              Q_ARG(QVariant, QVariant(QStringLiteral("agent"))))) {
+        std::fprintf(stderr,
+                     "synchro: could not open agent SQL result surface\n");
+      }
+    });
+  }
 
   return app.exec();
 }

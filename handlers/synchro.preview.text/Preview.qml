@@ -31,6 +31,7 @@ HandlerSurface {
         anchors.fill: parent
         host: root.host
         file: root.file
+        asyncLoad: root.inlinePreview
     }
 
     Keys.onEscapePressed: if (!root.closeFind() && root.host)

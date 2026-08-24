@@ -76,6 +76,7 @@ private slots:
   void sortByNameAndSize();
   void proxyRowMapFollowsSort();
   void configPersistsHiddenAndSort();
+  void configPersistsPanelLook();
   void lastPathNeverPersistsSearch();
   void pinChipAfterHomeAndActivate();
   void pinPersistsInConfig();
@@ -479,6 +480,25 @@ void LocationAdaptersTest::configPersistsHiddenAndSort() {
   QCOMPARE(loaded.view(), QStringLiteral("grid"));
   QCOMPARE(loaded.gridSize(), 176);
   QCOMPARE(loaded.lastPath(), QStringLiteral("/tmp"));
+}
+
+void LocationAdaptersTest::configPersistsPanelLook() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString path = tmp.filePath(QStringLiteral("config.json"));
+  {
+    Config cfg(path);
+    QVERIFY(cfg.panelLookOpen());
+    QCOMPARE(cfg.panelLookRatio(), 0.34);
+    cfg.setPanelLookOpen(false);
+    cfg.setPanelLookRatio(0.43);
+    QVERIFY(cfg.save());
+  }
+  Config loaded(path);
+  QVERIFY(!loaded.panelLookOpen());
+  QCOMPARE(loaded.panelLookRatio(), 0.43);
+  loaded.setPanelLookRatio(0.9);
+  QCOMPARE(loaded.panelLookRatio(), 0.5);
 }
 
 void LocationAdaptersTest::lastPathNeverPersistsSearch() {

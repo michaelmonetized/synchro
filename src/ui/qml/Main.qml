@@ -364,6 +364,31 @@ Window {
                                          : ""
         property var panelItems: ({})
         readonly property int headerH: Theme.controlHeight + Theme.spaceSM
+        readonly property bool lookSupported:
+            root.panelId.length && typeof hostApi !== "undefined" && hostApi
+            ? hostApi.panelSupportsCompanion(root.panelId, "preview") : false
+        readonly property int contentLeft: root.panelRight ? 6 : 0
+        readonly property int contentRight: width - (root.panelLeft ? 6 : 0)
+        readonly property int contentTop: headerH + (root.panelBottom ? 6 : 0)
+        readonly property int contentBottom: height - (root.panelTopSide ? 6 : 0)
+        readonly property int contentWidth: Math.max(0, contentRight - contentLeft)
+        readonly property int contentHeight: Math.max(0, contentBottom - contentTop)
+        readonly property bool lookHasRoom: root.panelHorizontal
+                                                   ? contentWidth >= 720 &&
+                                                     contentHeight >= 145
+                                                   : contentWidth >= 240 &&
+                                                     contentHeight >= 360
+        readonly property bool lookVisible: lookSupported && lookHasRoom &&
+                                            root.config &&
+                                            root.config.panelLookOpen &&
+                                            !(root.keys && root.keys.peekOpen)
+        readonly property real lookRatio: root.config
+                                          ? root.config.panelLookRatio : 0.34
+        readonly property int lookSpan: lookVisible
+                                        ? Math.round((root.panelHorizontal
+                                                      ? contentWidth
+                                                      : contentHeight) *
+                                                     lookRatio) : 0
         readonly property string targetLabel: {
             var s = root.files && root.files.currentStat
                     ? root.files.currentStat : null
@@ -488,6 +513,22 @@ Window {
                 }
 
                 ChromeButton {
+                    visible: panelDock.lookSupported
+                    height: Theme.space(24)
+                    compact: false
+                    label: "LOOK"
+                    checked: root.config && root.config.panelLookOpen &&
+                             panelDock.lookHasRoom
+                    toolTip: !panelDock.lookHasRoom
+                             ? "Enlarge the panel to show Look"
+                             : (checked ? "Hide ambient preview"
+                                        : "Show ambient preview")
+                    onTriggered: if (root.config)
+                                     root.config.panelLookOpen =
+                                         !root.config.panelLookOpen
+                }
+
+                ChromeButton {
                     height: Theme.space(24)
                     compact: true
                     iconName: "view-restore-symbolic"
@@ -521,9 +562,15 @@ Window {
                 required property string modelData
                 anchors.fill: parent
                 anchors.topMargin: panelDock.headerH + (root.panelBottom ? 6 : 0)
-                anchors.bottomMargin: root.panelTopSide ? 6 : 0
+                anchors.bottomMargin: (root.panelTopSide ? 6 : 0) +
+                                      (panelDock.lookVisible &&
+                                       !root.panelHorizontal
+                                       ? panelDock.lookSpan + 6 : 0)
                 anchors.leftMargin: root.panelRight ? 6 : 0
-                anchors.rightMargin: root.panelLeft ? 6 : 0
+                anchors.rightMargin: (root.panelLeft ? 6 : 0) +
+                                     (panelDock.lookVisible &&
+                                      root.panelHorizontal
+                                      ? panelDock.lookSpan + 6 : 0)
                 source: typeof hostApi !== "undefined" && hostApi
                         ? hostApi.panelSource(modelData) : ""
                 visible: modelData === root.panelId
@@ -548,6 +595,58 @@ Window {
                     panelDock.panelItems[modelData] = item
                     Qt.callLater(root.deliverPendingSqlAction)
                 }
+            }
+        }
+
+        PanelLook {
+            id: panelLook
+            visible: panelDock.lookVisible
+            z: 2
+            x: root.panelHorizontal
+               ? panelDock.contentRight - panelDock.lookSpan
+               : panelDock.contentLeft
+            y: root.panelHorizontal
+               ? panelDock.contentTop
+               : panelDock.contentBottom - panelDock.lookSpan
+            width: root.panelHorizontal ? panelDock.lookSpan
+                                        : panelDock.contentWidth
+            height: root.panelHorizontal ? panelDock.contentHeight
+                                         : panelDock.lookSpan
+            host: typeof hostApi !== "undefined" ? hostApi : null
+            fileModel: root.files
+            selectionModel: root.selection
+            horizontalSplit: root.panelHorizontal
+            onCollapseRequested: if (root.config)
+                                     root.config.panelLookOpen = false
+        }
+
+        MouseArea {
+            id: lookResize
+            visible: panelDock.lookVisible
+            z: 4
+            x: root.panelHorizontal ? panelLook.x - 3 : panelDock.contentLeft
+            y: root.panelHorizontal ? panelDock.contentTop : panelLook.y - 3
+            width: root.panelHorizontal ? 6 : panelDock.contentWidth
+            height: root.panelHorizontal ? panelDock.contentHeight : 6
+            cursorShape: root.panelHorizontal ? Qt.SplitHCursor
+                                              : Qt.SplitVCursor
+            preventStealing: true
+            property real startRatio: 0
+            property real startCoord: 0
+            onPressed: function(mouse) {
+                startRatio = root.config ? root.config.panelLookRatio : 0.34
+                var p = mapToItem(null, mouse.x, mouse.y)
+                startCoord = root.panelHorizontal ? p.x : p.y
+            }
+            onPositionChanged: function(mouse) {
+                if (!pressed || !root.config)
+                    return
+                var p = mapToItem(null, mouse.x, mouse.y)
+                var now = root.panelHorizontal ? p.x : p.y
+                var total = root.panelHorizontal ? panelDock.contentWidth
+                                                 : panelDock.contentHeight
+                root.config.panelLookRatio = startRatio -
+                                             (now - startCoord) / total
             }
         }
 

@@ -32,6 +32,10 @@ class Config : public QObject {
                  panelChanged)
   Q_PROPERTY(QString panelApp READ panelApp WRITE setPanelApp NOTIFY
                  panelChanged)
+  Q_PROPERTY(bool panelLookOpen READ panelLookOpen WRITE setPanelLookOpen NOTIFY
+                 panelChanged)
+  Q_PROPERTY(double panelLookRatio READ panelLookRatio WRITE setPanelLookRatio
+                 NOTIFY panelChanged)
   Q_PROPERTY(int gridSize READ gridSize WRITE setGridSize NOTIFY gridSizeChanged)
 
 public:
@@ -57,6 +61,8 @@ public:
   int panelSize() const { return m_panelSize; }
   bool panelOpen() const { return m_panelOpen; }
   QString panelApp() const { return m_panelApp; }
+  bool panelLookOpen() const { return m_panelLookOpen; }
+  double panelLookRatio() const { return m_panelLookRatio; }
   int gridSize() const { return m_gridSize; }
 
   Q_INVOKABLE void setShowHidden(bool show);
@@ -74,6 +80,8 @@ public:
   Q_INVOKABLE void setPanelSize(int px);
   Q_INVOKABLE void setPanelOpen(bool open);
   Q_INVOKABLE void setPanelApp(const QString &id);
+  Q_INVOKABLE void setPanelLookOpen(bool open);
+  Q_INVOKABLE void setPanelLookRatio(double ratio);
   Q_INVOKABLE void setGridSize(int px);
   static QString normalizePin(const QString &path);
 
@@ -109,5 +117,7 @@ private:
   int m_panelSize = 260;
   bool m_panelOpen = false;
   QString m_panelApp = QStringLiteral("synchro.panel.terminal");
+  bool m_panelLookOpen = true;
+  double m_panelLookRatio = 0.34;
   int m_gridSize = 132;
 };

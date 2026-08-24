@@ -29,6 +29,62 @@ QByteArray encodePng(const QImage &img) {
   return out;
 }
 
+// QML's async provider owns a small worker pool. Giving each worker a
+// read-only connection lets cached BLOB reads proceed together; the primary
+// connection remains serialized for writes, eviction, and invalidation.
+QByteArray readPngConcurrent(const QString &dbPath, const QString &key) {
+  struct Reader {
+    sqlite3 *db = nullptr;
+    QString path;
+
+    ~Reader() {
+      if (db)
+        sqlite3_close(db);
+    }
+
+    bool open(const QString &nextPath) {
+      if (db && path == nextPath)
+        return true;
+      if (db) {
+        sqlite3_close(db);
+        db = nullptr;
+      }
+      path.clear();
+      sqlite3 *next = nullptr;
+      const int rc = sqlite3_open_v2(
+          QFile::encodeName(nextPath).constData(), &next,
+          SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nullptr);
+      if (rc != SQLITE_OK || !next) {
+        if (next)
+          sqlite3_close(next);
+        return false;
+      }
+      db = next;
+      path = nextPath;
+      sqlite3_busy_timeout(db, 2500);
+      return true;
+    }
+  };
+  thread_local Reader reader;
+  if (dbPath.isEmpty() || key.isEmpty() || !reader.open(dbPath))
+    return {};
+  sqlite3_stmt *st = nullptr;
+  if (sqlite3_prepare_v2(reader.db, "SELECT png FROM thumbs WHERE key=?;", -1,
+                         &st, nullptr) != SQLITE_OK)
+    return {};
+  const QByteArray k = key.toUtf8();
+  sqlite3_bind_text(st, 1, k.constData(), k.size(), SQLITE_TRANSIENT);
+  QByteArray out;
+  if (sqlite3_step(st) == SQLITE_ROW) {
+    const void *blob = sqlite3_column_blob(st, 0);
+    const int n = sqlite3_column_bytes(st, 0);
+    if (blob && n > 0)
+      out = QByteArray(static_cast<const char *>(blob), n);
+  }
+  sqlite3_finalize(st);
+  return out;
+}
+
 } // namespace
 
 ThumbCache &ThumbCache::instance() {
@@ -49,7 +105,18 @@ QString ThumbCache::dbPath() {
   return homeDir() + QStringLiteral("/thumbs.sqlite");
 }
 
+int ThumbCache::canonicalSize(int sizePx) {
+  if (sizePx <= 128)
+    return 128;
+  if (sizePx <= 256)
+    return 256;
+  if (sizePx <= 512)
+    return 512;
+  return 1024;
+}
+
 QString ThumbCache::makeKey(const QString &path, qint64 mtime, int sizePx) {
+  sizePx = canonicalSize(sizePx);
   QCryptographicHash hash(QCryptographicHash::Md5);
   hash.addData(path.toUtf8());
   hash.addData(QByteArray::number(mtime));
@@ -94,6 +161,8 @@ bool ThumbCache::ensureOpen() {
        " accessed INTEGER NOT NULL"
        ");");
   exec("CREATE INDEX IF NOT EXISTS thumbs_accessed ON thumbs(accessed);");
+  exec("CREATE INDEX IF NOT EXISTS thumbs_variant "
+       "ON thumbs(path,mtime,size_px);");
   QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner);
   return true;
 }
@@ -102,9 +171,11 @@ void ThumbCache::close() {
   m_lru.clear();
   m_lruOrder.clear();
   if (m_db) {
+    flushTouchesLocked();
     sqlite3_close(m_db);
     m_db = nullptr;
   }
+  m_touched.clear();
   m_dbPath.clear();
 }
 
@@ -132,17 +203,36 @@ void ThumbCache::rememberLocked(const QString &key, const QImage &img) {
 }
 
 void ThumbCache::touchLocked(const QString &key) {
-  if (!m_db || key.isEmpty())
+  // Never turn a visible-page read into a SQLite write. Besides WAL churn, an
+  // access UPDATE can wait for the busy timeout behind another Synchro window.
+  // The hints are persisted as one transaction before eviction or shutdown.
+  if (m_db && !key.isEmpty())
+    m_touched.insert(key);
+}
+
+void ThumbCache::flushTouchesLocked() {
+  if (!m_db || m_touched.isEmpty())
+    return;
+  if (!exec("BEGIN IMMEDIATE;"))
     return;
   sqlite3_stmt *st = nullptr;
   if (sqlite3_prepare_v2(m_db, "UPDATE thumbs SET accessed=? WHERE key=?;", -1,
-                         &st, nullptr) != SQLITE_OK)
+                         &st, nullptr) != SQLITE_OK) {
+    exec("ROLLBACK;");
     return;
-  sqlite3_bind_int64(st, 1, QDateTime::currentSecsSinceEpoch());
-  const QByteArray k = key.toUtf8();
-  sqlite3_bind_text(st, 2, k.constData(), k.size(), SQLITE_TRANSIENT);
-  sqlite3_step(st);
+  }
+  const qint64 now = QDateTime::currentSecsSinceEpoch();
+  for (const QString &key : std::as_const(m_touched)) {
+    sqlite3_bind_int64(st, 1, now);
+    const QByteArray k = key.toUtf8();
+    sqlite3_bind_text(st, 2, k.constData(), k.size(), SQLITE_TRANSIENT);
+    sqlite3_step(st);
+    sqlite3_reset(st);
+    sqlite3_clear_bindings(st);
+  }
   sqlite3_finalize(st);
+  exec("COMMIT;");
+  m_touched.clear();
 }
 
 QByteArray ThumbCache::getPngLocked(const QString &key) {
@@ -185,6 +275,35 @@ bool ThumbCache::contains(const QString &path, qint64 mtime, int sizePx) {
   return hit;
 }
 
+QString ThumbCache::lookupUrl(const QString &path, qint64 mtime, int sizePx) {
+  if (path.isEmpty() || mtime <= 0 || sizePx <= 0)
+    return {};
+  QMutexLocker lock(&m_mutex);
+  if (!ensureOpen())
+    return {};
+  const int wanted = canonicalSize(sizePx);
+  sqlite3_stmt *st = nullptr;
+  if (sqlite3_prepare_v2(
+          m_db,
+          "SELECT key FROM thumbs WHERE path=? AND mtime=? AND size_px>=? "
+          "ORDER BY size_px ASC LIMIT 1;",
+          -1, &st, nullptr) != SQLITE_OK)
+    return {};
+  const QByteArray p = path.toUtf8();
+  sqlite3_bind_text(st, 1, p.constData(), p.size(), SQLITE_TRANSIENT);
+  sqlite3_bind_int64(st, 2, mtime);
+  sqlite3_bind_int(st, 3, wanted);
+  QString key;
+  if (sqlite3_step(st) == SQLITE_ROW) {
+    const auto *text = sqlite3_column_text(st, 0);
+    if (text)
+      key = QString::fromUtf8(reinterpret_cast<const char *>(text));
+  }
+  sqlite3_finalize(st);
+  return key.isEmpty() ? QString()
+                       : QStringLiteral("image://synchrothumb/") + key;
+}
+
 QByteArray ThumbCache::getPng(const QString &path, qint64 mtime, int sizePx) {
   QMutexLocker lock(&m_mutex);
   if (!ensureOpen())
@@ -197,25 +316,53 @@ QImage ThumbCache::getImage(const QString &path, qint64 mtime, int sizePx) {
 }
 
 QImage ThumbCache::imageForKey(const QString &key) {
-  QMutexLocker lock(&m_mutex);
-  if (key.isEmpty() || !ensureOpen())
-    return {};
-  if (const auto it = m_lru.constFind(key); it != m_lru.cend()) {
-    m_lruOrder.removeAll(key);
-    m_lruOrder.append(key);
-    return it.value();
+  QString path;
+  {
+    QMutexLocker lock(&m_mutex);
+    if (key.isEmpty() || !ensureOpen())
+      return {};
+    if (const auto it = m_lru.constFind(key); it != m_lru.cend()) {
+      m_lruOrder.removeAll(key);
+      m_lruOrder.append(key);
+      return it.value();
+    }
+    path = m_dbPath;
   }
-  const QByteArray png = getPngLocked(key);
+  const QByteArray png = readPngConcurrent(path, key);
   if (png.isEmpty())
     return {};
+  // PNG inflation is the expensive part and is independent of SQLite. Keep
+  // it outside the cache mutex so QML's asynchronous image requests can
+  // decode different visible tiles concurrently.
   const QImage img = QImage::fromData(png, "PNG");
-  rememberLocked(key, img);
+  if (img.isNull())
+    return {};
+  {
+    QMutexLocker lock(&m_mutex);
+    if (!ensureOpen() || m_dbPath != path)
+      return {};
+    // Invalidation may have removed the key while this worker decoded it.
+    // Recheck under the write lock before admitting it to the memory LRU.
+    sqlite3_stmt *st = nullptr;
+    if (sqlite3_prepare_v2(m_db, "SELECT 1 FROM thumbs WHERE key=?;", -1, &st,
+                           nullptr) != SQLITE_OK)
+      return {};
+    const QByteArray k = key.toUtf8();
+    sqlite3_bind_text(st, 1, k.constData(), k.size(), SQLITE_TRANSIENT);
+    const bool live = sqlite3_step(st) == SQLITE_ROW;
+    sqlite3_finalize(st);
+    if (!live)
+      return {};
+    touchLocked(key);
+    rememberLocked(key, img);
+  }
   return img;
 }
 
 void ThumbCache::evictLocked() {
   if (!m_db)
     return;
+  flushTouchesLocked();
   sqlite3_stmt *sum = nullptr;
   if (sqlite3_prepare_v2(m_db, "SELECT COALESCE(SUM(bytes),0) FROM thumbs;", -1,
                          &sum, nullptr) != SQLITE_OK)
@@ -253,6 +400,7 @@ void ThumbCache::evictLocked() {
     sqlite3_finalize(del);
     m_lru.remove(key);
     m_lruOrder.removeAll(key);
+    m_touched.remove(key);
     total -= bytes;
   }
 }
@@ -261,6 +409,8 @@ void ThumbCache::putPng(const QString &path, qint64 mtime, int sizePx,
                         const QByteArray &png) {
   if (path.isEmpty() || png.isEmpty() || mtime <= 0 || sizePx <= 0)
     return;
+  sizePx = canonicalSize(sizePx);
+  const QImage decoded = QImage::fromData(png, "PNG");
   QMutexLocker lock(&m_mutex);
   if (!ensureOpen())
     return;
@@ -283,7 +433,7 @@ void ThumbCache::putPng(const QString &path, qint64 mtime, int sizePx,
   sqlite3_bind_int64(st, 7, QDateTime::currentSecsSinceEpoch());
   sqlite3_step(st);
   sqlite3_finalize(st);
-  rememberLocked(key, QImage::fromData(png, "PNG"));
+  rememberLocked(key, decoded);
   evictLocked();
 }
 
@@ -320,6 +470,7 @@ void ThumbCache::removePath(const QString &path) {
           reinterpret_cast<const char *>(sqlite3_column_text(keys, 0)));
       m_lru.remove(key);
       m_lruOrder.removeAll(key);
+      m_touched.remove(key);
     }
   }
   if (keys)

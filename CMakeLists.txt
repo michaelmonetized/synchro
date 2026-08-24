@@ -76,6 +76,7 @@ set(SYNCHRO_SYNTAX_SOURCES
 
 qt_add_executable(synchro
     src/main.cpp
+    src/AgentBridge.cpp
     ${SYNCHRO_FS_SOURCES}
     src/core/DirectoryLister.cpp
     src/core/DirectoryWatcher.cpp
@@ -139,6 +140,8 @@ qt_add_qml_module(synchro
         src/ui/qml/PeekOverlay.qml
         src/ui/qml/DoOverlay.qml
         src/ui/qml/DoFolderGrid.qml
+        src/ui/qml/PanelLook.qml
+        src/ui/qml/FolderLens.qml
         src/ui/qml/StatusLine.qml
         src/ui/qml/Confirm.qml
         src/ui/qml/ChooserWindow.qml
@@ -163,6 +166,7 @@ qt_add_qml_module(synchro_theme
         src/ui/qml/Synchro/Theme/ListingChrome.qml
         src/ui/qml/Synchro/Theme/AppIcon.qml
         src/ui/qml/Synchro/Theme/ChromeButton.qml
+        src/ui/qml/Synchro/Theme/ThumbLoadingGlyph.qml
         src/ui/qml/Synchro/Theme/SegmentedControl.qml
         src/ui/qml/Synchro/Theme/Keycap.qml
         src/ui/qml/Synchro/Theme/ToolTip.qml
@@ -430,6 +434,7 @@ if(BUILD_TESTING)
         ${SYNCHRO_FILEOP_SOURCES}
         src/core/CommandPalette.cpp
         src/core/Config.cpp
+        src/core/FileCatalog.cpp
         src/core/LocationChips.cpp
         src/core/PeekHost.cpp
         src/core/RecentStore.cpp
@@ -666,6 +671,7 @@ if(BUILD_TESTING)
         src/core/FilterProxy.cpp
         src/core/KeyMachine.cpp
         src/core/CommandPalette.cpp
+        src/core/FileCatalog.cpp
         src/core/PeekHost.cpp
         src/core/RecentStore.cpp
         src/core/TrashStore.cpp
@@ -774,6 +780,8 @@ if(BUILD_TESTING)
 
     qt_add_executable(file_catalog_test
         tests/file_catalog_test.cpp
+        src/AgentBridge.cpp
+        src/core/Config.cpp
         src/core/FileCatalog.cpp
         ${SYNCHRO_FS_SOURCES}
         src/core/DirectoryLister.cpp
@@ -786,7 +794,11 @@ if(BUILD_TESTING)
         src/core/MimeMap.cpp
     )
     target_include_directories(file_catalog_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/src/core
+    )
+    target_compile_definitions(file_catalog_test PRIVATE
+        SYNCHRO_VERSION="${PROJECT_VERSION}"
     )
     target_link_libraries(file_catalog_test PRIVATE
         Qt6::Test Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Concurrent

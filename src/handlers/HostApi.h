@@ -7,6 +7,7 @@
 
 #include <QColor>
 #include <QQuickItem>
+#include <QSet>
 #include <QStringList>
 #include <QUrl>
 #include <QVariantList>
@@ -15,6 +16,7 @@
 
 class DirectoryModel;
 class FileOpEngine;
+class FileCatalog;
 class FilterProxy;
 class FilesOnlyProxy;
 class HandlerLoader;
@@ -71,6 +73,28 @@ class HostApi : public PeekHost {
                  listingChromeChanged)
   Q_PROPERTY(QString peekFindQuery READ peekFindQuery NOTIFY
                  peekFindQueryChanged)
+  Q_PROPERTY(QQuickItem *inlinePreviewItem READ inlinePreviewItem NOTIFY
+                 inlinePreviewChanged)
+  Q_PROPERTY(QString inlinePreviewMode READ inlinePreviewMode NOTIFY
+                 inlinePreviewChanged)
+  Q_PROPERTY(QString inlinePreviewPath READ inlinePreviewPath NOTIFY
+                 inlinePreviewChanged)
+  Q_PROPERTY(QString inlinePreviewHandler READ inlinePreviewHandler NOTIFY
+                 inlinePreviewChanged)
+  Q_PROPERTY(int inlinePreviewCount READ inlinePreviewCount NOTIFY
+                 inlinePreviewChanged)
+  Q_PROPERTY(QVariantMap inlinePreviewStat READ inlinePreviewStat NOTIFY
+                 inlinePreviewChanged)
+  Q_PROPERTY(QObject *inlineFolderModel READ inlineFolderModel NOTIFY
+                 inlineFolderChanged)
+  Q_PROPERTY(QObject *inlineFolderProxy READ inlineFolderProxy NOTIFY
+                 inlineFolderChanged)
+  Q_PROPERTY(bool inlineFolderLoading READ inlineFolderLoading NOTIFY
+                 inlineFolderChanged)
+  Q_PROPERTY(QString inlineFolderError READ inlineFolderError NOTIFY
+                 inlineFolderChanged)
+  Q_PROPERTY(bool inlineFolderTruncated READ inlineFolderTruncated NOTIFY
+                 inlineFolderChanged)
 
 public:
   HostApi(DirectoryModel *model, FilterProxy *proxy, NavStack *nav,
@@ -101,11 +125,23 @@ public:
   QString doTargetName() const { return m_doTargetName; }
   QUrl listingRowUrl() const { return m_listingRowUrl; }
   QUrl listingThumbUrl() const { return m_listingThumbUrl; }
+  QQuickItem *inlinePreviewItem() const { return m_inlinePreviewItem; }
+  QString inlinePreviewMode() const { return m_inlinePreviewMode; }
+  QString inlinePreviewPath() const { return m_inlinePreviewPath; }
+  QString inlinePreviewHandler() const { return m_inlinePreviewHandler; }
+  int inlinePreviewCount() const { return m_inlinePreviewCount; }
+  QVariantMap inlinePreviewStat() const { return m_inlinePreviewStat; }
+  QObject *inlineFolderModel() const;
+  QObject *inlineFolderProxy() const;
+  bool inlineFolderLoading() const { return m_inlineFolderLoading; }
+  QString inlineFolderError() const { return m_inlineFolderError; }
+  bool inlineFolderTruncated() const { return m_inlineFolderTruncated; }
   QVariantList openCandidates() const { return m_openCandidates; }
   QString lastError() const { return m_error; }
   HandlerExec &exec() { return m_exec; }
   void setSelection(SelectionModel *sel) { m_sel = sel; }
   void setFileOps(FileOpEngine *ops) { m_ops = ops; }
+  void setFileCatalog(FileCatalog *catalog);
 
 public slots:
   void close() override;
@@ -124,6 +160,8 @@ public:
   Q_INVOKABLE QString panelRelevance(const QString &id) const;
   Q_INVOKABLE QVariantMap panelInfo(const QString &id) const;
   Q_INVOKABLE QVariantList panelPeers(const QString &id) const;
+  Q_INVOKABLE bool panelSupportsCompanion(const QString &id,
+                                          const QString &companion) const;
   Q_INVOKABLE QVariantList relevantPanels() const;
   Q_INVOKABLE bool attachSqlHighlighter(QObject *quickDocument,
                                         const QColor &keyword,
@@ -138,6 +176,14 @@ public:
   Q_INVOKABLE bool setTerminalBackgroundOpacity(QObject *terminal,
                                                  double opacity) const;
   Q_INVOKABLE void registerSurface(QObject *surface);
+  Q_INVOKABLE void setInlinePreviewActive(bool active);
+  Q_INVOKABLE void refreshInlinePreview();
+  Q_INVOKABLE void clearInlinePreview();
+  Q_INVOKABLE bool promoteInlinePreview();
+  Q_INVOKABLE bool commitInlineFolderRow(int row);
+  // Non-blocking initial text/markdown reads for the ambient Look surface.
+  Q_INVOKABLE quint64 requestPreview(const QUrl &url, int maxBytes = 65536,
+                                     qint64 startByte = 0);
   Q_INVOKABLE bool openFile(const QString &path, const QString &mime);
   Q_INVOKABLE bool runOpen(const QString &handlerId);
   Q_INVOKABLE bool runTerminal();
@@ -232,6 +278,10 @@ signals:
   void peekCommitRequested();
   void listingChromeChanged();
   void peekFindQueryChanged();
+  void inlinePreviewChanged();
+  void inlineFolderChanged();
+  void previewReady(quint64 requestId, const QUrl &file,
+                    const QVariantMap &preview);
 
 private:
   Manifest::Item currentItem() const;
@@ -240,6 +290,9 @@ private:
   void setCurrentFromModel();
   void reloadPreview();
   void destroyPreview();
+  void destroyInlinePreview();
+  Manifest::Item inlineCurrentItem() const;
+  void ensureInlineFolderListing();
   void destroyAction();
   void refreshOpenCandidates();
   void onStatsApplied(const QStringList &paths);
@@ -291,6 +344,22 @@ private:
   QObject *m_previewItem = nullptr;
   QObject *m_folderPreviewItem = nullptr;
   QObject *m_filePreviewItem = nullptr;
+  QQuickItem *m_inlinePreviewItem = nullptr;
+  QString m_inlinePreviewMode;
+  QString m_inlinePreviewPath;
+  QString m_inlinePreviewHandler;
+  int m_inlinePreviewCount = 0;
+  QVariantMap m_inlinePreviewStat;
+  bool m_inlinePreviewActive = false;
+  quint64 m_nextPreviewRequest = 0;
+  QSet<QString> m_inlinePreparing;
+  DirectoryModel *m_inlineFolderModel = nullptr;
+  FilterProxy *m_inlineFolderProxy = nullptr;
+  FileCatalog *m_fileCatalog = nullptr;
+  quint64 m_inlineFolderRequest = 0;
+  bool m_inlineFolderLoading = false;
+  bool m_inlineFolderTruncated = false;
+  QString m_inlineFolderError;
   QQuickItem *m_actionItem = nullptr;
   QQuickItem *m_doSurface = nullptr;
   QQuickItem *m_doContentSurface = nullptr;

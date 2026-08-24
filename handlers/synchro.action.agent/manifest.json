@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "synchro.action.agent",
   "name": "Agent",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Omarchy",
   "license": "MIT",
-  "description": "Open omarchy-agent in the listing directory. The wrapper cds to ~/Work when cwd is $HOME and that folder exists.",
+  "description": "Ask Omarchy's default agent to work with this folder or selection, with Synchro catalog access.",
   "kinds": ["action"],
   "priority": 50,
   "match": {
@@ -16,8 +16,8 @@
   "entryPoints": {},
   "action": {
     "runtime": "exec",
-    "exec": "omarchy-agent",
-    "tryExec": "omarchy-agent"
+    "exec": "omarchy agent prompt \"Work with the current Synchro file-browser context. Start by reading the JSON selection manifest named by the SYNCHRO_SELECTION environment variable. Your working folder is %d. Use synchro query --help for read-only access to Synchro's persistent indexed metadata, saved SQL folders, and deterministic file facts.\"",
+    "tryExec": "omarchy"
   },
   "permissions": ["exec"]
 }

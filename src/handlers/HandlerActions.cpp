@@ -68,6 +68,16 @@ bool HandlerActions::runExec(const Manifest &m, const QString &kind,
     hi.isDir = item.isDir;
     req.items.append(hi);
   }
+  // A selected folder is a better project root for an agent than its parent
+  // listing. Files keep their containing directory as the working root. The
+  // full selection remains available through SYNCHRO_SELECTION either way.
+  if (m.id == QLatin1String("synchro.action.agent") && items.size() == 1) {
+    const Manifest::Item &item = items.constFirst();
+    if (!item.path.isEmpty()) {
+      const QFileInfo info(item.path);
+      req.cwd = item.isDir ? info.absoluteFilePath() : info.absolutePath();
+    }
+  }
   if (!m_exec->run(req)) {
     m_error = m_exec->lastError();
     return false;

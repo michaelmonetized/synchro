@@ -46,6 +46,7 @@ private slots:
   void terminalDisabledOnVirtual();
   void runActionTerminalDisabledOnVirtual();
   void runActionAgentDisabledOnVirtual();
+  void agentUsesOmarchyPromptAndSelectionContext();
   void trashMovesToXdgTrash();
   void trashRefusesHome();
   void runActionById();
@@ -157,6 +158,47 @@ void HandlerActionsTest::runActionAgentDisabledOnVirtual() {
   QVERIFY(!actions.runAction(QStringLiteral("synchro.action.agent"), {},
                              QStringLiteral("recent://")));
   QVERIFY(!launched);
+}
+
+void HandlerActionsTest::agentUsesOmarchyPromptAndSelectionContext() {
+  HandlerRegistry reg;
+  reg.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  reg.setUserDir(tmp.filePath(QStringLiteral("none")));
+  reg.setConfigPath(tmp.filePath(QStringLiteral("none.json")));
+  reg.setScanEnv(false);
+  reg.scan();
+
+  const QString project = tmp.filePath(QStringLiteral("project"));
+  QVERIFY(QDir().mkpath(project));
+  HandlerExec exec;
+  QStringList launch;
+  QProcessEnvironment environment;
+  exec.setLaunchHook([&](const QString &program, const QStringList &args,
+                         const QProcessEnvironment &env) {
+    launch = QStringList{program} + args;
+    environment = env;
+    return true;
+  });
+  HandlerActions actions(&reg, &exec);
+  QVERIFY2(actions.runAction(QStringLiteral("synchro.action.agent"),
+                             {item(project, QStringLiteral("inode/directory"),
+                                   true)},
+                             tmp.path()),
+           qPrintable(actions.lastError()));
+  const QString command = launch.join(QLatin1Char(' '));
+  QVERIFY(command.contains(QStringLiteral("omarchy")));
+  QVERIFY(command.contains(QStringLiteral("agent")));
+  QVERIFY(command.contains(QStringLiteral("prompt")));
+  QVERIFY(command.contains(QStringLiteral("synchro query --help")));
+  QCOMPARE(environment.value(QStringLiteral("SYNCHRO_CWD")), project);
+  const QString manifest =
+      environment.value(QStringLiteral("SYNCHRO_SELECTION"));
+  QVERIFY(!manifest.isEmpty());
+  QFile selection(manifest);
+  QVERIFY(selection.open(QIODevice::ReadOnly));
+  QVERIFY(selection.readAll().contains(project.toUtf8()));
 }
 
 void HandlerActionsTest::trashMovesToXdgTrash() {

@@ -1,7 +1,9 @@
 #include "HostApi.h"
 
 #include <QCryptographicHash>
+#include <QElapsedTimer>
 #include <QLibraryInfo>
+#include <QPointer>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
@@ -9,6 +11,7 @@
 #include <dlfcn.h>
 
 #include "DirectoryModel.h"
+#include "FileCatalog.h"
 #include "FileOpEngine.h"
 #include "FilterProxy.h"
 #include "HandlerLoader.h"
@@ -33,6 +36,7 @@
 #include <QIODevice>
 #include <QGuiApplication>
 #include <QImageReader>
+#include <QJsonArray>
 #include <QMetaObject>
 #include <QObject>
 #include <QQuickItem>
@@ -40,6 +44,7 @@
 #include <QSyntaxHighlighter>
 #include <QTextCharFormat>
 #include <QTextDocument>
+#include <QtConcurrent>
 
 #include <algorithm>
 #include <cstdio>
@@ -130,6 +135,7 @@ HostApi::HostApi(DirectoryModel *model, FilterProxy *proxy, NavStack *nav,
     connect(m_model, &DirectoryModel::pathChanged, this, [this] {
       close();
       closeAction();
+      clearInlinePreview();
       refreshListingChrome();
     });
     connect(m_model, &DirectoryModel::statsApplied, this,
@@ -144,10 +150,12 @@ void HostApi::onStatsApplied(const QStringList &paths) {
   // Handlers only exist inside an open preview; with nothing open there is
   // nobody to notify, and skipping keeps big listings cheap (the old
   // per-entry path built 50k QVariantMaps per directory).
-  if (!m_open && !m_previewItem)
+  if (!m_open && !m_previewItem && !m_inlinePreviewItem)
     return;
   for (const QString &path : paths)
     emit statReady(QUrl::fromLocalFile(path), m_model->cachedStat(path));
+  if (m_inlinePreviewActive && paths.contains(m_inlinePreviewPath))
+    refreshInlinePreview();
   if (m_open && !m_previewItem) {
     const QString current = currentItem().path;
     if (paths.contains(current))
@@ -290,6 +298,327 @@ bool HostApi::loadPreviewFor(const Manifest::Item &item, QObject **slot) {
   return true;
 }
 
+void HostApi::destroyInlinePreview() {
+  if (!m_inlinePreviewItem)
+    return;
+  m_inlinePreviewItem->deleteLater();
+  m_inlinePreviewItem = nullptr;
+}
+
+Manifest::Item HostApi::inlineCurrentItem() const {
+  Manifest::Item item;
+  if (!m_model)
+    return item;
+
+  QString path;
+  if (m_sel && m_sel->selectedCount() == 1)
+    path = m_sel->selectedPaths().value(0);
+  QVariantMap st = path.isEmpty() ? m_model->currentStat()
+                                  : m_model->cachedStat(path);
+  if (path.isEmpty())
+    path = st.value(QStringLiteral("path")).toString();
+  if (path.isEmpty())
+    return item;
+
+  item.path = path;
+  item.uri = st.value(QStringLiteral("uri")).toUrl();
+  item.mime = st.value(QStringLiteral("mime")).toString();
+  item.isDir = st.value(QStringLiteral("isDir")).toBool();
+  if (item.uri.isEmpty()) {
+    item.uri = DirectoryModel::isVirtualPath(path) ? QUrl(path)
+                                                   : QUrl::fromLocalFile(path);
+  }
+  // Cached model metadata is deliberate here. Ambient preview must not turn a
+  // cursor move into synchronous MIME probing on the browser thread.
+  return item;
+}
+
+QObject *HostApi::inlineFolderModel() const { return m_inlineFolderModel; }
+
+QObject *HostApi::inlineFolderProxy() const { return m_inlineFolderProxy; }
+
+void HostApi::ensureInlineFolderListing() {
+  if (m_inlineFolderModel)
+    return;
+  m_inlineFolderModel = new DirectoryModel(this);
+  m_inlineFolderProxy = new FilterProxy(this);
+  m_inlineFolderProxy->setDirectoryModel(m_inlineFolderModel);
+  if (m_model)
+    m_inlineFolderModel->setShowHidden(m_model->showHidden());
+  if (m_proxy) {
+    m_inlineFolderProxy->setSortRoleName(m_proxy->sortRoleName());
+    m_inlineFolderProxy->setSortOrder(m_proxy->sortOrder());
+  }
+  emit inlineFolderChanged();
+}
+
+void HostApi::setFileCatalog(FileCatalog *catalog) {
+  if (m_fileCatalog == catalog)
+    return;
+  if (m_fileCatalog)
+    disconnect(m_fileCatalog, nullptr, this, nullptr);
+  m_fileCatalog = catalog;
+  m_inlineFolderRequest = 0;
+  if (!m_fileCatalog)
+    return;
+  connect(m_fileCatalog, &FileCatalog::queryFinished, this,
+          [this](quint64 request, const QVariantMap &result) {
+            if (request != m_inlineFolderRequest ||
+                m_inlinePreviewMode != QLatin1String("folder") ||
+                !DirectoryModel::isSqlPath(m_inlinePreviewPath))
+              return;
+            m_inlineFolderRequest = 0;
+            m_inlineFolderLoading = false;
+            m_inlineFolderError = result.value(QStringLiteral("ok")).toBool()
+                                      ? QString()
+                                      : result.value(QStringLiteral("error"))
+                                            .toString();
+            m_inlineFolderTruncated =
+                result.value(QStringLiteral("truncated")).toBool();
+            if (m_inlineFolderModel && m_inlineFolderError.isEmpty())
+              m_inlineFolderModel->showSqlResult(
+                  result, m_inlinePreviewStat.value(QStringLiteral("name"))
+                              .toString());
+            emit inlineFolderChanged();
+          });
+}
+
+void HostApi::setInlinePreviewActive(bool active) {
+  if (m_inlinePreviewActive == active)
+    return;
+  m_inlinePreviewActive = active;
+  if (active)
+    refreshInlinePreview();
+  else
+    clearInlinePreview();
+}
+
+void HostApi::clearInlinePreview() {
+  const bool changed = m_inlinePreviewItem || !m_inlinePreviewMode.isEmpty() ||
+                       !m_inlinePreviewPath.isEmpty() ||
+                       !m_inlinePreviewHandler.isEmpty() ||
+                       m_inlinePreviewCount != 0 || !m_inlinePreviewStat.isEmpty();
+  const bool folderStateChanged = m_inlineFolderRequest != 0 ||
+                                  m_inlineFolderLoading ||
+                                  m_inlineFolderTruncated ||
+                                  !m_inlineFolderError.isEmpty();
+  m_inlineFolderRequest = 0;
+  m_inlineFolderLoading = false;
+  m_inlineFolderTruncated = false;
+  m_inlineFolderError.clear();
+  destroyInlinePreview();
+  m_inlinePreviewMode.clear();
+  m_inlinePreviewPath.clear();
+  m_inlinePreviewHandler.clear();
+  m_inlinePreviewCount = 0;
+  m_inlinePreviewStat.clear();
+  if (changed)
+    emit inlinePreviewChanged();
+  if (folderStateChanged)
+    emit inlineFolderChanged();
+}
+
+void HostApi::refreshInlinePreview() {
+  if (!m_inlinePreviewActive || m_open || m_actionOpen || !m_model ||
+      !m_registry || !m_loader) {
+    clearInlinePreview();
+    return;
+  }
+
+  const int selectedCount = m_sel ? m_sel->selectedCount() : 0;
+  if (selectedCount > 1) {
+    const bool changed = m_inlinePreviewItem ||
+                         m_inlinePreviewMode != QLatin1String("multi") ||
+                         m_inlinePreviewCount != selectedCount;
+    destroyInlinePreview();
+    m_inlinePreviewMode = QStringLiteral("multi");
+    m_inlinePreviewPath.clear();
+    m_inlinePreviewHandler.clear();
+    m_inlinePreviewCount = selectedCount;
+    m_inlinePreviewStat.clear();
+    if (changed)
+      emit inlinePreviewChanged();
+    return;
+  }
+
+  const Manifest::Item item = inlineCurrentItem();
+  if (item.path.isEmpty()) {
+    clearInlinePreview();
+    return;
+  }
+  QVariantMap previewStat = m_model->cachedStat(item.path);
+  if (previewStat.isEmpty() &&
+      m_model->currentStat().value(QStringLiteral("path")).toString() ==
+          item.path)
+    previewStat = m_model->currentStat();
+
+  const QVariantMap sqlMeta =
+      item.isDir && DirectoryModel::isSqlPath(item.path)
+          ? m_model->sqlRowMetadata(item.path)
+          : QVariantMap();
+  const bool queryFolder = m_fileCatalog &&
+                           !sqlMeta.value(QStringLiteral("sql"))
+                                .toString()
+                                .isEmpty();
+  QString mode = item.isDir
+                     ? (!DirectoryModel::isVirtualPath(item.path) || queryFolder
+                            ? QStringLiteral("folder")
+                            : QStringLiteral("folder-card"))
+                     : QStringLiteral("card");
+  QString handlerId;
+  if (!item.isDir && !DirectoryModel::isVirtualPath(item.path)) {
+    auto matches = m_registry->resolve(QStringLiteral("preview"), {item});
+    if (matches.isEmpty() && MimeMap::isProbablyText(item.path, item.mime) &&
+        m_registry->contains(QStringLiteral("synchro.preview.text"))) {
+      HandlerRegistry::Match fallback;
+      fallback.id = QStringLiteral("synchro.preview.text");
+      matches.append(fallback);
+    }
+    if (!matches.isEmpty()) {
+      const HandlerRegistry::Record rec =
+          m_registry->handler(matches.constFirst().id);
+      const QString inlineKind =
+          rec.manifest.preview.value(QStringLiteral("inline")).toString();
+      if (rec.enabled && inlineKind.startsWith(QLatin1String("core-"))) {
+        mode = inlineKind.mid(5);
+        handlerId = rec.manifest.id;
+      } else if (rec.enabled && inlineKind == QLatin1String("safe")) {
+        mode = QStringLiteral("rich");
+        handlerId = rec.manifest.id;
+      }
+    }
+  }
+
+  if (mode == QLatin1String("rich")) {
+    const HandlerRegistry::Record rec = m_registry->handler(handlerId);
+    if (!m_loader->isReady(rec, QStringLiteral("preview"))) {
+      const QString preparingId = handlerId;
+      mode = QStringLiteral("card");
+      handlerId.clear();
+      if (!m_inlinePreparing.contains(preparingId)) {
+        m_inlinePreparing.insert(preparingId);
+        const QPointer<HostApi> self(this);
+        m_loader->prepareAsync(
+            m_engine, rec, QStringLiteral("preview"), this,
+            [self, preparingId](bool ready) {
+              if (!self)
+                return;
+              self->m_inlinePreparing.remove(preparingId);
+              if (ready && self->m_inlinePreviewActive)
+                self->refreshInlinePreview();
+            });
+      }
+    }
+  }
+
+  const bool reusable = m_inlinePreviewItem && mode == QLatin1String("rich") &&
+                        m_inlinePreviewPath == item.path &&
+                        m_inlinePreviewHandler == handlerId;
+  if (reusable) {
+    const QUrl file = item.uri.isEmpty() ? QUrl::fromLocalFile(item.path)
+                                         : item.uri;
+    m_inlinePreviewItem->setProperty("file", file);
+    if (m_inlinePreviewStat != previewStat) {
+      m_inlinePreviewStat = previewStat;
+      emit inlinePreviewChanged();
+    }
+    return;
+  }
+
+  destroyInlinePreview();
+  m_inlinePreviewMode = mode;
+  m_inlinePreviewPath = item.path;
+  m_inlinePreviewHandler = handlerId;
+  m_inlinePreviewCount = item.path.isEmpty() ? 0 : 1;
+  m_inlinePreviewStat = previewStat;
+
+  if (mode == QLatin1String("folder")) {
+    ensureInlineFolderListing();
+    // A query folder represents the SQL result exactly. Applying the normal
+    // browser dotfile preference after the LIMIT can turn a 500-row page into
+    // a nearly empty lens. Real directories still inherit that preference.
+    m_inlineFolderModel->setShowHidden(queryFolder ? true
+                                                   : m_model->showHidden());
+    if (m_proxy) {
+      m_inlineFolderProxy->setSortRoleName(m_proxy->sortRoleName());
+      m_inlineFolderProxy->setSortOrder(m_proxy->sortOrder());
+    }
+    if (queryFolder) {
+      QVariantMap empty;
+      empty.insert(QStringLiteral("ok"), true);
+      empty.insert(QStringLiteral("cwd"), m_model->sqlContext());
+      empty.insert(QStringLiteral("rows"), QVariantList());
+      empty.insert(QStringLiteral("columns"), QVariantList());
+      m_inlineFolderModel->showSqlResult(
+          empty, previewStat.value(QStringLiteral("name")).toString());
+      m_inlineFolderLoading = true;
+      m_inlineFolderTruncated = false;
+      m_inlineFolderError.clear();
+      m_inlineFolderRequest = m_fileCatalog->query(
+          sqlMeta.value(QStringLiteral("sql")).toString(),
+          m_model->sqlContext(), m_model->sqlSelection(), 500);
+      emit inlineFolderChanged();
+    } else if (m_inlineFolderModel->path() != item.path) {
+      m_inlineFolderRequest = 0;
+      m_inlineFolderLoading = false;
+      m_inlineFolderTruncated = false;
+      m_inlineFolderError.clear();
+      m_inlineFolderModel->setPath(item.path);
+    }
+  }
+
+  if (mode == QLatin1String("rich")) {
+    const HandlerRegistry::Record rec = m_registry->handler(handlerId);
+    const QUrl file = item.uri.isEmpty() ? QUrl::fromLocalFile(item.path)
+                                         : item.uri;
+    QVariantMap row;
+    row.insert(QStringLiteral("path"), item.path);
+    row.insert(QStringLiteral("uri"), file);
+    row.insert(QStringLiteral("mime"), item.mime);
+    row.insert(QStringLiteral("isDir"), item.isDir);
+    QElapsedTimer timer;
+    timer.start();
+    m_inlinePreviewItem = m_loader->create(
+        m_engine, rec, QStringLiteral("preview"), this, file, {row},
+        {{QStringLiteral("inlinePreview"), true}});
+    const qint64 elapsed = timer.elapsed();
+    if (!m_inlinePreviewItem) {
+      std::fprintf(stderr, "synchro: inline preview %s: %s\n",
+                   qPrintable(handlerId), qPrintable(m_loader->lastError()));
+      m_inlinePreviewMode = QStringLiteral("card");
+      m_inlinePreviewHandler.clear();
+    } else if (elapsed > 8) {
+      std::fprintf(stderr,
+                   "synchro: inline preview %s creation took %lld ms\n",
+                   qPrintable(handlerId), static_cast<long long>(elapsed));
+    }
+  }
+  emit inlinePreviewChanged();
+}
+
+bool HostApi::promoteInlinePreview() {
+  if (m_inlinePreviewPath.isEmpty())
+    return false;
+  clearInlinePreview();
+  return openCurrent();
+}
+
+bool HostApi::commitInlineFolderRow(int row) {
+  if (!m_model || !m_inlineFolderProxy || row < 0 ||
+      row >= m_inlineFolderProxy->rowCount())
+    return false;
+  const QVariantMap child = m_inlineFolderProxy->rowMap(row);
+  const QString path = child.value(QStringLiteral("path")).toString();
+  if (path.isEmpty() || DirectoryModel::isVirtualPath(path))
+    return false;
+  clearInlinePreview();
+  if (child.value(QStringLiteral("isDir")).toBool())
+    m_model->setPath(path);
+  else
+    m_model->setPath(QFileInfo(path).absolutePath(), QFileInfo(path).fileName());
+  return true;
+}
+
 void HostApi::applyPeekSelection(const Manifest::Item &item) {
   const QUrl file =
       item.uri.isEmpty() ? QUrl::fromLocalFile(item.path) : item.uri;
@@ -349,6 +678,22 @@ QVariantMap HostApi::panelInfo(const QString &id) const {
   out.insert(QStringLiteral("group"),
              rec.manifest.panel.value(QStringLiteral("group")).toString());
   return out;
+}
+
+bool HostApi::panelSupportsCompanion(const QString &id,
+                                     const QString &companion) const {
+  if (!m_registry || companion.isEmpty() || !m_registry->contains(id))
+    return false;
+  const HandlerRegistry::Record rec = m_registry->handler(id);
+  if (!rec.enabled || !rec.manifest.kinds.contains(QStringLiteral("panel")))
+    return false;
+  const QJsonArray companions =
+      rec.manifest.panel.value(QStringLiteral("companions")).toArray();
+  for (const QJsonValue &value : companions) {
+    if (value.toString() == companion)
+      return true;
+  }
+  return false;
 }
 
 QVariantList HostApi::panelPeers(const QString &id) const {
@@ -758,6 +1103,7 @@ bool HostApi::openCurrent() {
   const Manifest::Item item = currentItem();
   if (item.path.isEmpty())
     return false;
+  clearInlinePreview();
   if (item.isDir) {
     startFolderPeek(item.path);
     return true;
@@ -1003,8 +1349,8 @@ QVariantMap makeHit(int line, int column, qint64 offset, int length,
 
 } // namespace
 
-QVariantMap HostApi::readPreview(const QUrl &url, int maxBytes,
-                                 qint64 startByte) const {
+static QVariantMap readPreviewData(const QUrl &url, int maxBytes,
+                                   qint64 startByte, bool withHighlight) {
   QVariantMap out;
   const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
   const QFileInfo fi(path);
@@ -1054,7 +1400,7 @@ QVariantMap HostApi::readPreview(const QUrl &url, int maxBytes,
   out.insert(QStringLiteral("ok"), true);
   const QString text = QString::fromUtf8(raw);
   out.insert(QStringLiteral("text"), text);
-  if (start == 0) {
+  if (start == 0 && withHighlight) {
     const HighlightedText hl = SyntaxHighlight::highlight(path, text);
     out.insert(QStringLiteral("highlighted"), hl.ok);
     out.insert(QStringLiteral("language"), hl.language);
@@ -1064,6 +1410,34 @@ QVariantMap HostApi::readPreview(const QUrl &url, int maxBytes,
     out.insert(QStringLiteral("highlighted"), false);
   }
   return out;
+}
+
+QVariantMap HostApi::readPreview(const QUrl &url, int maxBytes,
+                                 qint64 startByte) const {
+  return readPreviewData(url, maxBytes, startByte, true);
+}
+
+quint64 HostApi::requestPreview(const QUrl &url, int maxBytes,
+                                qint64 startByte) {
+  const quint64 requestId = ++m_nextPreviewRequest;
+  const QPointer<HostApi> self(this);
+  (void)QtConcurrent::run([self, requestId, url, maxBytes, startByte] {
+    // SyntaxHighlight owns GUI-thread-affine support objects on some Qt/KF
+    // builds. Ambient reads stay fully worker-safe; modal Peek still gets the
+    // existing highlighted path through readPreview().
+    const QVariantMap preview =
+        readPreviewData(url, maxBytes, startByte, false);
+    if (!self)
+      return;
+    QMetaObject::invokeMethod(
+        self,
+        [self, requestId, url, preview] {
+          if (self)
+            emit self->previewReady(requestId, url, preview);
+        },
+        Qt::QueuedConnection);
+  });
+  return requestId;
 }
 
 QVariantList HostApi::findInFile(const QUrl &url, const QString &needle,

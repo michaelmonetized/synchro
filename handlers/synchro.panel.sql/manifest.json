@@ -17,7 +17,8 @@
     "relevance": "manual",
     "glyph": "⌗",
     "group": "workspace",
-    "order": 20
+    "order": 20,
+    "companions": ["preview"]
   },
   "permissions": [
     "fs-read",

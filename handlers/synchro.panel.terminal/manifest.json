@@ -26,6 +26,7 @@
     "relevance": "always",
     "glyph": "❯",
     "group": "workspace",
-    "order": 10
+    "order": 10,
+    "companions": ["preview"]
   }
 }

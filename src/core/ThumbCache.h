@@ -4,6 +4,7 @@
 #include <QHash>
 #include <QImage>
 #include <QMutex>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QtGlobal>
@@ -18,10 +19,14 @@ public:
 
   static QString homeDir();
   static QString dbPath();
+  static int canonicalSize(int sizePx);
   static QString makeKey(const QString &path, qint64 mtime, int sizePx);
   static QString imageUrl(const QString &path, qint64 mtime, int sizePx);
 
   bool contains(const QString &path, qint64 mtime, int sizePx);
+  // Prefer the smallest cached tier that is at least as large as requested.
+  // Returning the existing key avoids copying/re-encoding a larger thumbnail.
+  QString lookupUrl(const QString &path, qint64 mtime, int sizePx);
   QByteArray getPng(const QString &path, qint64 mtime, int sizePx);
   QImage getImage(const QString &path, qint64 mtime, int sizePx);
   QImage imageForKey(const QString &key);
@@ -47,6 +52,7 @@ private:
   bool exec(const char *sql);
   QByteArray getPngLocked(const QString &key);
   void touchLocked(const QString &key);
+  void flushTouchesLocked();
   void evictLocked();
   void rememberLocked(const QString &key, const QImage &img);
 
@@ -55,4 +61,5 @@ private:
   QString m_dbPath;
   QHash<QString, QImage> m_lru;
   QStringList m_lruOrder;
+  QSet<QString> m_touched;
 };

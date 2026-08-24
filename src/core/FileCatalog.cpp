@@ -1,6 +1,7 @@
 #include "FileCatalog.h"
 
 #include "DirectoryModel.h"
+#include "ThumbnailService.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -25,9 +26,13 @@
 
 #include <utility>
 
+#include <sys/stat.h>
+
 namespace {
 
 constexpr int kDefaultMaxRows = 200;
+
+enum class CatalogSqlDialect { SQLite, DuckDb };
 
 QString sqlString(QString value) {
   value.replace(QLatin1Char('\''), QLatin1String("''"));
@@ -40,6 +45,128 @@ QString normalizedPath(const QString &raw) {
   return QDir::cleanPath(QFileInfo(raw).absoluteFilePath());
 }
 
+QString kindExpression() {
+  return QStringLiteral(
+      "CASE WHEN is_dir<>0 THEN 'folder' "
+      "WHEN lower(extension) IN ('jpg','jpeg','png','gif','webp','avif',"
+      "'bmp','tif','tiff','svg','heic','heif','ico') THEN 'image' "
+      "WHEN lower(extension) IN ('mp4','mkv','webm','mov','avi','m4v',"
+      "'mpeg','mpg') THEN 'video' "
+      "WHEN lower(extension) IN ('mp3','flac','wav','ogg','opus','m4a',"
+      "'aac') THEN 'audio' "
+      "WHEN lower(extension) IN ('pdf','doc','docx','odt','rtf','epub') "
+      "THEN 'document' "
+      "WHEN lower(extension) IN ('txt','md','markdown','rst','log') "
+      "THEN 'text' "
+      "WHEN lower(extension) IN ('c','cc','cpp','h','hpp','rs','go','py',"
+      "'js','jsx','ts','tsx','java','kt','kts','rb','php','swift','sh',"
+      "'bash','zsh','fish','lua','clj','cljs','ex','exs','erl','hrl',"
+      "'sql','qml') THEN 'code' "
+      "WHEN lower(extension) IN ('csv','tsv','json','jsonl','parquet',"
+      "'arrow','feather','orc','db','sqlite','duckdb') THEN 'data' "
+      "WHEN lower(extension) IN ('zip','tar','gz','bz2','xz','zst','7z',"
+      "'rar','tgz') THEN 'archive' "
+      "WHEN lower(extension) IN ('appimage','deb','rpm','pkg','apk') "
+      "THEN 'package' "
+      "WHEN lower(extension) IN ('ttf','otf','woff','woff2') THEN 'font' "
+      "WHEN lower(extension) IN ('iso','img','qcow','qcow2','vdi','vmdk') "
+      "THEN 'disk image' "
+      "WHEN lower(extension) IN ('blend','gltf','glb','obj','stl','fbx') "
+      "THEN '3d' "
+      "WHEN extension='' THEN 'file' ELSE 'other' END");
+}
+
+QString stemExpression() {
+  return QStringLiteral(
+      "CASE WHEN extension<>'' AND length(name)>length(extension)+1 "
+      "THEN substr(name,1,length(name)-length(extension)-1) ELSE name END");
+}
+
+QString ageDaysExpression(CatalogSqlDialect dialect) {
+  if (dialect == CatalogSqlDialect::SQLite) {
+    return QStringLiteral(
+        "max(0,CAST(((CAST(strftime('%s','now') AS INTEGER)*1000)-mtime)"
+        "/86400000 AS INTEGER))");
+  }
+  return QStringLiteral(
+      "greatest(0,CAST(floor((epoch_ms(current_timestamp)-mtime)"
+      "/86400000.0) AS BIGINT))");
+}
+
+QString ageBucketExpression(CatalogSqlDialect dialect) {
+  const QString days = ageDaysExpression(dialect);
+  return QStringLiteral(
+             "CASE WHEN mtime<=0 THEN 'unknown' WHEN %1<1 THEN 'today' "
+             "WHEN %1<7 THEN 'this week' WHEN %1<30 THEN 'this month' "
+             "WHEN %1<365 THEN 'this year' ELSE 'older' END")
+      .arg(days);
+}
+
+QString sizeBucketExpression() {
+  return QStringLiteral(
+      "CASE WHEN is_dir<>0 THEN 'folder' WHEN size=0 THEN 'empty' "
+      "WHEN size<1048576 THEN '< 1 MB' "
+      "WHEN size<104857600 THEN '1-100 MB' "
+      "WHEN size<1073741824 THEN '100 MB-1 GB' "
+      "WHEN size<10737418240 THEN '1-10 GB' ELSE '10+ GB' END");
+}
+
+QString catalogFieldExpression(const QString &key,
+                               CatalogSqlDialect dialect) {
+  if (key == QLatin1String("kind"))
+    return kindExpression();
+  if (key == QLatin1String("stem"))
+    return stemExpression();
+  if (key == QLatin1String("depth"))
+    return QStringLiteral("length(path)-length(replace(path,'/',''))");
+  if (key == QLatin1String("age_days"))
+    return ageDaysExpression(dialect);
+  if (key == QLatin1String("age_bucket"))
+    return ageBucketExpression(dialect);
+  if (key == QLatin1String("size_bucket"))
+    return sizeBucketExpression();
+  if (key == QLatin1String("modified_date")) {
+    return dialect == CatalogSqlDialect::SQLite
+               ? QStringLiteral(
+                     "CASE WHEN mtime>0 THEN strftime('%Y-%m-%d',mtime/1000,"
+                     "'unixepoch','localtime') ELSE NULL END")
+               : QStringLiteral(
+                     "CASE WHEN mtime>0 THEN strftime(to_timestamp(mtime/"
+                     "1000.0),'%Y-%m-%d') ELSE NULL END");
+  }
+  if (key == QLatin1String("modified_month")) {
+    return dialect == CatalogSqlDialect::SQLite
+               ? QStringLiteral(
+                     "CASE WHEN mtime>0 THEN strftime('%Y-%m',mtime/1000,"
+                     "'unixepoch','localtime') ELSE NULL END")
+               : QStringLiteral(
+                     "CASE WHEN mtime>0 THEN strftime(to_timestamp(mtime/"
+                     "1000.0),'%Y-%m') ELSE NULL END");
+  }
+  if (key == QLatin1String("root"))
+    return QStringLiteral("scan_root");
+  return {};
+}
+
+QString derivedProjection(CatalogSqlDialect dialect) {
+  const QStringList keys = {QStringLiteral("kind"),
+                            QStringLiteral("stem"),
+                            QStringLiteral("depth"),
+                            QStringLiteral("age_days"),
+                            QStringLiteral("modified_date"),
+                            QStringLiteral("modified_month"),
+                            QStringLiteral("size_bucket"),
+                            QStringLiteral("age_bucket"),
+                            QStringLiteral("root")};
+  QStringList columns;
+  columns.reserve(keys.size());
+  for (const QString &key : keys) {
+    columns.append(QStringLiteral("%1 AS %2")
+                       .arg(catalogFieldExpression(key, dialect), key));
+  }
+  return columns.join(QLatin1Char(','));
+}
+
 bool execSql(sqlite3 *db, const char *sql) {
   if (!db || !sql)
     return false;
@@ -48,6 +175,34 @@ bool execSql(sqlite3 *db, const char *sql) {
   if (error)
     sqlite3_free(error);
   return rc == SQLITE_OK;
+}
+
+bool tableHasColumn(sqlite3 *db, const char *table, const char *column) {
+  if (!db)
+    return false;
+  const QByteArray sql = QByteArrayLiteral("PRAGMA table_info(") + table + ')';
+  sqlite3_stmt *st = nullptr;
+  if (sqlite3_prepare_v2(db, sql.constData(), -1, &st, nullptr) != SQLITE_OK)
+    return false;
+  bool found = false;
+  while (sqlite3_step(st) == SQLITE_ROW) {
+    const auto *name = sqlite3_column_text(st, 1);
+    if (name && qstrcmp(reinterpret_cast<const char *>(name), column) == 0) {
+      found = true;
+      break;
+    }
+  }
+  sqlite3_finalize(st);
+  return found;
+}
+
+bool addColumnIfMissing(sqlite3 *db, const char *column,
+                        const char *definition) {
+  if (tableHasColumn(db, "files", column))
+    return true;
+  const QByteArray sql = QByteArrayLiteral("ALTER TABLE files ADD COLUMN ") +
+                         definition + ';';
+  return execSql(db, sql.constData()) || tableHasColumn(db, "files", column);
 }
 
 sqlite3 *openCatalog(QString *error = nullptr) {
@@ -96,7 +251,28 @@ sqlite3 *openCatalog(QString *error = nullptr) {
       " complete INTEGER NOT NULL DEFAULT 0,"
       " completed_at INTEGER NOT NULL DEFAULT 0"
       ");");
-  if (!ok) {
+  const bool migrated = ok &&
+                        addColumnIfMissing(db, "file_id", "file_id TEXT") &&
+                        addColumnIfMissing(db, "device", "device INTEGER") &&
+                        addColumnIfMissing(db, "inode", "inode INTEGER") &&
+                        execSql(db,
+                                "CREATE TABLE IF NOT EXISTS file_facts ("
+                                " file_id TEXT NOT NULL,"
+                                " analyzer TEXT NOT NULL,"
+                                " analyzer_version INTEGER NOT NULL,"
+                                " source_size INTEGER NOT NULL DEFAULT 0,"
+                                " source_mtime INTEGER NOT NULL DEFAULT 0,"
+                                " key TEXT NOT NULL,"
+                                " text_value TEXT,"
+                                " numeric_value REAL,"
+                                " updated_at INTEGER NOT NULL DEFAULT 0,"
+                                " PRIMARY KEY(file_id,analyzer,key)"
+                                ");"
+                                "CREATE INDEX IF NOT EXISTS file_facts_analyzer "
+                                "ON file_facts(analyzer,analyzer_version,key);"
+                                "CREATE INDEX IF NOT EXISTS file_facts_current "
+                                "ON file_facts(file_id,source_size,source_mtime);");
+  if (!migrated) {
     if (error)
       *error = QString::fromUtf8(sqlite3_errmsg(db));
     sqlite3_close(db);
@@ -112,6 +288,9 @@ struct CatalogRow {
   QString name;
   QString extension;
   QString mime;
+  QString fileId;
+  qint64 device = 0;
+  qint64 inode = 0;
   qint64 size = 0;
   qint64 mtime = 0;
   bool isDir = false;
@@ -132,6 +311,15 @@ CatalogRow rowForInfo(const QFileInfo &fi) {
   row.isSymlink = fi.isSymLink();
   row.size = row.isDir ? 0 : fi.size();
   row.mtime = fi.lastModified().toMSecsSinceEpoch();
+  struct stat st {};
+  const QByteArray native = QFile::encodeName(row.path);
+  if (::lstat(native.constData(), &st) == 0) {
+    row.device = qint64(st.st_dev);
+    row.inode = qint64(st.st_ino);
+    row.fileId = QString::number(qulonglong(st.st_dev), 16) +
+                 QLatin1Char(':') +
+                 QString::number(qulonglong(st.st_ino), 16);
+  }
   return row;
 }
 
@@ -150,13 +338,15 @@ bool upsertRows(sqlite3 *db, const QVector<CatalogRow> &rows,
     return true;
   static const char *sql =
       "INSERT INTO files(path,parent,name,extension,is_dir,size,mtime,mime,"
-      "is_hidden,is_symlink,seen_at,scan_root) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
+      "is_hidden,is_symlink,seen_at,scan_root,file_id,device,inode) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
       "ON CONFLICT(path) DO UPDATE SET parent=excluded.parent,"
       "name=excluded.name,extension=excluded.extension,is_dir=excluded.is_dir,"
       "size=excluded.size,mtime=excluded.mtime,"
       "mime=CASE WHEN excluded.mime='' THEN files.mime ELSE excluded.mime END,"
       "is_hidden=excluded.is_hidden,is_symlink=excluded.is_symlink,"
       "seen_at=excluded.seen_at,"
+      "file_id=excluded.file_id,device=excluded.device,inode=excluded.inode,"
       "scan_root=CASE WHEN excluded.scan_root='' THEN files.scan_root "
       "ELSE excluded.scan_root END;";
   sqlite3_stmt *st = nullptr;
@@ -182,6 +372,9 @@ bool upsertRows(sqlite3 *db, const QVector<CatalogRow> &rows,
     sqlite3_bind_int(st, 10, row.isSymlink ? 1 : 0);
     sqlite3_bind_int64(st, 11, now);
     bindText(st, 12, scanRoot);
+    bindText(st, 13, row.fileId);
+    sqlite3_bind_int64(st, 14, row.device);
+    sqlite3_bind_int64(st, 15, row.inode);
     if (sqlite3_step(st) != SQLITE_DONE) {
       ok = false;
       break;
@@ -198,12 +391,14 @@ bool upsertChangedRows(sqlite3 *db, const QVector<CatalogRow> &rows,
     return true;
   static const char *sql =
       "INSERT INTO files(path,parent,name,extension,is_dir,size,mtime,mime,"
-      "is_hidden,is_symlink,seen_at,scan_root) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
+      "is_hidden,is_symlink,seen_at,scan_root,file_id,device,inode) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
       "ON CONFLICT(path) DO UPDATE SET parent=excluded.parent,"
       "name=excluded.name,extension=excluded.extension,is_dir=excluded.is_dir,"
       "size=excluded.size,mtime=excluded.mtime,"
       "mime=CASE WHEN excluded.mime='' THEN files.mime ELSE excluded.mime END,"
       "is_hidden=excluded.is_hidden,is_symlink=excluded.is_symlink,"
+      "file_id=excluded.file_id,device=excluded.device,inode=excluded.inode,"
       "scan_root=CASE WHEN files.scan_root='' THEN excluded.scan_root "
       "ELSE files.scan_root END "
       "WHERE files.parent<>excluded.parent OR files.name<>excluded.name OR "
@@ -211,6 +406,7 @@ bool upsertChangedRows(sqlite3 *db, const QVector<CatalogRow> &rows,
       "files.size<>excluded.size OR files.mtime<>excluded.mtime OR "
       "files.is_hidden<>excluded.is_hidden OR "
       "files.is_symlink<>excluded.is_symlink OR "
+      "coalesce(files.file_id,'')<>excluded.file_id OR "
       "(files.mime='' AND excluded.mime<>'') OR "
       "(files.scan_root='' AND excluded.scan_root<>'');";
   sqlite3_stmt *st = nullptr;
@@ -236,6 +432,76 @@ bool upsertChangedRows(sqlite3 *db, const QVector<CatalogRow> &rows,
     sqlite3_bind_int(st, 10, row.isSymlink ? 1 : 0);
     sqlite3_bind_int64(st, 11, now);
     bindText(st, 12, scanRoot);
+    bindText(st, 13, row.fileId);
+    sqlite3_bind_int64(st, 14, row.device);
+    sqlite3_bind_int64(st, 15, row.inode);
+    if (sqlite3_step(st) != SQLITE_DONE) {
+      ok = false;
+      break;
+    }
+  }
+  sqlite3_finalize(st);
+  execSql(db, ok ? "COMMIT;" : "ROLLBACK;");
+  return ok;
+}
+
+bool writeFacts(sqlite3 *db, const CatalogRow &row, const QString &analyzer,
+                int version, const QVariantMap &facts) {
+  if (!db || row.fileId.isEmpty() || facts.isEmpty())
+    return false;
+  if (!upsertRows(db, QVector<CatalogRow>{row}))
+    return false;
+
+  sqlite3_stmt *clear = nullptr;
+  if (sqlite3_prepare_v2(
+          db,
+          "DELETE FROM file_facts WHERE file_id=? AND analyzer=? AND "
+          "(analyzer_version<>? OR source_size<>? OR source_mtime<>?);",
+          -1, &clear, nullptr) != SQLITE_OK)
+    return false;
+  bindText(clear, 1, row.fileId);
+  bindText(clear, 2, analyzer);
+  sqlite3_bind_int(clear, 3, version);
+  sqlite3_bind_int64(clear, 4, row.size);
+  sqlite3_bind_int64(clear, 5, row.mtime);
+  sqlite3_step(clear);
+  sqlite3_finalize(clear);
+
+  static const char *sql =
+      "INSERT INTO file_facts(file_id,analyzer,analyzer_version,source_size,"
+      "source_mtime,key,text_value,numeric_value,updated_at) "
+      "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(file_id,analyzer,key) DO UPDATE "
+      "SET analyzer_version=excluded.analyzer_version,"
+      "source_size=excluded.source_size,source_mtime=excluded.source_mtime,"
+      "text_value=excluded.text_value,numeric_value=excluded.numeric_value,"
+      "updated_at=excluded.updated_at;";
+  sqlite3_stmt *st = nullptr;
+  if (sqlite3_prepare_v2(db, sql, -1, &st, nullptr) != SQLITE_OK)
+    return false;
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  bool ok = true;
+  execSql(db, "BEGIN IMMEDIATE;");
+  for (auto it = facts.cbegin(); it != facts.cend(); ++it) {
+    sqlite3_reset(st);
+    sqlite3_clear_bindings(st);
+    bindText(st, 1, row.fileId);
+    bindText(st, 2, analyzer);
+    sqlite3_bind_int(st, 3, version);
+    sqlite3_bind_int64(st, 4, row.size);
+    sqlite3_bind_int64(st, 5, row.mtime);
+    bindText(st, 6, it.key());
+    const QVariant value = it.value();
+    if (value.metaType().id() == QMetaType::QString)
+      bindText(st, 7, value.toString());
+    else
+      sqlite3_bind_null(st, 7);
+    if (value.metaType().id() != QMetaType::QString &&
+        (value.metaType().id() == QMetaType::Bool ||
+         value.canConvert<double>()))
+      sqlite3_bind_double(st, 8, value.toDouble());
+    else
+      sqlite3_bind_null(st, 8);
+    sqlite3_bind_int64(st, 9, now);
     if (sqlite3_step(st) != SQLITE_DONE) {
       ok = false;
       break;
@@ -459,7 +725,7 @@ QString scrubSql(const QString &sql) {
 
 QString querySourceRelation(const QString &sql) {
   static const QRegularExpression re(
-      QStringLiteral("\\bfrom\\s+(here|tree|selection)\\b"),
+      QStringLiteral("\\bfrom\\s+(here|tree|selection|facts|image_facts|projects)\\b"),
       QRegularExpression::CaseInsensitiveOption);
   const auto match = re.match(scrubSql(sql));
   return match.hasMatch() ? match.captured(1).toLower() : QString();
@@ -473,7 +739,13 @@ QStringList queryGroupKeys(const QString &sql) {
       QStringLiteral("kb"),         QStringLiteral("mb"),
       QStringLiteral("gb"),         QStringLiteral("mtime"),
       QStringLiteral("mime"),       QStringLiteral("hidden"),
-      QStringLiteral("is_hidden"),  QStringLiteral("is_symlink")};
+      QStringLiteral("is_hidden"),  QStringLiteral("is_symlink"),
+      QStringLiteral("kind"),       QStringLiteral("stem"),
+      QStringLiteral("depth"),      QStringLiteral("age_days"),
+      QStringLiteral("modified_date"),
+      QStringLiteral("modified_month"),
+      QStringLiteral("size_bucket"),
+      QStringLiteral("age_bucket"), QStringLiteral("root")};
   static const QRegularExpression groupRe(
       QStringLiteral("\\bgroup\\s+by\\s+(.+?)(?=\\border\\s+by\\b|"
                      "\\bhaving\\b|\\blimit\\b|$)"),
@@ -529,6 +801,10 @@ QString sqliteGroupExpression(const QString &key) {
     return QStringLiteral("round(CAST(size AS REAL)/1048576.0,2)");
   if (key == QLatin1String("gb"))
     return QStringLiteral("round(CAST(size AS REAL)/1073741824.0,2)");
+  const QString derived =
+      catalogFieldExpression(key, CatalogSqlDialect::SQLite);
+  if (!derived.isEmpty())
+    return derived;
   static const QSet<QString> direct = {
       QStringLiteral("path"),       QStringLiteral("parent"),
       QStringLiteral("name"),       QStringLiteral("extension"),
@@ -564,7 +840,7 @@ QVariantList sqliteGroupPreviews(sqlite3 *db, const QString &relation,
                                  const QStringList &selection,
                                  const QStringList &groupKeys,
                                  const QJsonObject &row) {
-  if (!db || !groupKeys.contains(QStringLiteral("extension")))
+  if (!db || groupKeys.isEmpty())
     return {};
 
   QStringList where;
@@ -637,7 +913,7 @@ QString drillSql(const QString &relation, const QStringList &groupKeys,
   }
   QString out =
       QStringLiteral("select name, extension, size, kb, mb, gb, mtime, path, "
-                     "is_dir, hidden\n"
+                     "is_dir, hidden, kind, age_days, size_bucket, age_bucket\n"
                      "from %1")
           .arg(relation);
   if (!where.isEmpty())
@@ -685,9 +961,75 @@ bool validateReadOnlyQuery(QString *sql, QString *error) {
   return true;
 }
 
+bool scopeContains(const QString &root, const QString &path) {
+  return !root.isEmpty() &&
+         (root == QLatin1String("/") || path == root ||
+          path.startsWith(root + QLatin1Char('/')));
+}
+
+QVariantMap catalogScopeMetadata(const QString &cwd) {
+  QVariantMap out;
+  out.insert(QStringLiteral("path"), FileCatalog::dbPath());
+  out.insert(QStringLiteral("coverageComplete"), false);
+  out.insert(QStringLiteral("indexedRows"), 0);
+
+  sqlite3 *db = openCatalog();
+  if (!db)
+    return out;
+  sqlite3_stmt *st = nullptr;
+  if (sqlite3_prepare_v2(
+          db,
+          "SELECT root,row_count,completed_at FROM scan_state "
+          "WHERE complete=1 ORDER BY length(root) DESC;",
+          -1, &st, nullptr) == SQLITE_OK) {
+    while (sqlite3_step(st) == SQLITE_ROW) {
+      const auto *rootText = sqlite3_column_text(st, 0);
+      if (!rootText)
+        continue;
+      const QString root = QString::fromUtf8(
+          reinterpret_cast<const char *>(rootText));
+      if (!scopeContains(root, cwd))
+        continue;
+      const qint64 completedAt = sqlite3_column_int64(st, 2);
+      out.insert(QStringLiteral("coverageComplete"), true);
+      out.insert(QStringLiteral("indexedRoot"), root);
+      out.insert(QStringLiteral("indexedRows"),
+                 sqlite3_column_int64(st, 1));
+      out.insert(QStringLiteral("lastCompleteScanAt"), completedAt);
+      if (completedAt > 0) {
+        out.insert(
+            QStringLiteral("lastCompleteScanIso"),
+            QDateTime::fromMSecsSinceEpoch(completedAt).toString(Qt::ISODate));
+      }
+      break;
+    }
+  }
+  if (st)
+    sqlite3_finalize(st);
+  sqlite3_close(db);
+
+  const QFileInfo catalog(FileCatalog::dbPath());
+  if (catalog.exists()) {
+    const qint64 modifiedAt = catalog.lastModified().toMSecsSinceEpoch();
+    out.insert(QStringLiteral("catalogModifiedAt"), modifiedAt);
+    out.insert(QStringLiteral("catalogModifiedIso"),
+               catalog.lastModified().toString(Qt::ISODate));
+  }
+  return out;
+}
+
 QVariantMap runDuckQuery(QString sql, const QString &cwd,
                          const QStringList &selection, int maxRows) {
   QVariantMap out;
+  const QString cleanCwd = normalizedPath(cwd.isEmpty() ? QDir::currentPath()
+                                                         : cwd);
+  const QString relation = querySourceRelation(sql);
+  QVariantMap scope;
+  scope.insert(QStringLiteral("cwd"), cleanCwd);
+  scope.insert(QStringLiteral("relation"), relation);
+  scope.insert(QStringLiteral("selectionCount"), selection.size());
+  out.insert(QStringLiteral("scope"), scope);
+  out.insert(QStringLiteral("catalog"), catalogScopeMetadata(cleanCwd));
   QString validationError;
   if (!validateReadOnlyQuery(&sql, &validationError)) {
     out.insert(QStringLiteral("ok"), false);
@@ -710,7 +1052,6 @@ QVariantMap runDuckQuery(QString sql, const QString &cwd,
     return out;
   }
 
-  const QString cleanCwd = normalizedPath(cwd);
   QString preamble =
       QStringLiteral("LOAD sqlite; ATTACH %1 AS catalog (TYPE sqlite, "
                      "READ_ONLY); SET autoinstall_known_extensions=false; "
@@ -723,7 +1064,8 @@ QVariantMap runDuckQuery(QString sql, const QString &cwd,
     preamble += QStringLiteral("INSERT INTO _synchro_selection VALUES (%1);")
                     .arg(sqlString(normalizedPath(path)));
   preamble += QStringLiteral(
-      "CREATE TEMP VIEW files AS SELECT path,parent,name,extension,"
+      "CREATE TEMP VIEW files AS SELECT path,parent,name,extension,file_id,"
+      "device,inode,"
       "CAST(is_dir AS BOOLEAN) AS is_dir,size,"
       "round(CAST(size AS DOUBLE)/1024.0,2) AS kb,"
       "round(CAST(size AS DOUBLE)/1048576.0,2) AS mb,"
@@ -731,13 +1073,48 @@ QVariantMap runDuckQuery(QString sql, const QString &cwd,
       "mtime,mime,"
       "CAST(is_hidden AS BOOLEAN) AS hidden,"
       "CAST(is_hidden AS BOOLEAN) AS is_hidden,"
-      "CAST(is_symlink AS BOOLEAN) AS is_symlink FROM catalog.files;"
+      "CAST(is_symlink AS BOOLEAN) AS is_symlink,%1 FROM catalog.files;"
       "CREATE TEMP VIEW here AS SELECT f.* FROM files f, _synchro_context c "
       "WHERE f.parent=c.cwd;"
       "CREATE TEMP VIEW tree AS SELECT f.* FROM files f, _synchro_context c "
       "WHERE f.path=c.cwd OR starts_with(f.path,rtrim(c.cwd,'/') || '/');"
       "CREATE TEMP VIEW selection AS SELECT f.* FROM files f JOIN "
-      "_synchro_selection s USING(path);");
+      "_synchro_selection s USING(path);"
+      "CREATE TEMP VIEW facts AS SELECT f.*,x.analyzer,x.analyzer_version,"
+      "x.key,x.text_value,x.numeric_value,x.updated_at FROM tree f JOIN "
+      "catalog.file_facts x ON x.file_id=f.file_id AND "
+      "x.source_size=f.size AND x.source_mtime=f.mtime;"
+      "CREATE TEMP VIEW image_facts AS SELECT f.*,"
+      "max(CASE WHEN x.key='width' THEN x.numeric_value END)::BIGINT AS width,"
+      "max(CASE WHEN x.key='height' THEN x.numeric_value END)::BIGINT AS height,"
+      "max(CASE WHEN x.key='aspect_ratio' THEN x.numeric_value END) AS aspect_ratio,"
+      "max(CASE WHEN x.key='orientation' THEN x.text_value END) AS orientation,"
+      "max(CASE WHEN x.key='dominant_color' THEN x.text_value END) AS dominant_color,"
+      "max(CASE WHEN x.key='color_family' THEN x.text_value END) AS color_family,"
+      "max(CASE WHEN x.key='brightness' THEN x.numeric_value END) AS brightness,"
+      "max(CASE WHEN x.key='saturation' THEN x.numeric_value END) AS saturation,"
+      "max(CASE WHEN x.key='blue_share' THEN x.numeric_value END) AS blue_share,"
+      "max(CASE WHEN x.key='chromatic_share' THEN x.numeric_value END) AS chromatic_share,"
+      "max(CASE WHEN x.key='visual_hash' THEN x.text_value END) AS visual_hash "
+      "FROM tree f JOIN catalog.file_facts x ON x.file_id=f.file_id AND "
+      "x.source_size=f.size AND x.source_mtime=f.mtime "
+      "WHERE x.analyzer='image.visual' AND x.analyzer_version=1 GROUP BY ALL;"
+      "CREATE TEMP VIEW projects AS SELECT parent AS path,"
+      "coalesce(nullif(regexp_extract(parent,'[^/]+$'),''),'/') AS name,"
+      "true AS is_dir,0::BIGINT AS size,max(mtime) AS mtime,"
+      "CASE WHEN count_if(lower(name) IN ('pyproject.toml','setup.py','requirements.txt'))>0 THEN 'python' "
+      "WHEN count_if(lower(name)='package.json')>0 THEN 'node' "
+      "WHEN count_if(lower(name)='cargo.toml')>0 THEN 'rust' "
+      "WHEN count_if(lower(name)='go.mod')>0 THEN 'go' "
+      "WHEN count_if(lower(name) IN ('cmakelists.txt','meson.build'))>0 THEN 'native' "
+      "WHEN count_if(lower(name) IN ('gemfile','composer.json','mix.exs','pom.xml','build.gradle'))>0 "
+      "THEN 'application' ELSE 'build' END AS project_type,"
+      "string_agg(distinct name,', ' ORDER BY name) AS markers "
+      "FROM tree WHERE NOT is_dir AND lower(name) IN ('package.json','cargo.toml',"
+      "'go.mod','pyproject.toml','setup.py','requirements.txt','cmakelists.txt',"
+      "'meson.build','makefile','justfile','gemfile','composer.json','mix.exs',"
+      "'pom.xml','build.gradle') GROUP BY parent;")
+                  .arg(derivedProjection(CatalogSqlDialect::DuckDb));
   const int limit = qBound(1, maxRows <= 0 ? kDefaultMaxRows : maxRows, 500);
   const QString command =
       preamble + QStringLiteral("SELECT * FROM (%1) AS _synchro_result LIMIT %2")
@@ -784,7 +1161,6 @@ QVariantMap runDuckQuery(QString sql, const QString &cwd,
     array.removeLast();
   QVariantList columns;
   QVariantList rows;
-  const QString relation = querySourceRelation(sql);
   const QStringList groupKeys = queryGroupKeys(sql);
   QHash<QByteArray, QVariantList> groupPreviews;
   bool groupShapeOk = !relation.isEmpty() && !groupKeys.isEmpty();
@@ -856,8 +1232,46 @@ QVariantMap runDuckQuery(QString sql, const QString &cwd,
   out.insert(QStringLiteral("truncated"), truncated);
   out.insert(QStringLiteral("elapsedMs"), timer.elapsed());
   out.insert(QStringLiteral("cwd"), cleanCwd);
+  out.insert(QStringLiteral("selection"), selection);
   out.insert(QStringLiteral("sourceRelation"), relation);
   out.insert(QStringLiteral("groupKeys"), groupKeys);
+  if (relation == QLatin1String("image_facts")) {
+    QVariantMap coverage;
+    sqlite3 *coverageDb = openCatalog();
+    if (coverageDb) {
+      const QString lower = cleanCwd == QLatin1String("/")
+                                ? cleanCwd
+                                : cleanCwd + QLatin1Char('/');
+      const QString upper = cleanCwd == QLatin1String("/")
+                                ? QStringLiteral("0")
+                                : cleanCwd + QLatin1Char('0');
+      const char *countSql =
+          "SELECT count(*),count(x.file_id) FROM files f LEFT JOIN "
+          "(SELECT DISTINCT file_id,source_size,source_mtime FROM file_facts "
+          "WHERE analyzer='image.visual' AND analyzer_version=1) x ON "
+          "x.file_id=f.file_id AND x.source_size=f.size AND "
+          "x.source_mtime=f.mtime WHERE f.is_dir=0 AND f.path>=? AND f.path<? "
+          "AND lower(f.extension) IN ('jpg','jpeg','png','gif','webp','avif',"
+          "'bmp','tif','tiff','heic','heif');";
+      sqlite3_stmt *count = nullptr;
+      if (sqlite3_prepare_v2(coverageDb, countSql, -1, &count, nullptr) ==
+          SQLITE_OK) {
+        bindText(count, 1, lower);
+        bindText(count, 2, upper);
+        if (sqlite3_step(count) == SQLITE_ROW) {
+          const qint64 total = sqlite3_column_int64(count, 0);
+          const qint64 analyzed = sqlite3_column_int64(count, 1);
+          coverage.insert(QStringLiteral("analyzed"), analyzed);
+          coverage.insert(QStringLiteral("total"), total);
+          coverage.insert(QStringLiteral("complete"), analyzed >= total);
+        }
+      }
+      if (count)
+        sqlite3_finalize(count);
+      sqlite3_close(coverageDb);
+    }
+    out.insert(QStringLiteral("factCoverage"), coverage);
+  }
   return out;
 }
 
@@ -872,6 +1286,9 @@ FileCatalog::FileCatalog(DirectoryModel *model, QObject *parent)
   m_writerPool.setExpiryTimeout(-1);
   m_queryPool.setMaxThreadCount(1);
   m_queryPool.setExpiryTimeout(-1);
+  m_analysisPool.setMaxThreadCount(1);
+  m_analysisPool.setExpiryTimeout(-1);
+  m_analysisPool.setThreadPriority(QThread::LowPriority);
   m_snapshotTimer.setSingleShot(true);
   m_snapshotTimer.setInterval(90);
   connect(&m_snapshotTimer, &QTimer::timeout, this,
@@ -885,6 +1302,8 @@ FileCatalog::FileCatalog(DirectoryModel *model, QObject *parent)
             &FileCatalog::enqueueUpsert);
     connect(m_model, &DirectoryModel::catalogPathsRemoved, this,
             &FileCatalog::enqueueDelete);
+    connect(m_model, &DirectoryModel::imageFactsReady, this,
+            &FileCatalog::recordImageFacts);
     connect(m_model, &DirectoryModel::listingChanged, this, [this] {
       if (m_model && !m_model->listing())
         scheduleSnapshot();
@@ -901,6 +1320,7 @@ FileCatalog::~FileCatalog() {
   m_scanPool.waitForDone();
   m_writerPool.waitForDone();
   m_queryPool.waitForDone();
+  m_analysisPool.waitForDone();
 }
 
 QString FileCatalog::dbPath() {
@@ -911,15 +1331,31 @@ QString FileCatalog::dbPath() {
          QStringLiteral("/.local/share/synchro/catalog.sqlite");
 }
 
+QVariantMap FileCatalog::querySync(const QString &sql, const QString &cwd,
+                                   const QStringList &selection,
+                                   int maxRows) {
+  return runDuckQuery(sql, cwd, selection, maxRows);
+}
+
+QString FileCatalog::sourceRelationForQuery(const QString &sql) {
+  return querySourceRelation(sql);
+}
+
 QStringList FileCatalog::fields() const {
   // Row-major order for the SQL editor's compact three-column field index.
-  return {QStringLiteral("path"),       QStringLiteral("size"),
-          QStringLiteral("mime"),       QStringLiteral("parent"),
-          QStringLiteral("kb"),         QStringLiteral("hidden"),
-          QStringLiteral("name"),       QStringLiteral("mb"),
-          QStringLiteral("is_hidden"),  QStringLiteral("extension"),
-          QStringLiteral("gb"),         QStringLiteral("is_symlink"),
-          QStringLiteral("is_dir"),     QStringLiteral("mtime")};
+  return {QStringLiteral("path"),           QStringLiteral("size"),
+          QStringLiteral("kind"),           QStringLiteral("parent"),
+          QStringLiteral("kb"),             QStringLiteral("size_bucket"),
+          QStringLiteral("name"),           QStringLiteral("mb"),
+          QStringLiteral("age_days"),       QStringLiteral("extension"),
+          QStringLiteral("gb"),             QStringLiteral("age_bucket"),
+          QStringLiteral("stem"),           QStringLiteral("mtime"),
+          QStringLiteral("modified_date"),  QStringLiteral("is_dir"),
+          QStringLiteral("modified_month"), QStringLiteral("hidden"),
+          QStringLiteral("depth"),          QStringLiteral("is_hidden"),
+          QStringLiteral("root"),           QStringLiteral("mime"),
+          QStringLiteral("is_symlink"),     QStringLiteral("file_id"),
+          QStringLiteral("device"),         QStringLiteral("inode")};
 }
 
 QVariantMap FileCatalog::status() const {
@@ -1004,6 +1440,121 @@ void FileCatalog::enqueueDelete(const QStringList &rawPaths) {
   });
 }
 
+void FileCatalog::recordImageFacts(const QString &rawPath, qint64 mtime,
+                                   const QVariantMap &facts) {
+  const QString path = normalizedPath(rawPath);
+  if (path.isEmpty() || facts.isEmpty())
+    return;
+  m_writerPool.start([path, mtime, facts] {
+    const CatalogRow row = rowForPath(path);
+    // A queued thumbnail completion for an older file revision must not
+    // overwrite facts for the replacement now at the same path.
+    if (row.path.isEmpty() || row.mtime != mtime)
+      return;
+    sqlite3 *db = openCatalog();
+    if (!db)
+      return;
+    writeFacts(db, row, QStringLiteral("image.visual"), 1, facts);
+    sqlite3_close(db);
+  });
+}
+
+void FileCatalog::analyzeImages(const QString &rawRoot, int maxFiles) {
+  const QString root = normalizedPath(rawRoot);
+  if (root.isEmpty() || m_analyzing || !QFileInfo(root).isDir())
+    return;
+  const int cap = qBound(1, maxFiles <= 0 ? 500 : maxFiles, 2000);
+  m_analyzing = true;
+  m_analysisStatus = QStringLiteral("finding unanalyzed images…");
+  emit analysisChanged();
+  QPointer<FileCatalog> self(this);
+  m_analysisPool.start([self, root, cap] {
+    sqlite3 *db = openCatalog();
+    if (!db) {
+      if (self)
+        QMetaObject::invokeMethod(
+            self,
+            [self] {
+              if (self) {
+                self->m_analyzing = false;
+                self->m_analysisStatus = QStringLiteral("facts unavailable");
+                emit self->analysisChanged();
+              }
+            },
+            Qt::QueuedConnection);
+      return;
+    }
+    const QString lower = root == QLatin1String("/")
+                              ? root
+                              : root + QLatin1Char('/');
+    const QString upper = root == QLatin1String("/")
+                              ? QStringLiteral("0")
+                              : root + QLatin1Char('0');
+    sqlite3_stmt *st = nullptr;
+    QVector<CatalogRow> rows;
+    const char *sql =
+        "SELECT path FROM files f WHERE is_dir=0 AND path>=? AND path<? AND "
+        "lower(extension) IN ('jpg','jpeg','png','gif','webp','avif','bmp',"
+        "'tif','tiff','heic','heif') AND NOT EXISTS (SELECT 1 FROM file_facts x "
+        "WHERE x.file_id=f.file_id AND x.analyzer='image.visual' AND "
+        "x.analyzer_version=1 AND x.source_size=f.size AND "
+        "x.source_mtime=f.mtime) ORDER BY mtime DESC LIMIT ?;";
+    if (sqlite3_prepare_v2(db, sql, -1, &st, nullptr) == SQLITE_OK) {
+      bindText(st, 1, lower);
+      bindText(st, 2, upper);
+      sqlite3_bind_int(st, 3, cap);
+      while (sqlite3_step(st) == SQLITE_ROW) {
+        const auto *text = sqlite3_column_text(st, 0);
+        if (text)
+          rows.append(rowForPath(QString::fromUtf8(
+              reinterpret_cast<const char *>(text))));
+      }
+    }
+    if (st)
+      sqlite3_finalize(st);
+
+    int analyzed = 0;
+    for (const CatalogRow &row : std::as_const(rows)) {
+      if (!self)
+        break;
+      const QImage image = ThumbnailService::decodeRaster(row.path, 96);
+      if (image.isNull())
+        continue;
+      const QVariantMap facts =
+          ThumbnailService::deterministicImageFacts(row.path, image);
+      if (writeFacts(db, row, QStringLiteral("image.visual"), 1, facts))
+        ++analyzed;
+      if ((analyzed % 50) == 0 && self) {
+        QMetaObject::invokeMethod(
+            self,
+            [self, analyzed, total = rows.size()] {
+              if (self) {
+                self->m_analysisStatus =
+                    QStringLiteral("image facts · %1 / %2").arg(analyzed).arg(total);
+                emit self->analysisChanged();
+              }
+            },
+            Qt::QueuedConnection);
+      }
+    }
+    sqlite3_close(db);
+    if (self)
+      QMetaObject::invokeMethod(
+          self,
+          [self, analyzed, requested = rows.size()] {
+            if (self) {
+              self->m_analyzing = false;
+              self->m_analysisStatus = requested == 0
+                                           ? QStringLiteral("image facts current")
+                                           : QStringLiteral("image facts · %1 added")
+                                                 .arg(analyzed);
+              emit self->analysisChanged();
+            }
+          },
+          Qt::QueuedConnection);
+  });
+}
+
 quint64 FileCatalog::query(const QString &sql, const QString &cwd,
                            const QStringList &selection, int maxRows) {
   // Capture the browser relation before dispatching. The query worker waits
@@ -1016,7 +1567,7 @@ quint64 FileCatalog::query(const QString &sql, const QString &cwd,
   m_queryPool.start([self, writerPool, request, sql, cwd, selection, maxRows] {
                       writerPool->waitForDone();
                       const QVariantMap result =
-                          runDuckQuery(sql, cwd, selection, maxRows);
+                          querySync(sql, cwd, selection, maxRows);
                       if (!self)
                         return;
                       QMetaObject::invokeMethod(
@@ -1031,7 +1582,7 @@ quint64 FileCatalog::query(const QString &sql, const QString &cwd,
 }
 
 QString FileCatalog::sourceRelation(const QString &sql) const {
-  return querySourceRelation(sql);
+  return sourceRelationForQuery(sql);
 }
 
 bool FileCatalog::coversTree(const QString &rawRoot) const {

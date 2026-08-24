@@ -19,6 +19,7 @@ struct DirectoryEntry {
   QString typeLabel; // human-readable kind, e.g. "PNG image", "Folder"
   QString iconName;
   QString thumbnail;
+  bool thumbnailPending = false;
   QStringList previewPaths;
   bool isHidden = false;
   bool isSymlink = false;

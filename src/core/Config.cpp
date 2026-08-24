@@ -105,6 +105,8 @@ void Config::applyDefaults() {
   m_panelSize = 260;
   m_panelOpen = false;
   m_panelApp = QStringLiteral("synchro.panel.terminal");
+  m_panelLookOpen = true;
+  m_panelLookRatio = 0.34;
   m_gridSize = 132;
 }
 
@@ -157,6 +159,10 @@ bool Config::load() {
     const QString app = panel.value(QStringLiteral("app")).toString();
     if (!app.isEmpty())
       m_panelApp = app;
+    m_panelLookOpen = panel.value(QStringLiteral("lookOpen")).toBool(true);
+    m_panelLookRatio =
+        qBound(0.2, panel.value(QStringLiteral("lookRatio")).toDouble(0.34),
+               0.5);
   }
   if (obj.contains(QStringLiteral("gridSize")))
     m_gridSize = qBound(88, obj.value(QStringLiteral("gridSize")).toInt(132), 240);
@@ -213,6 +219,8 @@ bool Config::save() const {
   panel.insert(QStringLiteral("size"), m_panelSize);
   panel.insert(QStringLiteral("open"), m_panelOpen);
   panel.insert(QStringLiteral("app"), m_panelApp);
+  panel.insert(QStringLiteral("lookOpen"), m_panelLookOpen);
+  panel.insert(QStringLiteral("lookRatio"), m_panelLookRatio);
   obj.insert(QStringLiteral("panel"), panel);
   obj.insert(QStringLiteral("gridSize"), m_gridSize);
   QSaveFile out(m_path);
@@ -370,6 +378,21 @@ void Config::setPanelApp(const QString &id) {
   if (m_panelApp == id || id.isEmpty())
     return;
   m_panelApp = id;
+  emit panelChanged();
+}
+
+void Config::setPanelLookOpen(bool open) {
+  if (m_panelLookOpen == open)
+    return;
+  m_panelLookOpen = open;
+  emit panelChanged();
+}
+
+void Config::setPanelLookRatio(double ratio) {
+  const double next = qBound(0.2, ratio, 0.5);
+  if (qFuzzyCompare(m_panelLookRatio, next))
+    return;
+  m_panelLookRatio = next;
   emit panelChanged();
 }
 

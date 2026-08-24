@@ -17,6 +17,7 @@
 #include <QFontMetrics>
 #include <QImage>
 #include <QImageReader>
+#include <QElapsedTimer>
 #include <QMetaObject>
 #include <QMimeDatabase>
 #include <QMimeType>
@@ -870,6 +871,8 @@ public:
   }
 
   std::function<void(const QString &, const QString &)> notify;
+  std::function<void(const QVector<ThumbnailResult> &)> notifyBatch;
+  std::function<void(const QString &, qint64, const QVariantMap &)> notifyFacts;
 
   void setThumbnailerDirectories(const QStringList &dirs) {
     m_thumbnailerDirs = dirs;
@@ -919,29 +922,35 @@ public:
   }
 
   void submit(const QVector<ThumbnailJob> &jobs, bool exclusive) {
+    QElapsedTimer elapsed;
+    elapsed.start();
     QSet<QString> keep;
     keep.reserve(jobs.size());
+    QVector<ThumbnailResult> hits;
+    hits.reserve(jobs.size());
+    QVector<Job> cold;
+    cold.reserve(jobs.size());
     for (const ThumbnailJob &in : jobs) {
       if (in.path.isEmpty() || in.mtime <= 0 || in.sizePx <= 0)
         continue;
       if (isThumbCachePath(in.path))
         continue;
       Job job;
-      job.key = jobKey(in.path, in.mtime, in.sizePx);
       job.path = in.path;
       job.mime = in.mime;
       job.mtime = in.mtime;
-      job.sizePx = in.sizePx;
+      job.sizePx = ThumbCache::canonicalSize(in.sizePx);
+      job.key = jobKey(job.path, job.mtime, job.sizePx);
       job.priority = in.priority;
       job.mosaicPaths = in.mosaicPaths;
       job.mosaicLabel = in.mosaicLabel;
       keep.insert(job.key);
 
       if (const auto it = m_ready.constFind(job.key); it != m_ready.cend()) {
-        if (ThumbCache::instance().contains(cachePath(job), job.mtime,
-                                            job.sizePx)) {
-          if (notify)
-            notify(job.path, it.value());
+        const QString ready = ThumbCache::instance().lookupUrl(
+            cachePath(job), job.mtime, job.sizePx);
+        if (!ready.isEmpty()) {
+          hits.append({job.path, ready});
           continue;
         }
         m_ready.erase(it);
@@ -954,11 +963,34 @@ public:
       if (isActive(job.key)) {
         continue;
       }
-      const QString hit = lookupCache(job);
+      const QString hit = lookupPacked(job);
       if (!hit.isEmpty()) {
         m_ready.insert(job.key, hit);
-        if (notify)
-          notify(job.path, hit);
+        hits.append({job.path, hit});
+        continue;
+      }
+      cold.append(job);
+    }
+
+    const int packedHits = hits.size();
+    const qint64 packedMs = elapsed.elapsed();
+    if (!hits.isEmpty() && notifyBatch) {
+      notifyBatch(hits);
+      hits.clear();
+    }
+
+    int legacyHits = 0;
+    for (const Job &job : std::as_const(cold)) {
+      const QString hit = lookupLegacyCache(job);
+      if (!hit.isEmpty()) {
+        ++legacyHits;
+        m_ready.insert(job.key, hit);
+        hits.append({job.path, hit});
+        // Do not make the first legacy hits wait behind every remaining file.
+        if (hits.size() >= 8 && notifyBatch) {
+          notifyBatch(hits);
+          hits.clear();
+        }
         continue;
       }
       if (m_pending.contains(job.key))
@@ -966,6 +998,9 @@ public:
       else
         m_pending.insert(job.key, job);
     }
+
+    if (!hits.isEmpty() && notifyBatch)
+      notifyBatch(hits);
 
     if (exclusive) {
       for (auto it = m_pending.begin(); it != m_pending.end();) {
@@ -980,8 +1015,11 @@ public:
       }
     }
 
-    debugLog("thumb queue pending=%d active=%d", m_pending.size(),
-             m_active.size());
+    debugLog("thumb batch jobs=%d packed=%d legacy=%d pending=%d "
+             "active=%d packed_lookup=%lldms total=%lldms",
+             jobs.size(), packedHits, legacyHits, m_pending.size(),
+             m_active.size(), static_cast<long long>(packedMs),
+             static_cast<long long>(elapsed.elapsed()));
     kick();
   }
 
@@ -1037,10 +1075,13 @@ private:
     return storePacked(job, pngBytes(img));
   }
 
-  QString lookupCache(const Job &job) const {
+  QString lookupPacked(const Job &job) const {
     const QString packed = cachePath(job);
-    if (ThumbCache::instance().contains(packed, job.mtime, job.sizePx))
-      return ThumbCache::imageUrl(packed, job.mtime, job.sizePx);
+    return ThumbCache::instance().lookupUrl(packed, job.mtime, job.sizePx);
+  }
+
+  QString lookupLegacyCache(const Job &job) const {
+    const QString packed = cachePath(job);
     const QString uri = ThumbnailService::canonicalFileUri(job.path);
     const qint64 mtimeSec = job.mtime / 1000;
     const QString preferred = ThumbnailService::xdgSizeDir(job.sizePx);
@@ -1068,6 +1109,11 @@ private:
       return ThumbCache::imageUrl(packed, job.mtime, job.sizePx);
     }
     return {};
+  }
+
+  QString lookupCache(const Job &job) const {
+    const QString packed = lookupPacked(job);
+    return packed.isEmpty() ? lookupLegacyCache(job) : packed;
   }
 
   QString destFor(const Job &job) const {
@@ -1177,6 +1223,10 @@ private:
     if (looksLikeImage(job.path, job.mime)) {
       QImage direct = ThumbnailService::decodeRaster(job.path, job.sizePx);
       if (!direct.isNull()) {
+        if (notifyFacts)
+          notifyFacts(job.path, job.mtime,
+                      ThumbnailService::deterministicImageFacts(job.path,
+                                                                direct));
         direct = scaleToFit(direct, job.sizePx);
         if (storePackedImage(job, direct)) {
           const QString url = packedUrl(job);
@@ -1690,6 +1740,124 @@ QImage ThumbnailService::decodeRaster(const QString &path, int maxEdge) {
   return {};
 }
 
+QVariantMap ThumbnailService::deterministicImageFacts(const QString &path,
+                                                       const QImage &image) {
+  QVariantMap facts;
+  if (image.isNull())
+    return facts;
+
+  QSize sourceSize;
+  QImageReader reader(path);
+  if (reader.canRead())
+    sourceSize = reader.size();
+  if (!sourceSize.isValid())
+    sourceSize = image.size();
+
+  const double aspect = sourceSize.height() > 0
+                            ? double(sourceSize.width()) / sourceSize.height()
+                            : 0.0;
+  facts.insert(QStringLiteral("width"), sourceSize.width());
+  facts.insert(QStringLiteral("height"), sourceSize.height());
+  facts.insert(QStringLiteral("aspect_ratio"),
+               qRound(aspect * 1000.0) / 1000.0);
+  facts.insert(QStringLiteral("orientation"),
+               aspect > 1.08   ? QStringLiteral("landscape")
+               : aspect < 0.92 ? QStringLiteral("portrait")
+                               : QStringLiteral("square"));
+
+  const QImage sample =
+      image.convertToFormat(QImage::Format_RGB32)
+          .scaled(64, 64, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+  quint64 red = 0, green = 0, blue = 0;
+  double luminance = 0.0;
+  double saturation = 0.0;
+  int chromatic = 0;
+  QHash<QString, int> families;
+  for (int y = 0; y < sample.height(); ++y) {
+    const auto *line = reinterpret_cast<const QRgb *>(sample.constScanLine(y));
+    for (int x = 0; x < sample.width(); ++x) {
+      const QColor color(line[x]);
+      red += color.red();
+      green += color.green();
+      blue += color.blue();
+      luminance += 0.2126 * color.redF() + 0.7152 * color.greenF() +
+                   0.0722 * color.blueF();
+      saturation += color.hsvSaturationF();
+      if (color.hsvSaturationF() < 0.16 || color.valueF() < 0.10)
+        continue;
+      ++chromatic;
+      const double hue = color.hsvHueF() * 360.0;
+      QString family;
+      if (hue < 18.0 || hue >= 345.0)
+        family = QStringLiteral("red");
+      else if (hue < 48.0)
+        family = QStringLiteral("orange");
+      else if (hue < 72.0)
+        family = QStringLiteral("yellow");
+      else if (hue < 165.0)
+        family = QStringLiteral("green");
+      else if (hue < 195.0)
+        family = QStringLiteral("cyan");
+      else if (hue < 260.0)
+        family = QStringLiteral("blue");
+      else if (hue < 305.0)
+        family = QStringLiteral("purple");
+      else
+        family = QStringLiteral("pink");
+      ++families[family];
+    }
+  }
+  const int pixels = qMax(1, sample.width() * sample.height());
+  const QColor average(int(red / pixels), int(green / pixels),
+                       int(blue / pixels));
+  QString dominant = luminance / pixels < 0.13 ? QStringLiteral("black")
+                     : luminance / pixels > 0.90 && saturation / pixels < 0.12
+                         ? QStringLiteral("white")
+                         : QStringLiteral("gray");
+  int dominantCount = 0;
+  for (auto it = families.cbegin(); it != families.cend(); ++it) {
+    if (it.value() > dominantCount) {
+      dominant = it.key();
+      dominantCount = it.value();
+    }
+  }
+  const int bluePixels = families.value(QStringLiteral("blue")) +
+                         families.value(QStringLiteral("cyan"));
+  facts.insert(QStringLiteral("dominant_color"), average.name(QColor::HexRgb));
+  facts.insert(QStringLiteral("color_family"), dominant);
+  facts.insert(QStringLiteral("brightness"),
+               qRound((luminance / pixels) * 1000.0) / 1000.0);
+  facts.insert(QStringLiteral("saturation"),
+               qRound((saturation / pixels) * 1000.0) / 1000.0);
+  facts.insert(QStringLiteral("blue_share"),
+               qRound((double(bluePixels) / pixels) * 1000.0) / 1000.0);
+  facts.insert(QStringLiteral("chromatic_share"),
+               qRound((double(chromatic) / pixels) * 1000.0) / 1000.0);
+
+  const QImage hashSample =
+      image.convertToFormat(QImage::Format_Grayscale8)
+          .scaled(8, 8, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+  int grayTotal = 0;
+  for (int y = 0; y < 8; ++y) {
+    const uchar *line = hashSample.constScanLine(y);
+    for (int x = 0; x < 8; ++x)
+      grayTotal += line[x];
+  }
+  const int grayAverage = grayTotal / 64;
+  quint64 hash = 0;
+  for (int y = 0; y < 8; ++y) {
+    const uchar *line = hashSample.constScanLine(y);
+    for (int x = 0; x < 8; ++x) {
+      hash <<= 1;
+      if (line[x] >= grayAverage)
+        hash |= 1;
+    }
+  }
+  facts.insert(QStringLiteral("visual_hash"),
+               QStringLiteral("%1").arg(hash, 16, 16, QLatin1Char('0')));
+  return facts;
+}
+
 QString ThumbnailService::ensureRasterPng(const QString &path, qint64 mtime,
                                           int maxEdge) {
   if (path.isEmpty())
@@ -1911,6 +2079,8 @@ bool ThumbnailService::renderFolderMosaic(const QString &dirPath,
 ThumbnailService::ThumbnailService(QObject *parent) : QObject(parent) {
   qRegisterMetaType<ThumbnailJob>();
   qRegisterMetaType<QVector<ThumbnailJob>>();
+  qRegisterMetaType<ThumbnailResult>();
+  qRegisterMetaType<QVector<ThumbnailResult>>();
   qRegisterMetaType<ExecThumbnailer>();
   qRegisterMetaType<QVector<ExecThumbnailer>>();
 
@@ -1921,6 +2091,28 @@ ThumbnailService::ThumbnailService(QObject *parent) : QObject(parent) {
         [this, path, url] { emit thumbnailReady(path, displayUrl(path, url)); },
         Qt::QueuedConnection);
   };
+  m_engine->notifyBatch = [this](const QVector<ThumbnailResult> &results) {
+    QMetaObject::invokeMethod(
+        this,
+        [this, results] {
+          QVector<ThumbnailResult> display;
+          display.reserve(results.size());
+          for (const ThumbnailResult &result : results)
+            display.append(
+                {result.path, displayUrl(result.path, result.url)});
+          emit thumbnailsReady(display);
+        },
+        Qt::QueuedConnection);
+  };
+  m_engine->notifyFacts =
+      [this](const QString &path, qint64 mtime, const QVariantMap &facts) {
+        QMetaObject::invokeMethod(
+            this,
+            [this, path, mtime, facts] {
+              emit imageFactsReady(path, mtime, facts);
+            },
+            Qt::QueuedConnection);
+      };
   m_engine->moveToThread(&m_thread);
   connect(
       this, &ThumbnailService::submitted, m_engine,
@@ -1969,7 +2161,8 @@ QString ThumbnailService::packedUrl(const QString &path, qint64 mtime,
 bool hydratePacked(const ThumbnailJob &job, QString *url) {
   const QString packed = cachePathFor(job.path);
   auto *cache = &ThumbCache::instance();
-  if (!cache->contains(packed, job.mtime, job.sizePx)) {
+  QString hit = cache->lookupUrl(packed, job.mtime, job.sizePx);
+  if (hit.isEmpty()) {
     const QString uri = ThumbnailService::canonicalFileUri(job.path);
     const qint64 mtimeSec = job.mtime / 1000;
     const QString xdg =
@@ -1983,10 +2176,11 @@ bool hydratePacked(const ThumbnailJob &job, QString *url) {
         cache->ingestFile(packed, job.mtime, job.sizePx, syn);
     }
   }
-  if (!cache->contains(packed, job.mtime, job.sizePx))
+  hit = cache->lookupUrl(packed, job.mtime, job.sizePx);
+  if (hit.isEmpty())
     return false;
   if (url)
-    *url = ThumbCache::imageUrl(packed, job.mtime, job.sizePx);
+    *url = hit;
   return true;
 }
 
@@ -2001,7 +2195,8 @@ void ThumbnailService::request(const QString &path, qint64 mtime, int sizePx) {
 void ThumbnailService::request(const QVector<ThumbnailJob> &jobs) {
   QVector<ThumbnailJob> miss;
   miss.reserve(jobs.size());
-  for (const ThumbnailJob &job : jobs) {
+  for (ThumbnailJob job : jobs) {
+    job.sizePx = ThumbCache::canonicalSize(job.sizePx);
     QString url;
     if (hydratePacked(job, &url))
       emit thumbnailReady(job.path, displayUrl(job.path, url));
@@ -2012,17 +2207,32 @@ void ThumbnailService::request(const QVector<ThumbnailJob> &jobs) {
     emit submitted(miss, false);
 }
 
-void ThumbnailService::requestVisible(const QVector<ThumbnailJob> &jobs) {
-  QVector<ThumbnailJob> miss;
-  miss.reserve(jobs.size());
-  for (const ThumbnailJob &job : jobs) {
-    QString url;
-    if (hydratePacked(job, &url))
-      emit thumbnailReady(job.path, displayUrl(job.path, url));
-    else
-      miss.append(job);
+void ThumbnailService::requestBackground(
+    const QVector<ThumbnailJob> &jobs) {
+  QVector<ThumbnailJob> normalized;
+  normalized.reserve(jobs.size());
+  for (ThumbnailJob job : jobs) {
+    if (job.path.isEmpty() || job.mtime <= 0 || job.sizePx <= 0)
+      continue;
+    job.sizePx = ThumbCache::canonicalSize(job.sizePx);
+    normalized.append(std::move(job));
   }
-  emit submitted(miss, true);
+  if (!normalized.isEmpty())
+    emit submitted(normalized, false);
+}
+
+void ThumbnailService::requestVisible(const QVector<ThumbnailJob> &jobs) {
+  QVector<ThumbnailJob> normalized;
+  normalized.reserve(jobs.size());
+  for (ThumbnailJob job : jobs) {
+    if (job.path.isEmpty() || job.mtime <= 0 || job.sizePx <= 0)
+      continue;
+    job.sizePx = ThumbCache::canonicalSize(job.sizePx);
+    normalized.append(std::move(job));
+  }
+  // Cache probing and legacy-cache ingestion can perform SQLite and file I/O;
+  // keep the entire visible-page lookup on the thumbnail thread.
+  emit submitted(normalized, true);
 }
 
 void ThumbnailService::invalidate(const QString &path) {

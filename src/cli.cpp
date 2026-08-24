@@ -1,5 +1,7 @@
 #include "cli.h"
 
+#include "AgentBridge.h"
+#include "FileCatalog.h"
 #include "HandlerInstall.h"
 #include "HandlerRegistry.h"
 #include "Manifest.h"
@@ -7,6 +9,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -27,6 +30,17 @@ void usage() {
                "       synchro handler disable <id>\n"
                "       synchro handler list [--json]\n"
                "       synchro handler validate <dir>\n");
+}
+
+void queryUsage() {
+  std::fprintf(stderr,
+               "Usage: synchro query --sql <SELECT> [--cwd <folder>] "
+               "[--selection <path>]... [--limit <1-500>] [--compact]\n"
+               "       synchro query <SELECT> [same options]\n");
+}
+
+void mcpUsage() {
+  std::fprintf(stderr, "Usage: synchro mcp [--stdio]\n");
 }
 
 bool interactive() { return isatty(STDIN_FILENO) && isatty(STDOUT_FILENO); }
@@ -302,4 +316,110 @@ int runHandlerCli(int argc, char **argv) {
                qPrintable(cmd));
   usage();
   return 2;
+}
+
+int runQueryCli(int argc, char **argv) {
+  Q_UNUSED(argc);
+  Q_UNUSED(argv);
+  const QStringList args = QCoreApplication::arguments().mid(2);
+  QString sql;
+  QString cwd = QDir::currentPath();
+  QStringList selection;
+  int limit = 200;
+  bool compact = false;
+  for (int i = 0; i < args.size(); ++i) {
+    const QString arg = args.at(i);
+    auto next = [&](const char *option) -> QString {
+      if (i + 1 >= args.size()) {
+        std::fprintf(stderr, "synchro: %s needs a value\n", option);
+        return {};
+      }
+      return args.at(++i);
+    };
+    if (arg == QLatin1String("--sql")) {
+      sql = next("--sql");
+      if (sql.isNull())
+        return 2;
+    } else if (arg == QLatin1String("--cwd")) {
+      cwd = next("--cwd");
+      if (cwd.isNull())
+        return 2;
+    } else if (arg == QLatin1String("--selection") ||
+               arg == QLatin1String("--select")) {
+      const QString path = next("--selection");
+      if (path.isNull())
+        return 2;
+      selection.append(path);
+    } else if (arg == QLatin1String("--limit")) {
+      bool ok = false;
+      const QString value = next("--limit");
+      if (value.isNull())
+        return 2;
+      limit = value.toInt(&ok);
+      if (!ok || limit < 1 || limit > 500) {
+        std::fprintf(stderr, "synchro: --limit must be between 1 and 500\n");
+        return 2;
+      }
+    } else if (arg == QLatin1String("--compact")) {
+      compact = true;
+    } else if (arg == QLatin1String("--json")) {
+      // JSON is the only output format; accept this for explicit scripts.
+    } else if (arg == QLatin1String("-h") ||
+               arg == QLatin1String("--help")) {
+      queryUsage();
+      return 0;
+    } else if (arg.startsWith(QLatin1Char('-'))) {
+      std::fprintf(stderr, "synchro: unknown query option %s\n",
+                   qPrintable(arg));
+      queryUsage();
+      return 2;
+    } else if (sql.isEmpty()) {
+      sql = arg;
+    } else {
+      std::fprintf(stderr, "synchro: unexpected query argument %s\n",
+                   qPrintable(arg));
+      queryUsage();
+      return 2;
+    }
+  }
+  if (sql == QLatin1String("-")) {
+    QFile input;
+    if (!input.open(stdin, QIODevice::ReadOnly)) {
+      std::fprintf(stderr, "synchro: could not read SQL from stdin\n");
+      return 1;
+    }
+    sql = QString::fromUtf8(input.readAll());
+  }
+  if (sql.trimmed().isEmpty()) {
+    queryUsage();
+    return 2;
+  }
+  const QVariantMap result =
+      FileCatalog::querySync(sql, cwd, selection, limit);
+  QByteArray encoded = QJsonDocument(QJsonObject::fromVariantMap(result))
+                           .toJson(compact ? QJsonDocument::Compact
+                                           : QJsonDocument::Indented);
+  if (compact)
+    encoded.append('\n');
+  std::fwrite(encoded.constData(), 1, static_cast<size_t>(encoded.size()),
+              stdout);
+  return result.value(QStringLiteral("ok")).toBool() ? 0 : 1;
+}
+
+int runMcpCli(int argc, char **argv) {
+  Q_UNUSED(argc);
+  Q_UNUSED(argv);
+  const QStringList args = QCoreApplication::arguments().mid(2);
+  for (const QString &arg : args) {
+    if (arg == QLatin1String("--stdio"))
+      continue;
+    if (arg == QLatin1String("-h") || arg == QLatin1String("--help")) {
+      mcpUsage();
+      return 0;
+    }
+    std::fprintf(stderr, "synchro: unknown mcp option %s\n", qPrintable(arg));
+    mcpUsage();
+    return 2;
+  }
+  return AgentBridge::runStdio();
 }

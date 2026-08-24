@@ -80,6 +80,8 @@ private slots:
   void tryExecMissingBinaryIsSkipped();
   void textCardGeneratedWhenNoThumbnailer();
   void webpDecodesWithoutQtPlugin();
+  void deterministicImageFactsAreStable();
+  void generatedImagePublishesFacts();
   void folderMosaicFromChildImages();
   void folderMosaicFindsImagesPastEarlyFiles();
   void folderMosaicFollowsImageSymlink();
@@ -92,6 +94,7 @@ private slots:
   void emptyFolderGetsFolderCard();
   void unknownFileGetsFallbackCard();
   void packedCacheRoundTrip();
+  void visibleRequestsReuseLargerTierAsOneBatch();
   void invalidateDropsOldPackedEntry();
 
 private:
@@ -374,6 +377,52 @@ void ThumbnailServiceTest::webpDecodesWithoutQtPlugin() {
   QVERIFY2(!url.isEmpty(), "WebP must produce a PNG thumb without Qt's plugin");
   QCOMPARE(url, ThumbnailService::packedUrl(src, mtime, 128));
   QVERIFY(!ThumbCache::instance().getImage(src, mtime, 128).isNull());
+}
+
+void ThumbnailServiceTest::deterministicImageFactsAreStable() {
+  const QString src = m_files.filePath(QStringLiteral("wide-blue.png"));
+  QImage original(320, 100, QImage::Format_RGB32);
+  original.fill(qRgb(20, 70, 230));
+  QVERIFY(original.save(src, "PNG"));
+
+  const QImage decoded = ThumbnailService::decodeRaster(src, 64);
+  QVERIFY(!decoded.isNull());
+  const QVariantMap first =
+      ThumbnailService::deterministicImageFacts(src, decoded);
+  const QVariantMap second =
+      ThumbnailService::deterministicImageFacts(src, decoded);
+  QCOMPARE(first.value(QStringLiteral("width")).toInt(), 320);
+  QCOMPARE(first.value(QStringLiteral("height")).toInt(), 100);
+  QCOMPARE(first.value(QStringLiteral("orientation")).toString(),
+           QStringLiteral("landscape"));
+  QCOMPARE(first.value(QStringLiteral("color_family")).toString(),
+           QStringLiteral("blue"));
+  QVERIFY(first.value(QStringLiteral("blue_share")).toDouble() > 0.95);
+  QCOMPARE(first.value(QStringLiteral("aspect_ratio")).toDouble(), 3.2);
+  QCOMPARE(first.value(QStringLiteral("visual_hash")).toString(),
+           second.value(QStringLiteral("visual_hash")).toString());
+  QCOMPARE(first.value(QStringLiteral("visual_hash")).toString().size(), 16);
+}
+
+void ThumbnailServiceTest::generatedImagePublishesFacts() {
+  const QString src = m_files.filePath(QStringLiteral("facts-blue.png"));
+  QImage image(80, 120, QImage::Format_RGB32);
+  image.fill(qRgb(15, 55, 220));
+  QVERIFY(image.save(src, "PNG"));
+  const qint64 mtime = mtimeMsOf(src);
+
+  ThumbnailService service;
+  service.setThumbnailerDirectories({});
+  QSignalSpy factsSpy(&service, &ThumbnailService::imageFactsReady);
+  service.request(src, mtime, 128);
+  QVERIFY(QTest::qWaitFor([&] { return factsSpy.count() >= 1; }, 3000));
+  QCOMPARE(factsSpy.first().at(0).toString(), src);
+  QCOMPARE(factsSpy.first().at(1).toLongLong(), mtime);
+  const QVariantMap facts = factsSpy.first().at(2).toMap();
+  QCOMPARE(facts.value(QStringLiteral("orientation")).toString(),
+           QStringLiteral("portrait"));
+  QCOMPARE(facts.value(QStringLiteral("color_family")).toString(),
+           QStringLiteral("blue"));
 }
 
 void ThumbnailServiceTest::folderMosaicFromChildImages() {
@@ -711,6 +760,45 @@ void ThumbnailServiceTest::packedCacheRoundTrip() {
   QCOMPARE(spy.count(), 1);
   QCOMPARE(spy.at(0).at(1).toString(),
            ThumbnailService::packedUrl(src, mtime, 128));
+}
+
+void ThumbnailServiceTest::visibleRequestsReuseLargerTierAsOneBatch() {
+  QCOMPARE(ThumbCache::canonicalSize(96), 128);
+  QCOMPARE(ThumbCache::canonicalSize(192), 256);
+  QCOMPARE(ThumbCache::canonicalSize(320), 512);
+
+  QVector<ThumbnailJob> jobs;
+  QStringList expected;
+  for (int i = 0; i < 12; ++i) {
+    const QString src =
+        m_files.filePath(QStringLiteral("warm-%1.png").arg(i));
+    QVERIFY(writeColorPng(src, qRgb(i * 15, 80, 160)));
+    const qint64 mtime = mtimeMsOf(src);
+    QImage cached(256, 256, QImage::Format_RGB32);
+    cached.fill(qRgb(i * 15, 80, 160));
+    ThumbCache::instance().putImage(src, mtime, 256, cached);
+    ThumbnailJob job;
+    job.path = src;
+    job.mtime = mtime;
+    job.sizePx = 192;
+    jobs.append(job);
+    expected.append(src);
+  }
+
+  ThumbnailService svc;
+  QSignalSpy batches(&svc, &ThumbnailService::thumbnailsReady);
+  QSignalSpy singles(&svc, &ThumbnailService::thumbnailReady);
+  svc.requestVisible(jobs);
+  QTRY_COMPARE_WITH_TIMEOUT(batches.count(), 1, 2000);
+  QCOMPARE(singles.count(), 0);
+  const auto results =
+      qvariant_cast<QVector<ThumbnailResult>>(batches.first().first());
+  QCOMPARE(results.size(), jobs.size());
+  for (int i = 0; i < results.size(); ++i) {
+    QCOMPARE(results.at(i).path, expected.at(i));
+    QCOMPARE(results.at(i).url,
+             ThumbCache::imageUrl(expected.at(i), jobs.at(i).mtime, 256));
+  }
 }
 
 void ThumbnailServiceTest::invalidateDropsOldPackedEntry() {

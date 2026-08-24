@@ -24,7 +24,7 @@ Item {
     property string pendingLabel: ""
     property string resultLabel: "here"
     property var queryHistory: []
-    property real editorHeight: Theme.space(104)
+    property real editorHeight: Theme.space(132)
     property bool editorCollapsed: false
     property bool namingBookmark: false
     property string bookmarkName: ""
@@ -36,11 +36,86 @@ Item {
     property string lastRunRelation: ""
     property string refreshSelectionPath: ""
     property bool catalogRefreshPending: false
+    property string activeLens: ""
+    property bool awaitingImageFacts: false
+    property bool analyzeAfterTree: false
+
+    readonly property var queryLenses: [
+        {
+            id: "kind",
+            label: "kind",
+            tip: "Browse this tree as images, code, data, archives, and other cheap extension-derived kinds",
+            sql: "select kind, count(*) as files, round(sum(size) / 1073741824.0, 2) as gb\n" +
+                 "from tree\nwhere not is_dir\ngroup by kind\norder by sum(size) desc"
+        },
+        {
+            id: "size",
+            label: "size",
+            tip: "Turn file-size bands into drillable folders",
+            sql: "select size_bucket, count(*) as files, round(sum(size) / 1073741824.0, 2) as gb\n" +
+                 "from tree\nwhere not is_dir\ngroup by size_bucket\norder by max(size) desc"
+        },
+        {
+            id: "age",
+            label: "age",
+            tip: "Browse today, this week, this month, this year, and older files",
+            sql: "select age_bucket, count(*) as files, round(sum(size) / 1073741824.0, 2) as gb\n" +
+                 "from tree\nwhere not is_dir\ngroup by age_bucket\norder by min(age_days)"
+        },
+        {
+            id: "largest",
+            label: "largest",
+            tip: "Show the 200 largest files below this folder",
+            sql: "select name, kind, gb, age_days, modified_date, path, is_dir\n" +
+                 "from tree\nwhere not is_dir\norder by size desc\nlimit 200"
+        },
+        {
+            id: "projects",
+            label: "projects",
+            tip: "Find real project folders and classify them from repository and build markers",
+            sql: "select name, project_type, markers, mtime, path, is_dir\n" +
+                 "from projects\norder by mtime desc, name"
+        },
+        {
+            id: "blue",
+            label: "blue",
+            analyzer: "image",
+            tip: "Find blue-heavy images from deterministic thumbnail pixels; coverage is shown at right",
+            sql: "select name, color_family, round(blue_share * 100, 1) as blue_pct,\n" +
+                 "       width, height, path, is_dir\nfrom image_facts\n" +
+                 "where blue_share >= 0.18\norder by blue_share desc, name"
+        },
+        {
+            id: "wide",
+            label: "wide",
+            analyzer: "image",
+            tip: "Find panoramic and unusually wide images using decoded dimensions",
+            sql: "select name, round(aspect_ratio, 2) as aspect, width, height,\n" +
+                 "       color_family, path, is_dir\nfrom image_facts\n" +
+                 "where aspect_ratio >= 1.8\norder by aspect_ratio desc, name"
+        }
+    ]
 
     readonly property var columns: result && result.columns ? result.columns : []
     readonly property var rows: result && result.rows ? result.rows : []
-    readonly property var fieldNames: catalog && catalog.fields
-                                      ? catalog.fields : []
+    readonly property string editorRelation: catalog && catalog.sourceRelation
+                                             ? catalog.sourceRelation(sqlText) : ""
+    readonly property var fieldNames: {
+        if (editorRelation === "image_facts")
+            return ["path", "name", "extension", "size", "width", "height",
+                    "aspect_ratio", "orientation", "color_family",
+                    "dominant_color", "brightness", "saturation",
+                    "blue_share", "chromatic_share", "visual_hash", "mtime",
+                    "is_dir", "hidden", "kind", "file_id"]
+        if (editorRelation === "projects")
+            return ["path", "name", "project_type", "markers", "mtime",
+                    "is_dir", "size"]
+        if (editorRelation === "facts")
+            return ["path", "name", "analyzer", "analyzer_version", "key",
+                    "text_value", "numeric_value", "updated_at", "file_id",
+                    "size", "mtime"]
+        return catalog && catalog.fields ? catalog.fields : []
+    }
     readonly property int rowH: Math.max(26, Theme.fontBody + Theme.space(10))
     readonly property int headerH: Math.max(26, Theme.fontBody + Theme.space(10))
     readonly property real minEditorHeight: Theme.space(58)
@@ -64,7 +139,8 @@ Item {
         var runCwd = overrideCwd || cwd
         var relation = catalog.sourceRelation
                      ? catalog.sourceRelation(queryText) : ""
-        if (relation === "tree" && liveRefresh !== true) {
+        var needsTree = relationNeedsTree(relation)
+        if (needsTree && liveRefresh !== true) {
             var covered = catalog.coversTree
                         ? catalog.coversTree(runCwd)
                         : catalog.indexedRoot === runCwd
@@ -89,7 +165,7 @@ Item {
     }
 
     function scheduleCatalogRefresh() {
-        if (!catalog || lastRunRelation !== "tree" ||
+        if (!catalog || !relationNeedsTree(lastRunRelation) ||
                 catalog.indexedRoot !== lastRunCwd ||
                 !fileModel || !fileModel.isSql)
             return
@@ -104,6 +180,11 @@ Item {
         }
         if (!catalogRefreshTimer.running)
             catalogRefreshTimer.start()
+    }
+
+    function relationNeedsTree(name) {
+        return name === "tree" || name === "facts" ||
+               name === "image_facts" || name === "projects"
     }
 
     function forceTreeScan() {
@@ -123,6 +204,7 @@ Item {
             return
         }
         queryHistory = []
+        activeLens = ""
         contextCwd = savedCwd || cwd
         sqlText = sql
         namingBookmark = false
@@ -156,6 +238,7 @@ Item {
     }
 
     function useRelation(name) {
+        activeLens = ""
         if (name === "here")
             sqlText = "select name, extension, size, mtime, path\nfrom here\norder by is_dir desc, name"
         else if (name === "tree")
@@ -163,6 +246,60 @@ Item {
         else
             sqlText = "select * from selection order by name"
         queryEdit.forceActiveFocus()
+    }
+
+    function useLens(lens) {
+        if (!lens || running)
+            return
+        queryHistory = []
+        activeLens = lens.id
+        sqlText = lens.sql
+        if (lens.analyzer === "image" && catalog && catalog.analyzeImages) {
+            awaitingImageFacts = true
+            var covered = catalog.coversTree ? catalog.coversTree(cwd) : false
+            analyzeAfterTree = !covered
+            if (covered)
+                catalog.analyzeImages(cwd, 500)
+        } else {
+            awaitingImageFacts = false
+            analyzeAfterTree = false
+        }
+        execute(lens.label)
+    }
+
+    function activeLensSpec() {
+        for (var i = 0; i < queryLenses.length; ++i) {
+            if (queryLenses[i].id === activeLens)
+                return queryLenses[i]
+        }
+        return null
+    }
+
+    function refreshFinishedAnalysis() {
+        if (!catalog || catalog.analyzing || running || !awaitingImageFacts)
+            return
+        var lens = activeLensSpec()
+        awaitingImageFacts = false
+        if (lens && lens.analyzer === "image")
+            execute(lens.label, lastRunCwd, false, lastRunSql, true)
+    }
+
+    readonly property var factCoverage: result && result.factCoverage
+                                        ? result.factCoverage : ({})
+    readonly property string factTrace: {
+        var lens = activeLensSpec()
+        if ((!lens || lens.analyzer !== "image") &&
+                !(catalog && catalog.analyzing))
+            return ""
+        if (catalog && catalog.analyzing)
+            return catalog.analysisStatus || "image facts…"
+        var seen = Number(factCoverage.analyzed || 0)
+        var total = Number(factCoverage.total || 0)
+        if (total <= 0)
+            return catalog && catalog.analysisStatus
+                   ? catalog.analysisStatus : "no image facts"
+        return "facts " + seen.toLocaleString(Qt.locale(), "f", 0) +
+               " / " + total.toLocaleString(Qt.locale(), "f", 0)
     }
 
     function installHighlighter() {
@@ -181,7 +318,9 @@ Item {
         if (!row || !row._synchro_drill_sql)
             return
         queryHistory = queryHistory.concat([{ sql: sqlText,
-                                               label: resultLabel }])
+                                               label: resultLabel,
+                                               lens: activeLens }])
+        activeLens = ""
         sqlText = row._synchro_drill_sql
         execute(row._synchro_label || "group")
     }
@@ -192,6 +331,7 @@ Item {
         var prior = queryHistory[queryHistory.length - 1]
         queryHistory = queryHistory.slice(0, queryHistory.length - 1)
         sqlText = prior.sql
+        activeLens = prior.lens || ""
         execute(prior.label)
     }
 
@@ -288,7 +428,15 @@ Item {
     Connections {
         target: panel.catalog
         function onStatusChanged() {
+            if (panel.analyzeAfterTree && !panel.catalog.indexing &&
+                    panel.catalog.coversTree(panel.lastRunCwd)) {
+                panel.analyzeAfterTree = false
+                panel.catalog.analyzeImages(panel.lastRunCwd, 500)
+            }
             panel.scheduleCatalogRefresh()
+        }
+        function onAnalysisChanged() {
+            panel.refreshFinishedAnalysis()
         }
         function onQueryFinished(id, value) {
             if (Number(id) !== Number(panel.requestId))
@@ -321,6 +469,7 @@ Item {
                     panel.openBookmark(bookmark.name, bookmark.sql, bookmark.cwd)
                 })
             }
+            Qt.callLater(panel.refreshFinishedAnalysis)
         }
     }
 
@@ -333,7 +482,7 @@ Item {
                 panel.catalogRefreshPending = true
                 return
             }
-            if (!panel.catalog || panel.lastRunRelation !== "tree" ||
+            if (!panel.catalog || !panel.relationNeedsTree(panel.lastRunRelation) ||
                     panel.catalog.indexedRoot !== panel.lastRunCwd ||
                     !panel.fileModel || !panel.fileModel.isSql)
                 return
@@ -356,8 +505,10 @@ Item {
         }
         function onSqlDrillRequested(sql, label) {
             panel.queryHistory = panel.queryHistory.concat([
-                { sql: panel.sqlText, label: panel.resultLabel }
+                { sql: panel.sqlText, label: panel.resultLabel,
+                  lens: panel.activeLens }
             ])
+            panel.activeLens = ""
             panel.sqlText = sql
             panel.execute(label)
         }
@@ -645,6 +796,69 @@ Item {
             }
         }
 
+        Item {
+            id: lensRail
+            width: parent.width
+            height: Theme.space(24)
+
+            Text {
+                id: lensLabel
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: "lens"
+                color: Theme.darkForeground
+                opacity: 0.64
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontCaption
+                font.letterSpacing: 1.0
+            }
+
+            Flickable {
+                anchors.left: lensLabel.right
+                anchors.right: factStatus.visible ? factStatus.left : parent.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: Theme.space(8)
+                contentWidth: lensRow.implicitWidth
+                contentHeight: height
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                Row {
+                    id: lensRow
+                    height: parent.height
+                    spacing: Theme.space(4)
+
+                    Repeater {
+                        model: panel.queryLenses
+
+                        ChromeButton {
+                            required property var modelData
+                            height: lensRow.height
+                            label: modelData.label
+                            checked: panel.activeLens === modelData.id
+                            toolTip: modelData.tip
+                            onTriggered: panel.useLens(modelData)
+                        }
+                    }
+                }
+            }
+
+            Text {
+                id: factStatus
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: Theme.space(8)
+                visible: panel.factTrace.length > 0
+                text: panel.factTrace
+                color: panel.catalog && panel.catalog.analyzing
+                       ? Theme.accent : Theme.darkForeground
+                opacity: panel.catalog && panel.catalog.analyzing ? 0.82 : 0.58
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontCaption
+            }
+        }
+
         Rectangle {
             id: editorFrame
             width: parent.width
@@ -679,7 +893,10 @@ Item {
                 clip: true
                 selectByMouse: true
                 persistentSelection: true
-                onTextChanged: if (panel.sqlText !== text) panel.sqlText = text
+                onTextChanged: if (panel.sqlText !== text) {
+                    panel.sqlText = text
+                    panel.activeLens = ""
+                }
                 Component.onCompleted: Qt.callLater(panel.installHighlighter)
 
                 Keys.onPressed: function(event) {
@@ -697,7 +914,7 @@ Item {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.margins: Theme.space(8)
-                width: Math.min(Theme.space(238), editorFrame.width * 0.4)
+                width: Math.min(Theme.space(310), editorFrame.width * 0.44)
                 visible: panel.fieldNames.length > 0 &&
                          editorFrame.width >= Theme.space(560) &&
                          editorFrame.height >= Theme.space(78)
@@ -737,7 +954,7 @@ Item {
                     anchors.top: fieldLabel.bottom
                     anchors.leftMargin: Theme.space(10)
                     anchors.topMargin: Theme.space(3)
-                    columns: 3
+                    columns: fieldRail.width >= Theme.space(300) ? 4 : 3
                     columnSpacing: Theme.space(5)
                     rowSpacing: 0
                     readonly property real cellWidth:

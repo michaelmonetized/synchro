@@ -82,6 +82,7 @@ GridView {
         required property string name
         required property bool isDir
         required property string thumbnail
+        required property bool thumbnailPending
 
         width: grid.cellWidth
         height: grid.cellHeight
@@ -95,6 +96,7 @@ GridView {
             height: grid.cellInner
 
             Image {
+                id: thumbImage
                 anchors.fill: parent
                 visible: cell.thumbnail.length > 0
                 source: cell.thumbnail
@@ -108,6 +110,7 @@ GridView {
             FolderMark {
                 anchors.fill: parent
                 visible: cell.thumbnail.length === 0 && cell.isDir
+                opacity: cell.thumbnailPending ? 0.2 : 1
             }
 
             FileMark {
@@ -115,6 +118,7 @@ GridView {
                 width: Math.round(parent.width * 0.72)
                 height: Math.round(parent.height * 0.84)
                 visible: cell.thumbnail.length === 0 && !cell.isDir
+                opacity: cell.thumbnailPending ? 0.2 : 1
                 suffix: {
                     var n = cell.name
                     var i = n.lastIndexOf(".")
@@ -122,6 +126,13 @@ GridView {
                         return ""
                     return n.slice(i + 1).toUpperCase()
                 }
+            }
+
+            ThumbLoadingGlyph {
+                anchors.fill: parent
+                running: cell.thumbnailPending ||
+                         (cell.thumbnail.length > 0 &&
+                          thumbImage.status === Image.Loading)
             }
         }
 

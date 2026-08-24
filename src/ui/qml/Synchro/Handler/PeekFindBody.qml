@@ -6,6 +6,8 @@ Item {
 
     property var host: null
     property url file
+    property bool asyncLoad: false
+    property double requestId: 0
     property alias flick: flick
     property bool findOpen: false
     property string findQuery: ""
@@ -19,6 +21,11 @@ Item {
     function reload() {
         if (!root.host || !root.file)
             return
+        if (root.asyncLoad && root.host.requestPreview) {
+            root.preview = ({ loading: true })
+            root.requestId = root.host.requestPreview(root.file, 65536, 0)
+            return
+        }
         root.preview = root.host.readPreview(root.file, 65536, 0)
         root.viewStart = root.preview && root.preview.startByte
                          ? root.preview.startByte : 0
@@ -254,6 +261,20 @@ Item {
     Component.onCompleted: {
         root.reload()
         root.maybeDeeplink()
+    }
+
+    Connections {
+        target: root.host
+        enabled: root.asyncLoad && root.host !== null
+
+        function onPreviewReady(requestId, file, preview) {
+            if (requestId !== root.requestId ||
+                    file.toString() !== root.file.toString())
+                return
+            root.preview = preview
+            root.viewStart = preview && preview.startByte !== undefined
+                             ? preview.startByte : 0
+        }
     }
 
     Column {

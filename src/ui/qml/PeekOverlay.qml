@@ -313,6 +313,7 @@ Item {
                     required property string name
                     required property bool isDir
                     required property string thumbnail
+                    required property bool thumbnailPending
                     width: indexGrid.width
                     height: indexGrid.itemH
 
@@ -325,6 +326,7 @@ Item {
                         height: width
 
                         Image {
+                            id: indexThumbImage
                             anchors.fill: parent
                             visible: gRow.thumbnail.length > 0
                             source: gRow.thumbnail
@@ -338,6 +340,7 @@ Item {
                         FolderMark {
                             anchors.fill: parent
                             visible: gRow.thumbnail.length === 0 && gRow.isDir
+                            opacity: gRow.thumbnailPending ? 0.2 : 1
                         }
 
                         FileMark {
@@ -345,6 +348,7 @@ Item {
                             width: Math.round(parent.width * 0.72)
                             height: Math.round(parent.height * 0.84)
                             visible: gRow.thumbnail.length === 0 && !gRow.isDir
+                            opacity: gRow.thumbnailPending ? 0.2 : 1
                             suffix: {
                                 var n = gRow.name
                                 var i = n.lastIndexOf(".")
@@ -352,6 +356,13 @@ Item {
                                     return ""
                                 return n.slice(i + 1).toUpperCase()
                             }
+                        }
+
+                        ThumbLoadingGlyph {
+                            anchors.fill: parent
+                            running: gRow.thumbnailPending ||
+                                     (gRow.thumbnail.length > 0 &&
+                                      indexThumbImage.status === Image.Loading)
                         }
                     }
 

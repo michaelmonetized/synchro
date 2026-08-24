@@ -125,7 +125,31 @@ Progress appears in the browser's bottom status rail. All
 three expose raw byte
 `size`, 1024-based floating-point `kb`,
 `mb`, and `gb` rounded to two decimal places, plus boolean `hidden` (with
-`is_hidden` retained for compatibility). Results containing `path` are live:
+`is_hidden` retained for compatibility). Cheap navigation fields require no
+content crawl or catalog rebuild: `kind` maps extensions into practical file
+families, `stem` removes the final extension, `depth` counts path levels,
+`age_days` drives `age_bucket`, `size_bucket` bands bytes, and
+`modified_date` / `modified_month` expose calendar groupings. `root` identifies
+the persisted scan root. These are virtual DuckDB columns over the existing
+SQLite rows, so an already-indexed multi-million-file tree gains them on its
+next query. New or touched rows also receive a stable local `file_id` from
+device/inode identity, allowing deterministic facts to follow a rename without
+turning the path into identity.
+
+`facts` exposes the versioned key/value evidence table, while `image_facts`
+pivots facts already harvested from thumbnail pixels: dimensions, orientation,
+aspect ratio, average color, color family, brightness, saturation, blue share,
+and a deterministic visual hash. The **blue** and **wide** lenses run against
+that relation. They show analyzed/total coverage in the lens rail and request a
+bounded, low-priority batch when opened; ordinary thumbnail generation fills
+the same cache at essentially no extra decode cost. Facts are accepted only
+when analyzer version, source size, and source mtime match the current file.
+`projects` is another relation made entirely from catalog marker names and
+returns real folders with a deterministic `project_type` such as `python`,
+`node`, `rust`, or `go`. Existing catalogs migrate in place—none of these
+features requires rebuilding the recursive tree.
+
+Results containing `path` are live:
 click to reveal and
 double-click to enter/open. Query rows always replace the main listing while
 keeping the real folder as their context. Aggregate rows
@@ -141,7 +165,12 @@ opt into another group without hard-coded UI changes. The disposable catalog liv
 `~/.local/share/synchro/catalog.sqlite`; browsing never depends on it.
 Use **save** in the SQL panel to name a query (for example, “big webp files”);
 it becomes a persistent location beside pinned folders and reopens against the
-folder context it was saved from.
+folder context it was saved from. The compact **lens** rail supplies useful
+starting queries without hiding their SQL: kind, size, and age become
+drillable pseudo-folders; largest is a direct ranked file view; projects finds
+real directories from common repository/build markers; blue and wide use
+locally derived image evidence. Selecting a lens writes
+the complete query into the editor, where it can be changed or saved normally.
 
 Location handlers may also ship **listing chrome** — `entryPoints.row` and
 `entryPoints.thumb` — QML that paints on each visible row or grid thumb.
@@ -323,7 +352,7 @@ and a Synchro manifest, not a Nautilus Python extension.
 | `synchro.action.copy-as` | action | Copy path / URI / name (QML params) |
 | `synchro.action.trash` | action | Core trash verb |
 | `synchro.action.terminal` | action | `xdg-terminal-exec --dir=%d` |
-| `synchro.action.agent` | action | `omarchy-agent` in this folder |
+| `synchro.action.agent` | action | Prompt Omarchy's default agent with this folder/selection + catalog access |
 | `synchro.location.home` | location | `$HOME` |
 | `synchro.location.recent` | location | Recents |
 | `synchro.location.trash` | location | XDG trash |
@@ -333,6 +362,46 @@ and a Synchro manifest, not a Nautilus Python extension.
 
 Office docs, audio, 7z, fonts, and a few more previews are still on the
 [preview backlog](PREVIEW-BACKLOG.md).
+
+## Omarchy agent bridge
+
+Synchro's persisted catalog is available without starting the QML UI. The
+output is always JSON and includes the query scope, complete/incomplete index
+coverage, scan/catalog timestamps, elapsed time, and truncation state:
+
+```bash
+synchro query --cwd "$PWD" --sql \
+  "select name, kind, mb, modified_date, path from tree where kind = 'image' order by size desc" \
+  --limit 100
+
+# SQL can come from stdin; selection can be repeated.
+printf '%s\n' 'select * from selection' | \
+  synchro query --sql - --selection ./one.txt --selection ./two.txt
+```
+
+`synchro mcp --stdio` exposes the same read-only engine to MCP clients. It
+provides typed tools for name/path search, SQL, project discovery, file facts,
+saved queries, and opening a result as a navigable SQL pseudo-folder in
+Synchro. A local Codex registration looks like:
+
+```toml
+[mcp_servers.synchro]
+command = "/usr/bin/synchro"
+args = ["mcp", "--stdio"]
+```
+
+Use the actual installed path when dogfooding an uninstalled build. Raw SQL is
+restricted to `SELECT`/`WITH`; the catalog database is attached read-only and
+extension autoload/install are disabled. Agents should check
+`catalog.coverageComplete` and `truncated` before treating a result as
+exhaustive.
+
+The built-in **Agent** action runs `omarchy agent prompt`, so it always follows
+Omarchy's current default agent. It starts in the selected folder (or a selected
+file's parent), passes the complete selection as a short-lived JSON manifest in
+`SYNCHRO_SELECTION`, and tells the agent about the catalog CLI. This keeps the
+handoff useful for Codex, Claude, Gemini, or whichever agent Omarchy selects,
+without hard-coding an agent-specific launcher.
 
 ## Opt-in FileChooser
 

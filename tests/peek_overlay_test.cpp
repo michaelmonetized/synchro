@@ -1,5 +1,6 @@
 #include "DirectoryModel.h"
 #include "FilterProxy.h"
+#include "FileCatalog.h"
 #include "HandlerLoader.h"
 #include "HandlerRegistry.h"
 #include "HostApi.h"
@@ -35,6 +36,24 @@ Q_IMPORT_QML_PLUGIN(Synchro_ThemePlugin)
 Q_IMPORT_QML_PLUGIN(Synchro_HandlerPlugin)
 
 namespace {
+
+class ScopedEnvironment {
+public:
+  explicit ScopedEnvironment(const QByteArray &name)
+      : m_name(name), m_hadValue(qEnvironmentVariableIsSet(name.constData())),
+        m_value(qgetenv(name.constData())) {}
+  ~ScopedEnvironment() {
+    if (m_hadValue)
+      qputenv(m_name.constData(), m_value);
+    else
+      qunsetenv(m_name.constData());
+  }
+
+private:
+  QByteArray m_name;
+  bool m_hadValue = false;
+  QByteArray m_value;
+};
 
 bool waitListingDone(DirectoryModel &model, int timeoutMs = 5000) {
   return QTest::qWaitFor([&] { return !model.listing(); }, timeoutMs);
@@ -123,6 +142,7 @@ private slots:
   void searchGridVirtualizesGroups();
   void fileGridFollowsProxySort();
   void contextualPanelRelevanceFollowsSelection();
+  void panelLookUsesSafeInlineHandlersAndAsyncReads();
   void findInFilePastDefaultWindow();
   void textPeekFindCyclesHits();
   void textPeekFindJumpsPastWindow();
@@ -430,6 +450,170 @@ void PeekOverlayTest::textAndMarkdownHandlersResolve() {
   QVERIFY(preview.value(QStringLiteral("ok")).toBool());
   QVERIFY(preview.value(QStringLiteral("text")).toString().contains(
       QStringLiteral("hello text")));
+}
+
+void PeekOverlayTest::panelLookUsesSafeInlineHandlersAndAsyncReads() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString textPath = tmp.filePath(QStringLiteral("notes.txt"));
+  {
+    QFile f(textPath);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("ambient preview\n");
+  }
+  {
+    QFile f(tmp.filePath(QStringLiteral("bundle.zip")));
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("not really a zip");
+  }
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("child-folder")));
+  {
+    QFile f(tmp.filePath(QStringLiteral("child-folder/inside.txt")));
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("inside the lens\n");
+  }
+
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  HandlerLoader loader;
+  XdgOpen xdg;
+  MimeMap mimeMap;
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  HostApi host(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+               &engine);
+
+  QVERIFY(host.panelSupportsCompanion(QStringLiteral("synchro.panel.terminal"),
+                                      QStringLiteral("preview")));
+  QVERIFY(host.panelSupportsCompanion(QStringLiteral("synchro.panel.sql"),
+                                      QStringLiteral("preview")));
+  QVERIFY(host.panelSupportsCompanion(QStringLiteral("synchro.panel.duckdb"),
+                                      QStringLiteral("preview")));
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const int textRow = findProxy(proxy, QStringLiteral("notes.txt"));
+  const int zipRow = findProxy(proxy, QStringLiteral("bundle.zip"));
+  const int folderRow = findProxy(proxy, QStringLiteral("child-folder"));
+  QVERIFY(textRow >= 0);
+  QVERIFY(zipRow >= 0);
+  QVERIFY(folderRow >= 0);
+
+  proxy.setCurrentIndex(textRow);
+  host.setInlinePreviewActive(true);
+  QCOMPARE(host.inlinePreviewMode(), QStringLiteral("text"));
+  QCOMPARE(host.inlinePreviewHandler(),
+           QStringLiteral("synchro.preview.text"));
+  QVERIFY(!host.inlinePreviewItem());
+
+  QSignalSpy ready(&host, &HostApi::previewReady);
+  const quint64 request =
+      host.requestPreview(QUrl::fromLocalFile(textPath), 1024, 0);
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        for (const QList<QVariant> &args : ready) {
+          if (args.at(0).toULongLong() == request)
+            return true;
+        }
+        return false;
+      },
+      2000));
+  QList<QVariant> result;
+  for (const QList<QVariant> &args : ready) {
+    if (args.at(0).toULongLong() == request) {
+      result = args;
+      break;
+    }
+  }
+  QVERIFY(result.at(2).toMap().value(QStringLiteral("text"))
+              .toString()
+              .contains(QStringLiteral("ambient preview")));
+
+  proxy.setCurrentIndex(zipRow);
+  host.refreshInlinePreview();
+  QCOMPARE(host.inlinePreviewMode(), QStringLiteral("card"));
+  QVERIFY(!host.inlinePreviewItem());
+  QVERIFY(host.inlinePreviewHandler().isEmpty());
+
+  proxy.setCurrentIndex(folderRow);
+  host.refreshInlinePreview();
+  QCOMPARE(host.inlinePreviewMode(), QStringLiteral("folder"));
+  auto *folderModel =
+      qobject_cast<DirectoryModel *>(host.inlineFolderModel());
+  auto *folderProxy = qobject_cast<FilterProxy *>(host.inlineFolderProxy());
+  QVERIFY(folderModel);
+  QVERIFY(folderProxy);
+  QVERIFY(QTest::qWaitFor(
+      [&] { return !folderModel->listing() && folderProxy->count() == 1; },
+      2000));
+  QCOMPARE(folderProxy->rowMap(0).value(QStringLiteral("name")).toString(),
+           QStringLiteral("inside.txt"));
+  QVERIFY(host.commitInlineFolderRow(0));
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return QFileInfo(model.path()).canonicalFilePath() ==
+               QFileInfo(tmp.filePath(QStringLiteral("child-folder")))
+                   .canonicalFilePath();
+      },
+      2000));
+
+  // Aggregate rows are query-backed folders too. The Look surface runs the
+  // generated drill SQL asynchronously, and a newer cursor wins even if an
+  // older query finishes later.
+  ScopedEnvironment restoreHome(QByteArrayLiteral("SYNCHRO_HOME"));
+  QTemporaryDir catalogHome;
+  QVERIFY(catalogHome.isValid());
+  qputenv("SYNCHRO_HOME", QFile::encodeName(catalogHome.path()));
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  FileCatalog catalog(&model);
+  host.setFileCatalog(&catalog);
+  catalog.scanTree(tmp.path(), 100);
+  QVERIFY(QTest::qWaitFor([&] { return !catalog.indexing(); }, 10000));
+  const QVariantMap groups = FileCatalog::querySync(
+      QStringLiteral("select extension,count(*) as files from selection "
+                     "where not is_dir group by extension order by extension"),
+      tmp.path(),
+      {textPath, tmp.filePath(QStringLiteral("bundle.zip")),
+       tmp.filePath(QStringLiteral("child-folder/inside.txt"))});
+  QVERIFY2(groups.value(QStringLiteral("ok")).toBool(),
+           qPrintable(groups.value(QStringLiteral("error")).toString()));
+  model.showSqlResult(groups, QStringLiteral("types"));
+  const int textGroup = findProxy(proxy, QStringLiteral("txt"));
+  const int zipGroup = findProxy(proxy, QStringLiteral("zip"));
+  QVERIFY(textGroup >= 0);
+  QVERIFY(zipGroup >= 0);
+
+  proxy.setCurrentIndex(textGroup);
+  host.refreshInlinePreview();
+  proxy.setCurrentIndex(zipGroup);
+  host.refreshInlinePreview();
+  QCOMPARE(host.inlinePreviewMode(), QStringLiteral("folder"));
+  QVERIFY(host.inlineFolderLoading());
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return !host.inlineFolderLoading() && folderProxy->count() == 1;
+      },
+      10000));
+  QCOMPARE(folderProxy->rowMap(0).value(QStringLiteral("name")).toString(),
+           QStringLiteral("bundle.zip"));
+  QTest::qWait(100);
+  QCOMPARE(folderProxy->rowMap(0).value(QStringLiteral("name")).toString(),
+           QStringLiteral("bundle.zip"));
+  host.setFileCatalog(nullptr);
+
+  host.setInlinePreviewActive(false);
+  QVERIFY(host.inlinePreviewMode().isEmpty());
 }
 
 void PeekOverlayTest::videoHandlerAndWebpRaster() {

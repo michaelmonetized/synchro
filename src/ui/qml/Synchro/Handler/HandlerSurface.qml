@@ -9,6 +9,9 @@ Item {
     property var selection: []
     property var host              // HostApi (C++)
     property var manifest: ({})
+    // True only for the dock's ambient Look companion. Handlers can use this
+    // to choose non-blocking loading and suppress modal-only chrome.
+    property bool inlinePreview: false
 
     // --- optional, handler → host ---
     property string title: ""

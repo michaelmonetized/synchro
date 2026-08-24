@@ -36,6 +36,7 @@ HandlerSurface {
         anchors.fill: parent
         host: root.host
         file: root.file
+        asyncLoad: root.inlinePreview
         visible: findOpen
         onFileChanged: if (!findOpen)
             findBody.reload()

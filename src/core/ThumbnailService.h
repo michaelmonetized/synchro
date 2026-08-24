@@ -6,6 +6,7 @@
 #include <QString>
 #include <QStringList>
 #include <QThread>
+#include <QVariantMap>
 #include <QVector>
 #include <QtGlobal>
 
@@ -25,6 +26,11 @@ struct ThumbnailJob {
   QString mosaicLabel;
 };
 
+struct ThumbnailResult {
+  QString path;
+  QString url;
+};
+
 class ThumbnailEngine;
 
 class ThumbnailService : public QObject {
@@ -36,6 +42,9 @@ public:
 
   Q_INVOKABLE void request(const QString &path, qint64 mtime, int sizePx);
   void request(const QVector<ThumbnailJob> &jobs);
+  // Non-exclusive worker submission for refresh/stat races. Unlike request(),
+  // cache probing never runs on the caller thread and warm hits are batched.
+  void requestBackground(const QVector<ThumbnailJob> &jobs);
   void requestVisible(const QVector<ThumbnailJob> &jobs);
   void invalidate(const QString &path);
   void cancelAll();
@@ -63,6 +72,11 @@ public:
   static QString fileUrl(const QString &path);
   // Decode via Qt plugins, then libwebp (this distro ships no Qt WebP plugin).
   static QImage decodeRaster(const QString &path, int maxEdge = 0);
+  // Cheap, deterministic visual facts derived from pixels already decoded for
+  // a thumbnail. The returned values are intentionally local and versionable;
+  // no MIME sniff, model, or network call is involved.
+  static QVariantMap deterministicImageFacts(const QString &path,
+                                              const QImage &image);
   static QString ensureRasterPng(const QString &path, qint64 mtime, int maxEdge);
   // Immediate children, with progressively denser layouts up to ten tiles.
   static bool renderFolderMosaic(const QString &dirPath, const QString &dest,
@@ -74,6 +88,11 @@ public:
 
 signals:
   void thumbnailReady(const QString &path, const QString &url);
+  // Warm viewport hits arrive together so the model can publish one compact
+  // update instead of repainting once for every cached tile.
+  void thumbnailsReady(const QVector<ThumbnailResult> &results);
+  void imageFactsReady(const QString &path, qint64 mtime,
+                       const QVariantMap &facts);
   void submitted(const QVector<ThumbnailJob> &jobs, bool exclusive);
   void cancelRequested();
   void invalidateRequested(const QString &path);
@@ -90,5 +109,7 @@ private:
 
 Q_DECLARE_METATYPE(ThumbnailJob)
 Q_DECLARE_METATYPE(QVector<ThumbnailJob>)
+Q_DECLARE_METATYPE(ThumbnailResult)
+Q_DECLARE_METATYPE(QVector<ThumbnailResult>)
 Q_DECLARE_METATYPE(ExecThumbnailer)
 Q_DECLARE_METATYPE(QVector<ExecThumbnailer>)

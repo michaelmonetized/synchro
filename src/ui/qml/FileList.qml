@@ -12,6 +12,9 @@ ListView {
     property var host: null
     property var fileOps: null
     property bool dndEnabled: true
+    // Companion surfaces can reuse the complete table without letting its
+    // private DirectoryModel navigate independently of the main browser.
+    property bool externalActivation: false
     readonly property int selectionEpoch: selection ? selection.epoch : 0
     readonly property int thumbSizePx: 128
     readonly property bool dndLive: dndEnabled && fileOps && fileModel &&
@@ -22,12 +25,13 @@ ListView {
 
     signal viewToggleRequested()
     signal doRequested()
+    signal rowActivated(int row)
 
     readonly property var rows: filterProxy ? filterProxy : fileModel
     readonly property bool showCursorChrome: !keyMachine || keyMachine.listFocused
     // Keys belong to a panel: keep the cursor visible (panel apps target
     // the selected file) but dimmed so focus stays legible.
-    readonly property bool cursorDim: keyMachine && keyMachine.panelFocused
+    readonly property bool cursorDim: !!(keyMachine && keyMachine.panelFocused)
     readonly property real contentInset: Math.max(0, (width - Theme.space(1600)) / 2)
 
     readonly property Component folderMarkComp: Component { FolderMark {} }
@@ -80,6 +84,23 @@ ListView {
             list.filterProxy.sortRoleName = role
             list.filterProxy.sortOrder = "asc"
         }
+    }
+
+    function activateRow(row) {
+        if (list.externalActivation) {
+            if (row < 0)
+                return
+            if (list.filterProxy)
+                list.filterProxy.selectRow(row)
+            else if (list.fileModel)
+                list.fileModel.currentIndex = row
+            list.rowActivated(row)
+            return
+        }
+        if (list.filterProxy)
+            list.filterProxy.activateCurrent()
+        else if (list.fileModel)
+            list.fileModel.activateCurrent()
     }
 
     component SortHeader: Item {
@@ -350,6 +371,7 @@ ListView {
         required property bool isDir
         required property bool isSymlink
         required property string thumbnail
+        required property bool thumbnailPending
         // Must be required: Qt only maps model roles onto required
         // properties once a delegate uses that style.
         required property string path
@@ -381,9 +403,9 @@ ListView {
         Drag.hotSpot.x: width / 2
         Drag.hotSpot.y: height / 2
 
-        readonly property bool picked: list.selection &&
-                                       list.selectionEpoch >= 0 &&
-                                       list.selection.isSelected(row.index)
+        readonly property bool picked: !!(list.selection &&
+                                          list.selectionEpoch >= 0 &&
+                                          list.selection.isSelected(row.index))
 
         Rectangle {
             anchors.fill: parent
@@ -510,6 +532,7 @@ ListView {
             }
 
             Image {
+                id: rowThumbImage
                 anchors.fill: parent
                 anchors.margins: 1
                 visible: row.thumbnail.length > 0
@@ -524,8 +547,17 @@ ListView {
             Loader {
                 anchors.fill: parent
                 active: row.thumbnail.length === 0
+                opacity: row.thumbnailPending ? 0.18 : 1
                 sourceComponent: row.isDir ? list.folderMarkComp
                                            : list.fileMarkComp
+            }
+
+            ThumbLoadingGlyph {
+                anchors.fill: parent
+                anchors.margins: Theme.spaceXS
+                running: row.thumbnailPending ||
+                         (row.thumbnail.length > 0 &&
+                          rowThumbImage.status === Image.Loading)
             }
         }
 
@@ -670,10 +702,7 @@ ListView {
                     list.fileModel.currentIndex = row.index
             }
             onDoubleClicked: {
-                if (list.filterProxy)
-                    list.filterProxy.activateCurrent()
-                else
-                    list.fileModel.activateCurrent()
+                list.activateRow(row.index)
             }
         }
         }
@@ -712,17 +741,11 @@ ListView {
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             if (alt || chord)
                 return
-            if (list.filterProxy)
-                list.filterProxy.activateCurrent()
-            else
-                list.fileModel.activateCurrent()
+            list.activateRow(list.currentIndex)
             event.accepted = true
         } else if ((event.key === Qt.Key_L || event.key === Qt.Key_Right) &&
                    !alt && !chord && !shift) {
-            if (list.filterProxy)
-                list.filterProxy.activateCurrent()
-            else
-                list.fileModel.activateCurrent()
+            list.activateRow(list.currentIndex)
             event.accepted = true
         } else if ((event.key === Qt.Key_H || event.key === Qt.Key_Backspace ||
                     event.key === Qt.Key_Left) &&

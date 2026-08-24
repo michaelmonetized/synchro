@@ -4,6 +4,19 @@ import QtQuick
 QtObject {
     id: root
 
+    // One shared phase drives all thumbnail acquisition glyphs. Delegates
+    // only rotate scene-graph nodes; they do not each own a timer, Canvas, or
+    // particle system.
+    property real thumbnailPhase: 0
+
+    NumberAnimation on thumbnailPhase {
+        from: 0
+        to: 1
+        duration: 1500
+        loops: Animation.Infinite
+        running: true
+    }
+
     readonly property ThemeBridge impl: ThemeBridge {}
     readonly property var tokens: impl.tokens
 

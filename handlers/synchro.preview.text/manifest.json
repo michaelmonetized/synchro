@@ -77,7 +77,8 @@
     "preview": "Preview.qml"
   },
   "preview": {
-    "runtime": "inprocess"
+    "runtime": "inprocess",
+    "inline": "core-text"
   },
   "thumbnail": {
     "runtime": "core",

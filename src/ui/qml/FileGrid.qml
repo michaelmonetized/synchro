@@ -367,6 +367,7 @@ Item {
                                 isDir: false
                                 isSymlink: false
                                 thumbnail: ""
+                                thumbnailPending: false
                                 path: ""
                                 detail: ""
                                 used: -1

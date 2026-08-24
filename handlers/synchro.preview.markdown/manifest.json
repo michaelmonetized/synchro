@@ -19,7 +19,8 @@
     "preview": "Preview.qml"
   },
   "preview": {
-    "runtime": "inprocess"
+    "runtime": "inprocess",
+    "inline": "core-markdown"
   },
   "thumbnail": {
     "runtime": "core",

@@ -19,6 +19,7 @@
 #include <QUrl>
 #include <QVariantMap>
 
+#include <algorithm>
 #include <cstdio>
 #include <sys/stat.h>
 
@@ -89,6 +90,10 @@ DirectoryModel::DirectoryModel(QObject *parent) : QAbstractListModel(parent) {
   m_thumbs = new ThumbnailService(this);
   connect(m_thumbs, &ThumbnailService::thumbnailReady, this,
           &DirectoryModel::onThumbnailReady);
+  connect(m_thumbs, &ThumbnailService::thumbnailsReady, this,
+          &DirectoryModel::onThumbnailsReady);
+  connect(m_thumbs, &ThumbnailService::imageFactsReady, this,
+          &DirectoryModel::imageFactsReady);
   connect(&VolumeStore::instance(), &VolumeStore::changed, this, [this] {
     if (isVolumes())
       reload();
@@ -181,6 +186,7 @@ QVariantMap DirectoryModel::rowMap(int row) const {
   m.insert(QStringLiteral("isDir"), e->isDir);
   m.insert(QStringLiteral("isSymlink"), e->isSymlink);
   m.insert(QStringLiteral("thumbnail"), e->thumbnail);
+  m.insert(QStringLiteral("thumbnailPending"), e->thumbnailPending);
   m.insert(QStringLiteral("detail"), e->detail);
   m.insert(QStringLiteral("used"), e->used);
   m.insert(QStringLiteral("total"), e->total);
@@ -233,6 +239,7 @@ QHash<int, QByteArray> DirectoryModel::roleNames() const {
       {ParentPathRole, "parentPath"},
       {ParentLabelRole, "parentLabel"},
       {TypeLabelRole, "typeLabel"},
+      {ThumbnailPendingRole, "thumbnailPending"},
   };
 }
 
@@ -282,6 +289,8 @@ QVariant DirectoryModel::data(const QModelIndex &index, int role) const {
     return e->iconName;
   case ThumbnailRole:
     return e->thumbnail;
+  case ThumbnailPendingRole:
+    return e->thumbnailPending;
   case IsHiddenRole:
     return e->isHidden;
   case IsSymlinkRole:
@@ -638,6 +647,7 @@ QVariantMap DirectoryModel::entryToMap(const DirectoryEntry &e) const {
            !e.typeLabel.isEmpty()
                ? e.typeLabel
                : (e.isDir ? QStringLiteral("Folder") : e.mime));
+  m.insert(QStringLiteral("thumbnail"), e.thumbnail);
   m.insert(QStringLiteral("mode"), e.perm);
   m.insert(QStringLiteral("detail"), e.detail);
   m.insert(QStringLiteral("used"), e.used);
@@ -1076,6 +1086,7 @@ void DirectoryModel::showSqlResult(const QVariantMap &result,
   m_error.clear();
   m_sqlRows.clear();
   m_sqlContext = result.value(QStringLiteral("cwd")).toString();
+  m_sqlSelection = result.value(QStringLiteral("selection")).toStringList();
   if (m_sqlContext.isEmpty())
     m_sqlContext = m_returnPath;
   m_sqlLabel = label.trimmed();
@@ -1238,6 +1249,10 @@ int DirectoryModel::currentSqlRow() const {
       .toInt();
 }
 
+QVariantMap DirectoryModel::sqlRowMetadata(const QString &path) const {
+  return m_sqlRows.value(path);
+}
+
 bool DirectoryModel::selectSqlRow(int queryRow) {
   if (!isSql() || queryRow < 0)
     return false;
@@ -1322,10 +1337,12 @@ int DirectoryModel::applyEntry(const DirectoryEntry &entry) {
   if (allIndex < 0 || allIndex >= m_all.size())
     return -1;
   const QString oldThumb = m_all[allIndex].thumbnail;
+  const bool oldThumbPending = m_all[allIndex].thumbnailPending;
   const QString oldPath = m_all[allIndex].path;
   m_all[allIndex] = entry;
   if (m_all[allIndex].thumbnail.isEmpty())
     m_all[allIndex].thumbnail = oldThumb;
+  m_all[allIndex].thumbnailPending = oldThumbPending;
   if (oldPath != entry.path && !oldPath.isEmpty())
     m_indexByPath.remove(oldPath);
   if (!entry.path.isEmpty())
@@ -1695,6 +1712,7 @@ void DirectoryModel::requestSourceThumbs(const QVector<int> &sourceRows,
   if (sizePx <= 0)
     sizePx = 128;
   m_thumbSizePx = sizePx;
+  const QVector<int> previousRows = m_thumbRows;
   m_thumbRows = sourceRows;
   if (!sourceRows.isEmpty()) {
     m_thumbFirst = sourceRows.first();
@@ -1705,12 +1723,32 @@ void DirectoryModel::requestSourceThumbs(const QVector<int> &sourceRows,
   }
   if (!m_thumbs)
     return;
+  // requestVisible() is exclusive: jobs outside the new runway are dropped.
+  // Clear their UI state as well so a canceled thumbnail never spins forever.
+  if (!searching() && !previousRows.isEmpty()) {
+    const QSet<int> keep(sourceRows.cbegin(), sourceRows.cend());
+    for (const int sourceRow : previousRows) {
+      if (keep.contains(sourceRow) || sourceRow < 0 ||
+          sourceRow >= m_visible.size())
+        continue;
+      const int allIndex = m_visible.at(sourceRow);
+      if (allIndex < 0 || allIndex >= m_all.size() ||
+          !m_all[allIndex].thumbnailPending)
+        continue;
+      m_all[allIndex].thumbnailPending = false;
+      emit dataChanged(index(sourceRow), index(sourceRow),
+                       {ThumbnailPendingRole});
+    }
+  }
   QVector<ThumbnailJob> jobs;
   jobs.reserve(sourceRows.size());
+  QVector<int> pendingRows;
+  pendingRows.reserve(sourceRows.size());
   const int n = sourceRows.size();
   const int center = n / 2;
   for (int i = 0; i < n; ++i) {
-    const DirectoryEntry *e = entryAt(sourceRows.at(i));
+    const int sourceRow = sourceRows.at(i);
+    const DirectoryEntry *e = entryAt(sourceRow);
     if (!e || e->path.isEmpty())
       continue;
     if (!e->thumbnail.isEmpty())
@@ -1730,6 +1768,28 @@ void DirectoryModel::requestSourceThumbs(const QVector<int> &sourceRows,
     if (e->dirKind == QLatin1String("sql-group"))
       job.mosaicLabel = e->name;
     jobs.append(job);
+    if (!searching() && sourceRow >= 0 && sourceRow < m_visible.size()) {
+      const int allIndex = m_visible.at(sourceRow);
+      if (allIndex >= 0 && allIndex < m_all.size() &&
+          !m_all[allIndex].thumbnailPending) {
+        m_all[allIndex].thumbnailPending = true;
+        pendingRows.append(sourceRow);
+      }
+    }
+  }
+  if (!pendingRows.isEmpty()) {
+    std::sort(pendingRows.begin(), pendingRows.end());
+    int first = pendingRows.first();
+    int last = first;
+    for (int i = 1; i < pendingRows.size(); ++i) {
+      if (pendingRows.at(i) == last + 1) {
+        last = pendingRows.at(i);
+        continue;
+      }
+      emit dataChanged(index(first), index(last), {ThumbnailPendingRole});
+      first = last = pendingRows.at(i);
+    }
+    emit dataChanged(index(first), index(last), {ThumbnailPendingRole});
   }
   m_thumbs->requestVisible(jobs);
 }
@@ -1773,30 +1833,69 @@ void DirectoryModel::refreshThumbs(const QStringList &paths) {
     job.mtime = mtime;
     job.sizePx = sizePx;
     jobs.append(job);
+    if (!e.thumbnailPending) {
+      e.thumbnailPending = true;
+      const auto vis = m_visibleRowByAll.constFind(allIndex);
+      if (vis != m_visibleRowByAll.cend())
+        emit dataChanged(index(vis.value()), index(vis.value()),
+                         {ThumbnailPendingRole});
+    }
   }
   if (!jobs.isEmpty())
-    m_thumbs->request(jobs);
+    m_thumbs->requestBackground(jobs);
 }
 
 void DirectoryModel::onThumbnailReady(const QString &path, const QString &url) {
+  onThumbnailsReady(QVector<ThumbnailResult>{{path, url}});
+}
+
+void DirectoryModel::onThumbnailsReady(
+    const QVector<ThumbnailResult> &results) {
   if (searching()) {
-    m_search->setThumbnail(path, url);
+    for (const ThumbnailResult &result : results)
+      m_search->setThumbnail(result.path, result.url);
     return;
   }
-  if (url.isEmpty() || path.isEmpty())
+  QVector<int> changedRows;
+  changedRows.reserve(results.size());
+  for (const ThumbnailResult &result : results) {
+    if (result.path.isEmpty())
+      continue;
+    const auto it = m_indexByPath.constFind(result.path);
+    if (it == m_indexByPath.cend())
+      continue;
+    const int allIndex = it.value();
+    if (allIndex < 0 || allIndex >= m_all.size())
+      continue;
+    DirectoryEntry &entry = m_all[allIndex];
+    const bool changed = entry.thumbnailPending ||
+                         (!result.url.isEmpty() &&
+                          entry.thumbnail != result.url);
+    entry.thumbnailPending = false;
+    if (!result.url.isEmpty())
+      entry.thumbnail = result.url;
+    if (!changed)
+      continue;
+    const auto vis = m_visibleRowByAll.constFind(allIndex);
+    if (vis != m_visibleRowByAll.cend())
+      changedRows.append(vis.value());
+  }
+  if (changedRows.isEmpty())
     return;
-  const auto it = m_indexByPath.constFind(path);
-  if (it == m_indexByPath.cend())
-    return;
-  const int allIndex = it.value();
-  if (allIndex < 0 || allIndex >= m_all.size())
-    return;
-  if (m_all[allIndex].thumbnail == url)
-    return;
-  m_all[allIndex].thumbnail = url;
-  const auto vis = m_visibleRowByAll.constFind(allIndex);
-  if (vis == m_visibleRowByAll.cend())
-    return;
-  const QModelIndex idx = index(vis.value());
-  emit dataChanged(idx, idx, {ThumbnailRole});
+  std::sort(changedRows.begin(), changedRows.end());
+  changedRows.erase(std::unique(changedRows.begin(), changedRows.end()),
+                    changedRows.end());
+  int first = changedRows.first();
+  int last = first;
+  for (int i = 1; i < changedRows.size(); ++i) {
+    if (changedRows.at(i) == last + 1) {
+      last = changedRows.at(i);
+      continue;
+    }
+    emit dataChanged(index(first), index(last),
+                     {ThumbnailRole, ThumbnailPendingRole});
+    first = last = changedRows.at(i);
+  }
+  emit dataChanged(index(first), index(last),
+                   {ThumbnailRole, ThumbnailPendingRole});
 }

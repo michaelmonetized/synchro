@@ -74,6 +74,7 @@ public:
     ParentPathRole,
     ParentLabelRole,
     TypeLabelRole,
+    ThumbnailPendingRole,
   };
   Q_ENUM(Role)
 
@@ -102,6 +103,7 @@ public:
   bool isVolumes() const;
   QString sqlContext() const { return m_sqlContext; }
   QString sqlLabel() const { return m_sqlLabel; }
+  QStringList sqlSelection() const { return m_sqlSelection; }
   int currentSqlRow() const;
   QString searchQuery() const;
   bool isContentSearch() const;
@@ -146,6 +148,7 @@ public:
                                  const QString &label = QString());
   Q_INVOKABLE bool selectPath(const QString &path);
   Q_INVOKABLE bool selectSqlRow(int queryRow);
+  QVariantMap sqlRowMetadata(const QString &path) const;
   Q_INVOKABLE void setSqlBackAvailable(bool available);
   bool requestSqlBack();
   void requestSourceThumbs(const QVector<int> &sourceRows, int sizePx);
@@ -179,6 +182,10 @@ signals:
   void statsApplied(const QStringList &paths);
   // Persistent catalog mirrors watcher removals without rescanning a folder.
   void catalogPathsRemoved(const QStringList &paths);
+  // Visual facts are harvested on the thumbnail worker from already-decoded
+  // source pixels; consumers can persist them without touching the UI thread.
+  void imageFactsReady(const QString &path, qint64 mtime,
+                       const QVariantMap &facts);
   void sqlDrillRequested(const QString &sql, const QString &label);
   void sqlBackRequested();
   void fsnBoxesChanged();
@@ -191,6 +198,7 @@ private slots:
   void onFinished(quint64 generation, bool ok, const QString &error);
   void onWatchEvents(const QVector<DirectoryWatchEvent> &events);
   void onThumbnailReady(const QString &path, const QString &url);
+  void onThumbnailsReady(const QVector<ThumbnailResult> &results);
   void applyFsnBoxes(quint64 gen, const QVariantList &boxes);
 
 private:
@@ -239,6 +247,7 @@ private:
   QString m_volumeRoot;
   QString m_sqlContext;
   QString m_sqlLabel;
+  QStringList m_sqlSelection;
   QHash<QString, QVariantMap> m_sqlRows;
   quint64 m_sqlEpoch = 0;
   QString m_error;

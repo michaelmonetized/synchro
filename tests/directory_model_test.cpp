@@ -1137,12 +1137,14 @@ void DirectoryModelTest::visibleThumbsFillPngAndFolderMosaic() {
   model.setPath(tmp.path());
   QVERIFY(waitListingDone(model));
   model.requestVisibleThumbs(0, model.rowCount() - 1, 128);
+  const int shot = findRow(model, QStringLiteral("shot.png"));
+  const int album = findRow(model, QStringLiteral("album"));
+  QVERIFY(shot >= 0);
+  QVERIFY(album >= 0);
+  QVERIFY(roleAt(model, shot, DirectoryModel::ThumbnailPendingRole).toBool());
+  QVERIFY(roleAt(model, album, DirectoryModel::ThumbnailPendingRole).toBool());
   QVERIFY(QTest::qWaitFor(
       [&] {
-        const int shot = findRow(model, QStringLiteral("shot.png"));
-        const int album = findRow(model, QStringLiteral("album"));
-        if (shot < 0 || album < 0)
-          return false;
         return !roleAt(model, shot, DirectoryModel::ThumbnailRole)
                     .toString()
                     .isEmpty() &&
@@ -1151,6 +1153,8 @@ void DirectoryModelTest::visibleThumbsFillPngAndFolderMosaic() {
                     .isEmpty();
       },
       4000));
+  QVERIFY(!roleAt(model, shot, DirectoryModel::ThumbnailPendingRole).toBool());
+  QVERIFY(!roleAt(model, album, DirectoryModel::ThumbnailPendingRole).toBool());
 }
 
 void DirectoryModelTest::createdFileGetsThumbnail() {
