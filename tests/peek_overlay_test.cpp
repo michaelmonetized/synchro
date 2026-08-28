@@ -1787,12 +1787,12 @@ void PeekOverlayTest::videoHandlerAndWebpRaster() {
   preview->deleteLater();
 
   const QUrl src = QUrl::fromLocalFile(webp.path);
-  QVERIFY(QImage(webp.path).isNull());
   const QUrl raster = host.rasterUrl(src);
-  if (raster == src)
-    QSKIP("WebP raster fallback unavailable (no libwebp/ffmpeg decode)");
   QVERIFY(raster.isLocalFile());
-  QVERIFY(raster.toLocalFile().endsWith(QStringLiteral(".png")));
+  // Qt imageformat plugins may make the original WebP directly paintable;
+  // otherwise HostApi materializes the libwebp/ffmpeg result as PNG.
+  QVERIFY(raster == src ||
+          raster.toLocalFile().endsWith(QStringLiteral(".png")));
   QVERIFY(!QImage(raster.toLocalFile()).isNull());
 }
 

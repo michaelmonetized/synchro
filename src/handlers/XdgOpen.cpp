@@ -25,16 +25,17 @@ bool readableFile(const QString &path) {
 } // namespace
 
 QString XdgOpen::defaultFirstPartyDir() {
+  const QString installed = QDir::cleanPath(
+      QCoreApplication::applicationDirPath() +
+      QStringLiteral("/../share/synchro/handlers"));
+  if (readableFile(manifestPath(installed)))
+    return installed;
 #ifdef SYNCHRO_FIRST_PARTY_HANDLER_DIR
   const QString compiled = QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR);
   if (readableFile(manifestPath(compiled)))
     return compiled;
 #endif
-  // ninja && ./synchro from the build dir.
-  const QString nearby = QDir::cleanPath(
-      QCoreApplication::applicationDirPath() +
-      QStringLiteral("/../handlers"));
-  return nearby;
+  return installed;
 }
 
 bool XdgOpen::load(const QString &firstPartyDir) {

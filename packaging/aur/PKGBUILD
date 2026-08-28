@@ -1,0 +1,62 @@
+# Maintainer: Ryan R <ryrobes@users.noreply.github.com>
+
+pkgname=synchro-git
+pkgver=0.1.0.r47.g54b234f
+pkgrel=1
+pkgdesc='Omarchy-native indexed spatial file browser'
+arch=('x86_64')
+url='https://github.com/ryrobes/synchro'
+license=('MIT')
+depends=(
+  'omarchy'
+  'qt6-base'
+  'qt6-declarative'
+  'qt6-svg'
+  'qt6-multimedia'
+  'qt6-webengine'
+  'qmltermwidget'
+  'syntax-highlighting'
+  'duckdb'
+  'libwebp'
+  'sqlite'
+  'zlib'
+  'fd'
+  'ripgrep'
+  'xdg-utils'
+  'xdg-terminal-exec'
+)
+makedepends=(
+  'cmake'
+  'git'
+  'ninja'
+  'pkgconf'
+  'qt6-shadertools'
+)
+optdepends=(
+  'libnotify: desktop completion notifications'
+  'udisks2: unmount and power off removable volumes'
+)
+provides=('synchro')
+conflicts=('synchro')
+source=('synchro::git+https://github.com/ryrobes/synchro.git')
+b2sums=('SKIP')
+
+pkgver() {
+  cd synchro
+  printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" \
+    "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+  cmake -S synchro -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=None \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DBUILD_TESTING=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 synchro/LICENSE \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

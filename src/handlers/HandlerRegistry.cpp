@@ -40,13 +40,20 @@ HandlerRegistry::HandlerRegistry()
       m_configPath(defaultConfigPath()) {}
 
 QString HandlerRegistry::defaultFirstPartyDir() {
+  // Prefer the relocatable install layout. A package build may retain its
+  // temporary source directory in SYNCHRO_FIRST_PARTY_HANDLER_DIR; that tree
+  // must never shadow the handlers installed beside /usr/bin/synchro.
+  const QString installed = QDir::cleanPath(
+      QCoreApplication::applicationDirPath() +
+      QStringLiteral("/../share/synchro/handlers"));
+  if (QFileInfo::exists(installed))
+    return installed;
 #ifdef SYNCHRO_FIRST_PARTY_HANDLER_DIR
   const QString compiled = QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR);
   if (QFileInfo::exists(compiled))
     return compiled;
 #endif
-  return QDir::cleanPath(QCoreApplication::applicationDirPath() +
-                         QStringLiteral("/../handlers"));
+  return installed;
 }
 
 QString HandlerRegistry::defaultUserDir() {

@@ -37,7 +37,8 @@ qint64 mtimeMsOf(const QString &path) {
   return QFileInfo(path).lastModified().toMSecsSinceEpoch();
 }
 
-// 2x2 VP8 WebP — Qt on this box has no libqwebp, so Image/QImage cannot read it.
+// 2x2 VP8 WebP. Depending on the Qt imageformat packages installed, Qt may
+// decode this directly or ThumbnailService may use libwebp/ffmpeg.
 bool writeTinyWebp(const QString &path) {
   static const unsigned char kWebp[] = {
       0x52, 0x49, 0x46, 0x46, 0x40, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
@@ -79,7 +80,7 @@ private slots:
   void generateWritesOnlySynchroCache();
   void tryExecMissingBinaryIsSkipped();
   void textCardGeneratedWhenNoThumbnailer();
-  void webpDecodesWithoutQtPlugin();
+  void webpDecodesAcrossAvailableBackends();
   void deterministicImageFactsAreStable();
   void deterministicImageFactsBenchmark();
   void generatedImagePublishesFacts();
@@ -358,14 +359,13 @@ void ThumbnailServiceTest::textCardGeneratedWhenNoThumbnailer() {
   QCOMPARE(card.pixelColor(120, 120), ThumbTheme::current().background);
 }
 
-void ThumbnailServiceTest::webpDecodesWithoutQtPlugin() {
+void ThumbnailServiceTest::webpDecodesAcrossAvailableBackends() {
   const QString src = m_files.filePath(QStringLiteral("tile.webp"));
   QVERIFY(writeTinyWebp(src));
-  QVERIFY(QImage(src).isNull());
 
   const QImage decoded = ThumbnailService::decodeRaster(src, 128);
   if (decoded.isNull())
-    QSKIP("neither libwebp nor ffmpeg could decode the fixture WebP");
+    QSKIP("neither Qt, libwebp, nor ffmpeg could decode the fixture WebP");
   QVERIFY(decoded.width() >= 2);
   QVERIFY(decoded.height() >= 2);
 
@@ -376,7 +376,7 @@ void ThumbnailServiceTest::webpDecodesWithoutQtPlugin() {
   svc.request(src, mtime, 128);
   QVERIFY(QTest::qWaitFor([&] { return spy.count() >= 1; }, 4000));
   const QString url = spy.at(0).at(1).toString();
-  QVERIFY2(!url.isEmpty(), "WebP must produce a PNG thumb without Qt's plugin");
+  QVERIFY2(!url.isEmpty(), "WebP must produce a thumbnail through any decoder");
   QCOMPARE(url, ThumbnailService::packedUrl(src, mtime, 128));
   QVERIFY(!ThumbCache::instance().getImage(src, mtime, 128).isNull());
 }

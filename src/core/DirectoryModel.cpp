@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QLocale>
 #include <QMimeDatabase>
 #include <QMimeType>
 #include <QPointer>
@@ -70,6 +71,13 @@ QString formatPerm(int mode, bool isDir, bool isSymlink) {
 DirectoryModel::DirectoryModel(QObject *parent) : QAbstractListModel(parent) {
   qRegisterMetaType<DirectoryEntry>();
   qRegisterMetaType<QVector<DirectoryEntry>>();
+  QLocale collationLocale = QLocale::system();
+  // Qt's C-locale collator ignores numeric mode. Omarchy normally has a
+  // regional locale, but tests, services, and clean launch environments often
+  // use C.UTF-8. Keep natural filename ordering deterministic there too.
+  if (collationLocale.language() == QLocale::C)
+    collationLocale = QLocale(QLocale::English, QLocale::UnitedStates);
+  m_collator.setLocale(collationLocale);
   m_collator.setCaseSensitivity(Qt::CaseInsensitive);
   m_collator.setNumericMode(true); // natural sort: file2 before file10
 
@@ -1662,8 +1670,7 @@ void DirectoryModel::renameEntry(const QString &from, const QString &to) {
 
 void DirectoryModel::navigateToExistingParent() {
   if (!m_volumeRoot.isEmpty() &&
-      (m_path == m_volumeRoot || !QFileInfo(m_volumeRoot).isDir() ||
-       !QFileInfo(m_path).isDir())) {
+      (m_path == m_volumeRoot || !QFileInfo(m_volumeRoot).isDir())) {
     m_volumeRoot.clear();
     setPath(QStringLiteral("volumes://"), QString(), true);
     return;

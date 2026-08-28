@@ -7,7 +7,7 @@ inside `omarchy-shell`.
 Nautilus stays the packaged folder app. This repo does not edit
 `/usr/share/omarchy/`.
 
-**Status: work in progress.** The window is daily-driveable on Omarchy 4
+**Status: work in progress.** The window is daily-driveable on Omarchy 4.0.x
 (Hyprland + Quickshell chrome + Qt 6.11). Peek, the do-layer, first-party
 handlers, trash, thumbs, and an opt-in FileChooser portal are in-tree. Folder
 MIME, Super+Shift+F, and session-default picker are **not** stolen yet.
@@ -29,10 +29,29 @@ Synchro copies that **ritual**, not the process:
 If you already write Omarchy plugins or Qt Quick apps, you already know how to
 extend Synchro.
 
-## Use it
+## Install on Omarchy
+
+Synchro is published as the `synchro-git` AUR package:
 
 ```bash
-cmake -S . -B build -G Ninja
+yay -S synchro-git
+synchro
+```
+
+The package installs the application, built-in handlers, agent skill source,
+desktop entry, icon, Omarchy launchers, and the opt-in FileChooser portal
+descriptor. It does not change your Hyprland bindings, folder MIME default, or
+portal preference. Those remain explicit user choices described below.
+
+Synchro currently uses Qt's private RHI API for its accelerated spatial views.
+That is acceptable for the deliberately narrow Omarchy 4.0.x target, but it
+means the package must be rebuilt after a Qt upgrade. A future package in the
+Omarchy repository can move in lockstep with the distro's Qt packages.
+
+## Build from source
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ./build/synchro
 ./build/synchro ~/Pictures
@@ -47,6 +66,14 @@ files under `~/.local/share`):
 cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX="$HOME/.local"
 cmake --build build
 cmake --install build
+```
+
+Run the complete test suite with:
+
+```bash
+cmake -S . -B build-test -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build-test
+ctest --test-dir build-test --output-on-failure
 ```
 
 `packaging/omarchy/` is a **user overlay**. CMake never writes `/usr/share/omarchy/`.
