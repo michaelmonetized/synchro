@@ -31,12 +31,18 @@ extend Synchro.
 
 ## Install on Omarchy
 
-Synchro is published as the `synchro-git` AUR package:
+The `synchro-git` AUR recipe is ready, but the initial AUR listing is pending
+account registration availability. Until it is listed, build the same package
+directly from the public repository:
 
 ```bash
-yay -S synchro-git
+git clone https://github.com/ryrobes/synchro.git
+cd synchro/packaging/aur
+makepkg -si
 synchro
 ```
+
+Once the listing is live, installation will simply be `yay -S synchro-git`.
 
 The package installs the application, built-in handlers, agent skill source,
 desktop entry, icon, Omarchy launchers, and the opt-in FileChooser portal
