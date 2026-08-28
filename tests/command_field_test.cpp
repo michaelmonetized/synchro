@@ -10,8 +10,10 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlContext>
 #include <QQuickItem>
 #include <QPoint>
@@ -104,6 +106,52 @@ private:
   bool m_action = false;
 };
 
+class FakeAgentSearch : public QObject {
+  Q_OBJECT
+  Q_PROPERTY(bool running READ running NOTIFY changed)
+  Q_PROPERTY(QString agent READ agent CONSTANT)
+  Q_PROPERTY(QString error READ error NOTIFY changed)
+  Q_PROPERTY(QStringList thumbnails READ thumbnails CONSTANT)
+
+public:
+  using QObject::QObject;
+  bool running() const { return false; }
+  QString agent() const { return QStringLiteral("test-agent"); }
+  QString error() const { return {}; }
+  QStringList thumbnails() const { return {}; }
+  Q_INVOKABLE bool start(const QString &, const QString &) { return true; }
+  Q_INVOKABLE void cancel() {}
+  void publish(const QString &label, const QString &sql, const QString &cwd) {
+    emit resultReady(label, sql, cwd);
+  }
+
+signals:
+  void changed();
+  void resultReady(const QString &label, const QString &sql,
+                   const QString &cwd);
+};
+
+class FakeSqlShell : public QObject {
+  Q_OBJECT
+  Q_PROPERTY(bool mainSqlBusy READ mainSqlBusy WRITE setMainSqlBusy NOTIFY changed)
+
+public:
+  using QObject::QObject;
+  bool mainSqlBusy() const { return m_busy; }
+  void setMainSqlBusy(bool busy) {
+    if (m_busy == busy)
+      return;
+    m_busy = busy;
+    emit changed();
+  }
+
+signals:
+  void changed();
+
+private:
+  bool m_busy = false;
+};
+
 class CommandFieldTest : public QObject {
   Q_OBJECT
 
@@ -119,6 +167,7 @@ private slots:
   void escSingleStepPop();
   void typeToSeekHighlightsFirstMatch();
   void verbsDoNotTypeToSeek();
+  void gridNavigationPreservesVisualColumn();
   void fieldFilterTypesVerbsAsText();
   void filterIsCaseInsensitiveSubstring();
   void failedJumpStaysInField();
@@ -126,7 +175,9 @@ private slots:
   void emptyFilterKeepsSourceCursor();
   void enterOnFileActivatesDoesNotNavigate();
   void spaceTogglesPeekAndJkStep();
+  void spaceLookModePreservesShiftPeek();
   void mainQmlSlashThenSrcFilters();
+  void mainQmlAgentResultUsesCurrentWindow();
   void tRequestsTerminal();
   void ctrlReturnRequestsOpenWith();
   void focusFilterClosesActionOverlay();
@@ -151,6 +202,9 @@ private slots:
   void kindFilterFilesFoldersAll();
   void termPanelCommands();
   void sqlPanelCommand();
+  void sqlPanelPublishesBusyAndUsesProminentEditor();
+  void agentSearchCommand();
+  void flowPanelCommand();
   void escCommandSingleStep();
   void colonDoesNotReplaceListVerbs();
   void unknownAndAmbiguousStayInField();
@@ -450,6 +504,48 @@ void CommandFieldTest::verbsDoNotTypeToSeek() {
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
 }
 
+void CommandFieldTest::gridNavigationPreservesVisualColumn() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  for (int i = 0; i < 10; ++i)
+    QVERIFY(writeFile(tmp.filePath(QStringLiteral("item-%1").arg(i, 2, 10,
+                                                                  QLatin1Char('0')))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(proxy.rowCount(), 10);
+  keys.setGridMode(true);
+  keys.setGridStride(4);
+
+  // The final row contains only columns zero and one. Moving down from visual
+  // column three stays on that row instead of clamping diagonally by index.
+  proxy.setCurrentIndex(7);
+  QVERIFY(keys.handleListKey(Qt::Key_S, Qt::NoModifier, QStringLiteral("s")));
+  QCOMPARE(proxy.currentIndex(), 9);
+  QVERIFY(keys.handleListKey(Qt::Key_W, Qt::NoModifier, QStringLiteral("w")));
+  QCOMPARE(proxy.currentIndex(), 5);
+
+  // Horizontal movement never wraps into the adjacent visual row.
+  proxy.setCurrentIndex(4);
+  QVERIFY(keys.handleListKey(Qt::Key_A, Qt::NoModifier, QStringLiteral("a")));
+  QCOMPARE(proxy.currentIndex(), 4);
+  proxy.setCurrentIndex(7);
+  QVERIFY(keys.handleListKey(Qt::Key_D, Qt::NoModifier, QStringLiteral("d")));
+  QCOMPARE(proxy.currentIndex(), 7);
+
+  // A relayout immediately changes vertical adjacency.
+  keys.setGridStride(3);
+  proxy.setCurrentIndex(5);
+  QVERIFY(keys.handleListKey(Qt::Key_S, Qt::NoModifier, QStringLiteral("s")));
+  QCOMPARE(proxy.currentIndex(), 8);
+}
+
 void CommandFieldTest::fieldFilterTypesVerbsAsText() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
@@ -672,6 +768,32 @@ void CommandFieldTest::spaceTogglesPeekAndJkStep() {
   QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
 }
 
+void CommandFieldTest::spaceLookModePreservesShiftPeek() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  StubPeek peek;
+  keys.setPeekHost(&peek);
+  keys.setLookKeyMode(true);
+  QSignalSpy lookToggle(&keys, &KeyMachine::lookToggleRequested);
+
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QCOMPARE(lookToggle.count(), 1);
+  QVERIFY(!peek.isOpen());
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier, QString()));
+  QVERIFY(peek.isOpen());
+  QCOMPARE(keys.mode(), QStringLiteral("peek-open"));
+
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QVERIFY(!peek.isOpen());
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QCOMPARE(lookToggle.count(), 1);
+}
+
 void CommandFieldTest::mainQmlSlashThenSrcFilters() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
@@ -746,6 +868,49 @@ void CommandFieldTest::mainQmlSlashThenSrcFilters() {
   QCOMPARE(proxy.filter(), QStringLiteral("src"));
   QVERIFY(findProxy(proxy, QStringLiteral("src")) >= 0);
   QVERIFY(findProxy(proxy, QStringLiteral("README.md")) < 0);
+}
+
+void CommandFieldTest::mainQmlAgentResultUsesCurrentWindow() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  FakeAgentSearch agent;
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
+  engine.rootContext()->setContextProperty(QStringLiteral("agentSearch"),
+                                           &agent);
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY(!engine.rootObjects().isEmpty());
+  QObject *root = engine.rootObjects().constFirst();
+
+  auto *busy = root->findChild<QObject *>(QStringLiteral("mainQueryBusy"));
+  QVERIFY(busy);
+  QVERIFY(!busy->property("visible").toBool());
+  QVERIFY(root->setProperty("mainSqlBusy", true));
+  QTRY_VERIFY(busy->property("visible").toBool());
+  QVERIFY(root->setProperty("mainSqlBusy", false));
+
+  const QString sql = QStringLiteral(
+      "select name, path, is_dir from tree where kind = 'image'");
+  agent.publish(QStringLiteral("Agent images"), sql, QStringLiteral("/tmp"));
+  QTRY_COMPARE(keys.panelId(), QStringLiteral("synchro.panel.sql"));
+  const QVariantMap pending = root->property("pendingSqlBookmark").toMap();
+  QCOMPARE(pending.value(QStringLiteral("name")).toString(),
+           QStringLiteral("Agent images"));
+  QCOMPARE(pending.value(QStringLiteral("sql")).toString(), sql);
+  QCOMPARE(pending.value(QStringLiteral("cwd")).toString(),
+           QStringLiteral("/tmp"));
 }
 
 void CommandFieldTest::tRequestsTerminal() {
@@ -1414,6 +1579,86 @@ void CommandFieldTest::sqlPanelCommand() {
            QStringLiteral("no SQL workbench in picker windows"));
 }
 
+void CommandFieldTest::sqlPanelPublishesBusyAndUsesProminentEditor() {
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  QQmlComponent component(
+      &engine, QUrl::fromLocalFile(QStringLiteral(SYNCHRO_SQL_PANEL_QML)));
+  QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+  std::unique_ptr<QObject> panel(component.create());
+  QVERIFY2(panel, qPrintable(component.errorString()));
+
+  FakeSqlShell shell;
+  QVERIFY(panel->setProperty("shell", QVariant::fromValue<QObject *>(&shell)));
+  auto *editor = panel->findChild<QObject *>(QStringLiteral("sqlQueryEdit"));
+  auto *spinner = panel->findChild<QObject *>(QStringLiteral("sqlResultSpinner"));
+  QVERIFY(editor);
+  QVERIFY(spinner);
+  const QFont font = editor->property("font").value<QFont>();
+  QVERIFY(font.bold());
+  QVERIFY(font.pixelSize() > 0);
+
+  QVERIFY(panel->setProperty("running", true));
+  QTRY_VERIFY(shell.mainSqlBusy());
+  QTRY_VERIFY(spinner->property("visible").toBool());
+  QVERIFY(panel->setProperty("running", false));
+  QTRY_VERIFY(!shell.mainSqlBusy());
+}
+
+void CommandFieldTest::agentSearchCommand() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  QSignalSpy searchSpy(&keys, &KeyMachine::agentSearchRequested);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":ask"));
+  keys.acceptField();
+  QCOMPARE(searchSpy.size(), 1);
+  QVERIFY(keys.fieldText().isEmpty());
+
+  keys.setChooserMode(true);
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":ask"));
+  keys.acceptField();
+  QCOMPARE(searchSpy.size(), 1);
+  QCOMPARE(keys.statusMessage(),
+           QStringLiteral("no agent search in picker windows"));
+}
+
+void CommandFieldTest::flowPanelCommand() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  QSignalSpy focusSpy(&keys, &KeyMachine::panelFocusRequested);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":flow"));
+  keys.acceptField();
+  QCOMPARE(keys.panelId(), QStringLiteral("synchro.panel.omaflow"));
+  QCOMPARE(focusSpy.size(), 1);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":omaflow"));
+  keys.acceptField();
+  QCOMPARE(keys.panelId(), QStringLiteral("synchro.panel.omaflow"));
+  QCOMPARE(focusSpy.size(), 2);
+
+  keys.setPanelId(QString());
+  keys.setChooserMode(true);
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":flow"));
+  keys.acceptField();
+  QVERIFY(keys.panelId().isEmpty());
+  QCOMPARE(keys.statusMessage(),
+           QStringLiteral("no automation panel in picker windows"));
+}
+
 // :files / :folders / :all hide the kind you are not hunting for; the
 // chips drive the same proxy property.
 void CommandFieldTest::kindFilterFilesFoldersAll() {
@@ -1754,6 +1999,41 @@ void CommandFieldTest::mainQmlFsnMounts() {
       },
       2000));
   QVERIFY(window->findChild<QQuickItem *>(QStringLiteral("fileFsnView")));
+  auto *rhiView =
+      window->findChild<QQuickItem *>(QStringLiteral("fsnRhiView"));
+  QVERIFY(rhiView);
+  const QVariantMap scenePalette =
+      rhiView->property("scenePalette").toMap();
+  QVERIFY(scenePalette.value(QStringLiteral("image")).value<QColor>() !=
+          scenePalette.value(QStringLiteral("video")).value<QColor>());
+  QVERIFY(scenePalette.value(QStringLiteral("code")).value<QColor>() !=
+          scenePalette.value(QStringLiteral("data")).value<QColor>());
+  QVERIFY(window->findChild<QQuickItem *>(QStringLiteral("fsnTypeKey")));
+  city->setProperty("camAnim", false);
+  city->setProperty("yaw", 0.0);
+  city->setProperty("pitch", 0.0);
+  const qreal beforePanX = city->property("tx").toReal();
+  const qreal beforePanY = city->property("ty").toReal();
+  const qreal beforePanZ = city->property("tz").toReal();
+  QVERIFY(QMetaObject::invokeMethod(city, "panByPixels",
+                                    Q_ARG(QVariant, 48.0),
+                                    Q_ARG(QVariant, 24.0)));
+  QVERIFY(city->property("tx").toReal() > beforePanX);
+  QVERIFY(city->property("ty").toReal() < beforePanY);
+  QCOMPARE(city->property("tz").toReal(), beforePanZ);
+  auto *viewControl =
+      window->findChild<QQuickItem *>(QStringLiteral("viewControl"));
+  auto *lookToggle =
+      window->findChild<QQuickItem *>(QStringLiteral("browserLookToggle"));
+  QVERIFY(viewControl);
+  QVERIFY(lookToggle);
+  QVERIFY(viewControl->isVisible());
+  QVERIFY(lookToggle->isVisible());
+  QCOMPARE(viewControl->property("currentId").toString(),
+           QStringLiteral("tree"));
+  keys.setFsnTreeView(false);
+  QTRY_COMPARE_WITH_TIMEOUT(viewControl->property("currentId").toString(),
+                            QStringLiteral("map"), 1000);
 }
 
 void CommandFieldTest::leadingQuestionPromotesToFieldSearch() {

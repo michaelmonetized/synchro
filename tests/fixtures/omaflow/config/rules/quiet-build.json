@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "quiet-build",
+  "name": "Quiet build",
+  "enabled": true,
+  "trigger": {
+    "type": "custom",
+    "name": "build-started"
+  },
+  "conditions": [
+    {
+      "type": "on-power",
+      "source": "ac"
+    }
+  ],
+  "actions": [
+    {
+      "type": "dnd",
+      "state": "on"
+    },
+    {
+      "type": "notify",
+      "title": "Build running",
+      "message": "Quiet mode is active for {{name}}"
+    }
+  ],
+  "cooldownSeconds": 60,
+  "source": "When a build starts on AC power, quiet the desktop and tell me."
+}

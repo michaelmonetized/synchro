@@ -34,7 +34,8 @@
   },
   "preview": {
     "runtime": "inprocess",
-    "autoplay": true
+    "autoplay": true,
+    "inline": "core-video"
   },
   "permissions": ["fs-read"]
 }

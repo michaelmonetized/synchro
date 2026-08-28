@@ -490,15 +490,20 @@ void LocationAdaptersTest::configPersistsPanelLook() {
     Config cfg(path);
     QVERIFY(cfg.panelLookOpen());
     QCOMPARE(cfg.panelLookRatio(), 0.34);
+    QCOMPARE(cfg.lookSize(), 360);
     cfg.setPanelLookOpen(false);
     cfg.setPanelLookRatio(0.43);
+    cfg.setLookSize(412);
     QVERIFY(cfg.save());
   }
   Config loaded(path);
   QVERIFY(!loaded.panelLookOpen());
   QCOMPARE(loaded.panelLookRatio(), 0.43);
+  QCOMPARE(loaded.lookSize(), 412);
   loaded.setPanelLookRatio(0.9);
   QCOMPARE(loaded.panelLookRatio(), 0.5);
+  loaded.setLookSize(10);
+  QCOMPARE(loaded.lookSize(), 240);
 }
 
 void LocationAdaptersTest::lastPathNeverPersistsSearch() {

@@ -147,7 +147,7 @@ HandlerSurface {
             width: parent.width
             text: root.previewText()
             color: Theme.foreground
-            font.family: Theme.fontFamily
+            font.family: Theme.monoFontFamily
             font.pixelSize: Theme.fontBody
             wrapMode: Text.WrapAnywhere
             elide: Text.ElideMiddle

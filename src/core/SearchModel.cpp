@@ -1,8 +1,11 @@
 #include "SearchModel.h"
 
+#include "ThumbnailService.h"
+
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QMimeDatabase>
 #include <QUrl>
 
 #include <cstdio>
@@ -18,6 +21,9 @@ QVariantMap toMap(const DirectoryEntry &e) {
   m.insert(QStringLiteral("size"), e.size);
   m.insert(QStringLiteral("mtime"), e.mtime);
   m.insert(QStringLiteral("mime"), e.mime);
+  m.insert(QStringLiteral("iconName"), e.iconName);
+  m.insert(QStringLiteral("thumbnail"), e.thumbnail);
+  m.insert(QStringLiteral("thumbnailPending"), e.thumbnailPending);
   m.insert(QStringLiteral("isSymlink"), e.isSymlink);
   return m;
 }
@@ -412,6 +418,33 @@ void SearchModel::setThumbnail(const QString &path, const QString &url) {
   emit dataChanged(idx, idx, {ThumbnailRole});
 }
 
+void SearchModel::clearThemedThumbnails() {
+  QVector<int> changed;
+  changed.reserve(m_entries.size());
+  for (int row = 0; row < m_entries.size(); ++row) {
+    DirectoryEntry &entry = m_entries[row];
+    if (entry.thumbnail.isEmpty() ||
+        !ThumbnailService::thumbnailDependsOnTheme(
+            entry.path, entry.mime, entry.isDir))
+      continue;
+    entry.thumbnail.clear();
+    changed.append(row);
+  }
+  if (changed.isEmpty())
+    return;
+  int first = changed.constFirst();
+  int last = first;
+  for (int i = 1; i < changed.size(); ++i) {
+    if (changed.at(i) == last + 1) {
+      last = changed.at(i);
+      continue;
+    }
+    emit dataChanged(index(first), index(last), {ThumbnailRole});
+    first = last = changed.at(i);
+  }
+  emit dataChanged(index(first), index(last), {ThumbnailRole});
+}
+
 void SearchModel::onHit(const QString &path) {
   const int cap = m_content ? SearchService::kMaxContentResults
                             : SearchService::kMaxResults;
@@ -488,6 +521,11 @@ QVariantMap SearchModel::rowMap(int row) const {
   m.insert(QStringLiteral("isDir"), e->isDir);
   m.insert(QStringLiteral("isSymlink"), e->isSymlink);
   m.insert(QStringLiteral("thumbnail"), e->thumbnail);
+  m.insert(QStringLiteral("thumbnailPending"), e->thumbnailPending);
+  m.insert(QStringLiteral("mime"), e->mime);
+  m.insert(QStringLiteral("uri"), e->uri);
+  m.insert(QStringLiteral("size"), e->size);
+  m.insert(QStringLiteral("mtime"), e->mtime);
   m.insert(QStringLiteral("detail"), e->detail);
   m.insert(QStringLiteral("used"), e->used);
   m.insert(QStringLiteral("total"), e->total);
@@ -547,8 +585,12 @@ DirectoryEntry SearchModel::makeEntry(const QString &path) const {
     e.iconName = QStringLiteral("folder");
     return e;
   }
+  // Search results bypass DirectoryLister, so give them the same cheap
+  // extension-derived MIME used by a normal folder's first paint. Preview
+  // dispatch needs this metadata, but content sniffing every hit would make a
+  // large search visibly block the UI.
+  const QMimeDatabase mimeDb;
+  e.mime = mimeDb.mimeTypeForFile(e.path, QMimeDatabase::MatchExtension).name();
   e.iconName = QStringLiteral("text-x-generic");
   return e;
 }
-
-

@@ -62,26 +62,51 @@ an always-focused omnibar.
 | `h` / `Q` / Backspace | Up a directory |
 | `l` / `E` / Right | Into a folder, or peek a file |
 | `Enter` | Open the file, or enter the folder |
-| `Space` | Peek (look). Esc / Q / Space again leave. |
+| `Space` | Toggle the lightweight Look panel. |
+| `Shift+Space` | Open full Peek. Esc / Q / Space leave. |
 | `Ctrl+Enter` / right-click | Do-layer (sticky actions + params) |
 | `/` · `Ctrl+K` | Filter the listing |
-| `:` | Command palette (`:trash` `:home` `:volumes` `:sql` `:help`) |
+| `:` | Command palette (`:trash` `:home` `:volumes` `:sql` `:flow` `:help`) |
 | `Ctrl+L` | Jump (current path selected) |
 | `?name` | Name search via `fd` |
-| `v` | List / grid. `V` is visual select. |
+| `v` | List / grid (or leave a 3D view). `V` is visual select. |
+| `Ctrl+M` | Enter/leave StrataV; `M` switches StrataV / MapV while there. |
+| Middle-drag | Pan the StrataV / MapV camera; left-drag orbits and the wheel zooms. |
 | `y` `x` `p` | Copy / cut / paste |
 | `Delete` | Trash. `u` undoes. |
 | `t` | Terminal in this folder |
 | `F1` / `:?` | Key reference |
 
-Peek is **look**. Enter is **commit**. The do-layer is **do**.
+Look is the ambient preview. Peek is deliberate deep inspection. Enter is
+**commit**. The do-layer is **do**.
+
+**StrataV / MapV.** `:fsv`, or Ctrl+M, turns the browser canvas into a spatial
+3D view without giving up selection, Look, Miller browsing, or actions. An
+indexed scene is assembled breadth-first on a separate cancellable worker.
+StrataV omits the current-directory monument: its folders become bounded
+MapV buildings in a deterministic road-connected neighborhood, and its files
+occupy the open lots as smaller log-height structures. Indexed folder
+buildings use exact recursive byte totals; footprint, height, and a restrained
+brightness shift use a sibling-relative logarithmic p10–p90 scale, while the
+exact total remains beneath the label. This makes meaningful differences
+visible without allowing one backup tree to flatten the neighborhood. Each
+district roof contains a MapV miniature of up to 96 immediate children plus an
+explicit folded-remainder block. Rooftop geometry is explanatory rather than a
+nested selection surface: every click, action, Look update, and camera flight
+resolves to the owning folder. `E` / Right lifts the 96-cell fold for the
+selected district; `C` / Left restores the bounded miniature. Rooftop color
+uses the active Omarchy image, video, audio, code, data, and archive hues, with
+a quiet HUD key; brightness still encodes recency. Every immediate root child
+remains represented, and an uncataloged folder falls back to the same
+structural live-filesystem renderer.
 
 **Volumes.** `:volumes` or the `volumes` chip is a listing of user-facing mounts — not a sidebar, not GVFS. `/` is always a row (the system disk, even when home lives on it). Each row shows free / total / filesystem. `/` and extra disks also get a compact chip with free space (`/ 180G`, `KINGSTON 18G`); USB chips vanish when you unplug. Enter an extra disk and it is a **root tree**: crumbs start at `volumes / KINGSTON`, and Q / h at the mount root returns to the volumes listing instead of `/run/media`. Status line shows `KINGSTON  18G free / 64G` while you are inside. Do-layer **Eject** unmounts a removable volume (`udisksctl`). `/proc`, snaps, and portal mounts stay hidden.
 
-**Peek.** Space on a file opens the preview overlay. `A`/`D` hop the index ↔
-the file; `W`/`S` then scroll the preview (sqlite / duckdb / text / archives
-are interactive). Enter / double-click in peek is the same commit as the root
-listing.
+**Look and Peek.** Space shows or hides the lightweight Look panel without
+changing its saved startup preference. Shift+Space promotes the selection into
+the full preview overlay. `A`/`D` hop the index ↔ the file; `W`/`S` then scroll
+the preview (sqlite / duckdb / text / archives are interactive). Enter /
+double-click in Peek is the same commit as the root listing.
 
 **Do-layer.** Ctrl+Enter and right-click open the same sticky surface. Actions
 on the left, look box on the right (file preview, or a large folder mosaic).
@@ -110,7 +135,9 @@ the registry.
 A pack may declare more than one kind (preview + action is common).
 
 **SQL files.** `:sql` opens a read-only DuckDB workbench over Synchro's
-SQLite metadata catalog. `here` follows the current folder, `selection`
+metadata catalog. SQLite remains the live source of truth; queries use the
+latest complete native DuckDB shadow when one is available. `here` follows the
+current folder, `selection`
 is an execution-time snapshot of selected rows, and the recursive `tree`
 relation indexes itself the first time a query needs it. `:sql scan` forces a
 refresh without adding a permanent toolbar control. Tree scans are recursive,
@@ -130,9 +157,9 @@ content crawl or catalog rebuild: `kind` maps extensions into practical file
 families, `stem` removes the final extension, `depth` counts path levels,
 `age_days` drives `age_bucket`, `size_bucket` bands bytes, and
 `modified_date` / `modified_month` expose calendar groupings. `root` identifies
-the persisted scan root. These are virtual DuckDB columns over the existing
-SQLite rows, so an already-indexed multi-million-file tree gains them on its
-next query. New or touched rows also receive a stable local `file_id` from
+the persisted scan root. Deterministic derived fields are materialized in each
+DuckDB generation while time-relative age fields remain live. New or touched
+rows also receive a stable local `file_id` from
 device/inode identity, allowing deterministic facts to follow a rename without
 turning the path into identity.
 
@@ -161,8 +188,34 @@ Parquet); opaque formats keep a clear extension identity card instead of a
 misleading generic-file mosaic. Browser Back returns from a drilled group to
 its parent aggregate query. SQL and Terminal declare the same
 `panel.group` and appear as modes of one workspace dock; third-party panels can
-opt into another group without hard-coded UI changes. The disposable catalog lives at
-`~/.local/share/synchro/catalog.sqlite`; browsing never depends on it.
+opt into another group without hard-coded UI changes. The disposable source
+catalog lives at `~/.local/share/synchro/catalog.sqlite`; browsing never depends
+on it. A background user service periodically checks whether a new DuckDB
+generation is eligible: indexing must be finished, catalog writes must have
+been quiet for ten minutes, and the active generation must be at least an hour
+old. Eligible builds use two low-priority worker threads, build
+`catalog.duckdb` beside the active generation, validate it, and atomically
+promote it. Queries already in flight retain the previous inode; new queries
+receive the promoted generation. A cross-process lock keeps multiple Synchro
+windows from duplicating the build, and query failures fall back to the SQLite
+bridge. Inspect or force this cache with
+`synchro catalog shadow status` and `synchro catalog shadow rebuild --force`.
+
+**Omaflow.** `:flow` opens the optional Omaflow companion as another workspace
+panel. Synchro discovers the installed Omarchy plugin from its manifest, then
+watches Omaflow's structured index, rule files, staging state, and activity log.
+The selected rule is rendered as an adaptive flow graph with branching routes
+and inspectable steps. **New** or **Revise** sends a plain-language request to
+Omarchy's default agent; its staged rule, warnings, and full graph remain a
+draft until explicitly installed or discarded. Dry runs are one step; a real
+manual run and draft installation must each be armed and confirmed. Every
+operation invokes the discovered Omaflow executable directly with fixed
+arguments—never through a shell. Rules with an Omaflow `accepts` contract are
+also exposed in Synchro's **do** layer only while the explicit selection
+matches their MIME, suffix, path, project-marker, kind, and count constraints.
+The mounted flow picker defaults to a dry run; a real run must be armed, then
+receives the selection through a private bounded JSON context file.
+
 Use **save** in the SQL panel to name a query (for example, “big webp files”);
 it becomes a persistent location beside pinned folders and reopens against the
 folder context it was saved from. The compact **lens** rail supplies useful
@@ -299,6 +352,8 @@ Useful `host` calls (read-only first-party policy — do not execute the file):
 | `host.readPreview(file, maxBytes)` | First N bytes as text |
 | `host.readParquet(file, maxRows)` | Footer schema + sample |
 | `host.readDatabase(file, "sqlite"\|"duckdb", table, offset, limit)` | Table browser |
+| `host.requestParquet(...)` / `parquetReady` | Non-blocking tagged Parquet read |
+| `host.requestDatabase(...)` / `databaseReady` | Non-blocking tagged database read |
 | `host.readArchive(file, maxEntries)` | Zip / tar / gzip members |
 | `host.rasterUrl(file)` | Image URL Qt can paint (WebP rasterized) |
 | `host.copyText(text)` | Clipboard |
@@ -309,6 +364,13 @@ Useful `host` calls (read-only first-party policy — do not execute the file):
 Theme tokens (`Theme.foreground`, `Theme.accent`, `Theme.space(8)`, …) follow
 the active Omarchy theme. Do not import `qs.Commons` — that module belongs to
 the shell.
+
+Preview handlers can opt into the ambient Look panel by declaring
+`"preview": { "runtime": "inprocess", "inline": "quick-app" }`. Synchro
+mounts the handler's `HandlerSurface` directly in Look without panel chrome.
+Use `host.requestParquet(...)` or `host.requestDatabase(...)` and their tagged
+ready signals for expensive reads so stale work is ignored when selection
+changes. Quick apps are opt-in because they instantiate while browsing.
 
 ### Exec peers
 
@@ -359,15 +421,39 @@ and a Synchro manifest, not a Nautilus Python extension.
 | `synchro.location.volumes` | location | Disks / USB as a listing + root trees |
 | `synchro.action.eject` | action | Unmount / power-off a removable volume |
 | `synchro.panel.sql` | panel | `:sql` read-only DuckDB over `here`, `tree`, and `selection` |
+| `synchro.panel.omaflow` | panel | `:flow` Omaflow rules, dry runs, and recent activity |
 
 Office docs, audio, 7z, fonts, and a few more previews are still on the
 [preview backlog](PREVIEW-BACKLOG.md).
 
 ## Omarchy agent bridge
 
-Synchro's persisted catalog is available without starting the QML UI. The
-output is always JSON and includes the query scope, complete/incomplete index
-coverage, scan/catalog timestamps, elapsed time, and truncation state:
+Synchro works with Omarchy's configured system agent without requiring MCP.
+The normal browser startup installs one shared `synchro` skill using Omarchy's
+cross-harness convention (`~/.agents/skills`, Codex, Claude, and Pi). Existing
+user-owned skill paths are preserved and reported rather than overwritten:
+
+```bash
+synchro agent doctor
+synchro agent install
+```
+
+An Action Deck handoff inherits `SYNCHRO_SELECTION`, `SYNCHRO_CWD`, and the exact
+running executable in `SYNCHRO_BIN` (so uninstalled dogfood builds work too).
+Its first command is `"$SYNCHRO_BIN" agent context --compact`, which returns one
+self-describing JSON document containing the complete selection, working
+folder, catalog relations and fields, examples, result-safety rules, and
+available hand-back commands. The same command is useful to agent scripts
+outside the UI when those environment variables are present.
+
+Synchro's persisted catalog is available without starting the QML UI. Agents
+use `synchro agent query`, which runs the validated read-only query surface
+through a narrow transient Omarchy user service; this lets SQLite use its WAL
+files without granting the agent broad access outside its sandbox. Ordinary
+shell scripts can continue to use `synchro query` directly. Output is always
+JSON and includes the query engine (`duckdb-shadow` or `duckdb-sqlite`), shadow
+revision gap, query scope, complete/incomplete index coverage, scan/catalog
+timestamps, elapsed time, and truncation state:
 
 ```bash
 synchro query --cwd "$PWD" --sql \
@@ -377,9 +463,15 @@ synchro query --cwd "$PWD" --sql \
 # SQL can come from stdin; selection can be repeated.
 printf '%s\n' 'select * from selection' | \
   synchro query --sql - --selection ./one.txt --selection ./two.txt
+
+# Hand a result back as a navigable Synchro pseudo-folder.
+synchro agent show --cwd "$PWD" --label "large images" --sql \
+  "select name,path,kind,mb from tree where kind = 'image' order by size desc"
 ```
 
-`synchro mcp --stdio` exposes the same read-only engine to MCP clients. It
+For extended integrations, `synchro mcp --stdio` exposes the same read-only
+engine to MCP clients. MCP is optional: ordinary system-agent handoffs and
+catalog work never depend on its registration. It
 provides typed tools for name/path search, SQL, project discovery, file facts,
 saved queries, and opening a result as a navigable SQL pseudo-folder in
 Synchro. A local Codex registration looks like:
@@ -398,10 +490,10 @@ exhaustive.
 
 The built-in **Agent** action runs `omarchy agent prompt`, so it always follows
 Omarchy's current default agent. It starts in the selected folder (or a selected
-file's parent), passes the complete selection as a short-lived JSON manifest in
-`SYNCHRO_SELECTION`, and tells the agent about the catalog CLI. This keeps the
-handoff useful for Codex, Claude, Gemini, or whichever agent Omarchy selects,
-without hard-coding an agent-specific launcher.
+file's parent), passes the complete selection as a short-lived private JSON
+manifest, and points the agent at the stable context contract above. This keeps
+the handoff useful for Codex, Claude, Gemini, or whichever agent Omarchy selects,
+without hard-coding an agent-specific launcher or MCP configuration.
 
 ## Opt-in FileChooser
 

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "downloads-router-lab",
+  "name": "Downloads router · reconverging paths",
+  "enabled": false,
+  "renderOnly": true,
+  "trigger": { "type": "file-created", "path": "~/Downloads" },
+  "conditions": [],
+  "actions": [{ "type": "notify", "message": "render lab only" }],
+  "source": "Route new downloads by kind, inspect risky branches, then reconverge into one searchable index.",
+  "visualGraph": {
+    "nodes": [
+      { "id": "arrival", "kind": "trigger", "label": "New download", "detail": "~/Downloads receives a file" },
+      { "id": "route", "kind": "fork", "label": "Detect family", "detail": "image · archive · everything else", "parameters": { "strategy": "first match", "match": ["image/*", "application/zip", "fallback"] } },
+      { "id": "image-opt", "kind": "action", "order": 0, "label": "Optimize image", "detail": "lossless metadata-safe pass", "parameters": { "preserve": ["mtime", "EXIF"], "max_pixels": 24000000, "quality": 92 } },
+      { "id": "archive-scan", "kind": "subflow", "order": 1, "label": "Inspect archive", "detail": "call archive safety flow" },
+      { "id": "other-tag", "kind": "action", "order": 2, "label": "Tag uncategorized", "detail": "retain original file" },
+      { "id": "image-size", "kind": "condition", "order": 0, "label": "Under 24 MP?", "detail": "avoid expensive conversion", "parameters": { "field": "pixel_count", "operator": "<=", "value": 24000000 } },
+      { "id": "archive-clean", "kind": "condition", "order": 1, "label": "Scan clean?", "detail": "no suspicious members" },
+      { "id": "other-note", "kind": "action", "order": 2, "label": "Notify once", "detail": "show an unobtrusive summary" },
+      { "id": "image-move", "kind": "action", "order": 0, "label": "Move to Pictures", "detail": "preserve capture date" },
+      { "id": "unpack", "kind": "action", "order": 1, "label": "Unpack safely", "detail": "new sibling directory" },
+      { "id": "quarantine", "kind": "action", "tone": "fail", "order": 2, "label": "Quarantine", "detail": "oversized or unsafe input" },
+      { "id": "merge", "kind": "join", "label": "Collect accepted files", "detail": "three routes reconverge" },
+      { "id": "index", "kind": "action", "label": "Refresh Synchro index", "detail": "incremental metadata update" },
+      { "id": "done", "kind": "terminal", "tone": "success", "label": "Indexed", "detail": "available to SQL and search" },
+      { "id": "held", "kind": "terminal", "tone": "fail", "label": "Held", "detail": "awaiting manual review" }
+    ],
+    "edges": [
+      { "from": "arrival", "to": "route" },
+      { "from": "route", "to": "image-opt", "label": "IMAGE" },
+      { "from": "route", "to": "archive-scan", "label": "ARCHIVE" },
+      { "from": "route", "to": "other-tag", "label": "OTHER" },
+      { "from": "image-opt", "to": "image-size" },
+      { "from": "archive-scan", "to": "archive-clean" },
+      { "from": "other-tag", "to": "other-note" },
+      { "from": "image-size", "to": "image-move", "label": "YES", "tone": "pass" },
+      { "from": "image-size", "to": "quarantine", "label": "NO", "tone": "fail" },
+      { "from": "archive-clean", "to": "unpack", "label": "YES", "tone": "pass" },
+      { "from": "archive-clean", "to": "quarantine", "label": "NO", "tone": "fail" },
+      { "from": "image-move", "to": "merge" },
+      { "from": "unpack", "to": "merge" },
+      { "from": "other-note", "to": "merge" },
+      { "from": "quarantine", "to": "held", "tone": "fail" },
+      { "from": "merge", "to": "index" },
+      { "from": "index", "to": "done", "tone": "success" }
+    ]
+  }
+}

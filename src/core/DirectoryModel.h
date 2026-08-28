@@ -140,9 +140,13 @@ public:
   Q_INVOKABLE bool restoreCurrent();
   Q_INVOKABLE bool emptyTrash();
   Q_INVOKABLE void refreshFsn(const QString &view = QString());
+  Q_INVOKABLE void refreshFsnExpanded(const QString &view,
+                                      const QStringList &expandedPaths);
   QVariantList fsnBoxes() const { return m_fsnBoxes; }
   bool fsnListing() const { return m_fsnListing; }
   Q_INVOKABLE void requestVisibleThumbs(int first, int last, int sizePx);
+  Q_INVOKABLE void requestImageFacts(const QString &path);
+  Q_INVOKABLE void refreshThemedThumbnails();
   Q_INVOKABLE void refreshThumbs(const QStringList &paths);
   Q_INVOKABLE void showSqlResult(const QVariantMap &result,
                                  const QString &label = QString());
@@ -229,6 +233,8 @@ private:
   void navigateToExistingParent();
   void reload();
   QVariantMap entryToMap(const DirectoryEntry &e) const;
+  void addImageFacts(QVariantMap &stat, const QString &path,
+                     qint64 mtime) const;
   void emitCurrentStat();
 
   friend class DirectoryModelTest;
@@ -260,6 +266,8 @@ private:
   QHash<int, int> m_visibleRowByAll;
   QSet<QString> m_suppressedNames;
   QSet<QString> m_pendingThumbs;
+  QHash<QString, QVariantMap> m_imageFacts;
+  QStringList m_imageFactOrder;
   int m_thumbFirst = -1;
   int m_thumbLast = -1;
   int m_thumbSizePx = 128;

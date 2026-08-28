@@ -93,7 +93,23 @@ DirectoryModel::DirectoryModel(QObject *parent) : QAbstractListModel(parent) {
   connect(m_thumbs, &ThumbnailService::thumbnailsReady, this,
           &DirectoryModel::onThumbnailsReady);
   connect(m_thumbs, &ThumbnailService::imageFactsReady, this,
-          &DirectoryModel::imageFactsReady);
+          [this](const QString &path, qint64 mtime,
+                 const QVariantMap &facts) {
+            QVariantMap cached = facts;
+            cached.insert(QStringLiteral("_source_mtime"), mtime);
+            if (!m_imageFacts.contains(path))
+              m_imageFactOrder.append(path);
+            m_imageFacts.insert(path, cached);
+            while (m_imageFactOrder.size() > 768) {
+              const QString oldest = m_imageFactOrder.takeFirst();
+              m_imageFacts.remove(oldest);
+            }
+            // Selection may be owned by a sorted proxy or multi-selection,
+            // not DirectoryModel::currentIndex(). Emit the cheap invalidation
+            // unconditionally; PanelLook coalesces these before refreshing.
+            emitCurrentStat();
+            emit imageFactsReady(path, mtime, facts);
+          });
   connect(&VolumeStore::instance(), &VolumeStore::changed, this, [this] {
     if (isVolumes())
       reload();
@@ -461,6 +477,9 @@ void DirectoryModel::bindSearch() {
             if (!m_searching)
               return;
             emit dataChanged(index(tl.row()), index(br.row()), roles);
+            if (m_search && m_search->currentIndex() >= tl.row() &&
+                m_search->currentIndex() <= br.row())
+              emitCurrentStat();
           });
   connect(m_search, &SearchModel::currentIndexChanged, this, [this] {
     if (m_searching) {
@@ -629,6 +648,34 @@ QVariantMap DirectoryModel::currentStat() const {
 
 void DirectoryModel::emitCurrentStat() { emit currentStatChanged(); }
 
+void DirectoryModel::addImageFacts(QVariantMap &stat, const QString &path,
+                                   qint64 mtime) const {
+  const auto imageFacts = m_imageFacts.constFind(path);
+  if (imageFacts == m_imageFacts.cend() ||
+      imageFacts->value(QStringLiteral("_source_mtime")).toLongLong() != mtime)
+    return;
+  QVariantList palette;
+  QVariantList weights;
+  for (int i = 0; i < 3; ++i) {
+    const QString color =
+        imageFacts->value(QStringLiteral("palette_%1").arg(i)).toString();
+    if (color.isEmpty())
+      continue;
+    palette.append(color);
+    weights.append(
+        imageFacts->value(QStringLiteral("palette_weight_%1").arg(i))
+            .toDouble());
+  }
+  stat.insert(QStringLiteral("imagePalette"), palette);
+  stat.insert(QStringLiteral("imagePaletteWeights"), weights);
+  stat.insert(QStringLiteral("imageBrightness"),
+              imageFacts->value(QStringLiteral("brightness")).toDouble());
+  stat.insert(QStringLiteral("imageSaturation"),
+              imageFacts->value(QStringLiteral("saturation")).toDouble());
+  stat.insert(QStringLiteral("dominantColor"),
+              imageFacts->value(QStringLiteral("dominant_color")).toString());
+}
+
 QVariantMap DirectoryModel::entryToMap(const DirectoryEntry &e) const {
   QVariantMap m;
   m.insert(QStringLiteral("name"), e.name);
@@ -653,12 +700,17 @@ QVariantMap DirectoryModel::entryToMap(const DirectoryEntry &e) const {
   m.insert(QStringLiteral("used"), e.used);
   m.insert(QStringLiteral("total"), e.total);
   m.insert(QStringLiteral("percent"), e.percent);
+  addImageFacts(m, e.path, e.mtime);
   return m;
 }
 
 QVariantMap DirectoryModel::cachedStat(const QString &path) const {
-  if (searching())
-    return m_search->cachedStat(path);
+  if (searching()) {
+    QVariantMap searchStat = m_search->cachedStat(path);
+    addImageFacts(searchStat, path,
+                  searchStat.value(QStringLiteral("mtime")).toLongLong());
+    return searchStat;
+  }
   if (path.isEmpty())
     return {};
   auto it = m_indexByPath.constFind(path);
@@ -685,11 +737,16 @@ void DirectoryModel::requestStatPath(const QString &path) {
 }
 
 void DirectoryModel::refreshFsn(const QString &view) {
+  refreshFsnExpanded(view, {});
+}
+
+void DirectoryModel::refreshFsnExpanded(const QString &view,
+                                        const QStringList &expandedPaths) {
   if (!view.isEmpty())
     m_fsnView = view;
   const FsnLayout::View fsnView = m_fsnView == QLatin1String("map")
                                       ? FsnLayout::MapView
-                                      : FsnLayout::TreeVView;
+                                      : FsnLayout::StrataVView;
   ++m_fsnGen;
   const quint64 gen = m_fsnGen;
   if (isVirtualPath(m_path)) {
@@ -711,7 +768,8 @@ void DirectoryModel::refreshFsn(const QString &view) {
     if (schemeEnd > 0)
       rootName = rootName.left(schemeEnd);
     m_fsnBoxes = FsnLayout::toVariantList(
-        FsnLayout::buildFromItems(rootName, m_path, items, fsnView));
+        FsnLayout::buildFromItems(rootName, m_path, items, fsnView,
+                                  expandedPaths));
     m_fsnListing = false;
     emit fsnBoxesChanged();
     emit fsnListingChanged();
@@ -722,9 +780,10 @@ void DirectoryModel::refreshFsn(const QString &view) {
   const QString path = m_path;
   const bool hidden = m_showHidden;
   QPointer<DirectoryModel> self(this);
-  (void)QtConcurrent::run([self, gen, path, hidden, fsnView] {
+  (void)QtConcurrent::run([self, gen, path, hidden, fsnView, expandedPaths] {
     const QVariantList boxes =
-        FsnLayout::toVariantList(FsnLayout::build(path, hidden, fsnView));
+        FsnLayout::toVariantList(
+            FsnLayout::build(path, hidden, fsnView, expandedPaths));
     if (!self)
       return;
     QMetaObject::invokeMethod(self.data(), "applyFsnBoxes",
@@ -1111,6 +1170,7 @@ void DirectoryModel::showSqlResult(const QVariantMap &result,
 void DirectoryModel::loadSqlListing(const QVariantMap &result) {
   const QVariantList rows = result.value(QStringLiteral("rows")).toList();
   const QVariantList columns = result.value(QStringLiteral("columns")).toList();
+  const QMimeDatabase mimeDb;
   QVector<DirectoryEntry> batch;
   batch.reserve(rows.size());
   for (int i = 0; i < rows.size(); ++i) {
@@ -1131,6 +1191,13 @@ void DirectoryModel::loadSqlListing(const QVariantMap &result) {
                           fi.lastModified().toMSecsSinceEpoch())
                     .toLongLong();
       e.mime = row.value(QStringLiteral("mime")).toString();
+      // SQL projections commonly select path/name without MIME. Preserve the
+      // normal-listing preview contract with extension-only classification;
+      // never content-probe an arbitrary query result on the GUI thread.
+      if (e.mime.isEmpty())
+        e.mime = mimeDb
+                     .mimeTypeForFile(e.path, QMimeDatabase::MatchExtension)
+                     .name();
       e.uri = QUrl::fromLocalFile(e.path);
       e.isHidden = row.value(QStringLiteral("is_hidden"),
                              e.name.startsWith(QLatin1Char('.')))
@@ -1705,6 +1772,72 @@ void DirectoryModel::requestVisibleThumbs(int first, int last, int sizePx) {
       rows.append(i);
   }
   requestSourceThumbs(rows, sizePx);
+}
+
+void DirectoryModel::requestImageFacts(const QString &path) {
+  if (!m_thumbs || path.isEmpty())
+    return;
+  const QVariantMap stat = cachedStat(path);
+  const qint64 mtime = stat.value(QStringLiteral("mtime")).toLongLong();
+  if (mtime <= 0)
+    return;
+  const auto facts = m_imageFacts.constFind(path);
+  if (facts != m_imageFacts.cend() &&
+      facts->value(QStringLiteral("_source_mtime")).toLongLong() == mtime)
+    return;
+  ThumbnailJob job;
+  job.path = path;
+  job.mime = stat.value(QStringLiteral("mime")).toString();
+  job.mtime = mtime;
+  job.sizePx = m_thumbSizePx > 0 ? m_thumbSizePx : 128;
+  m_thumbs->requestBackground(QVector<ThumbnailJob>{job});
+}
+
+void DirectoryModel::refreshThemedThumbnails() {
+  ThumbnailService::invalidateThemeCache();
+  if (searching()) {
+    if (m_search)
+      m_search->clearThemedThumbnails();
+    requestSourceThumbs(m_thumbRows, m_thumbSizePx);
+    return;
+  }
+
+  QVector<int> changedRows;
+  bool currentChanged = false;
+  for (int allIndex = 0; allIndex < m_all.size(); ++allIndex) {
+    DirectoryEntry &entry = m_all[allIndex];
+    if ((entry.thumbnail.isEmpty() && !entry.thumbnailPending) ||
+        !ThumbnailService::thumbnailDependsOnTheme(
+            entry.path, entry.mime, entry.isDir))
+      continue;
+    entry.thumbnail.clear();
+    entry.thumbnailPending = false;
+    const auto visible = m_visibleRowByAll.constFind(allIndex);
+    if (visible == m_visibleRowByAll.cend())
+      continue;
+    changedRows.append(visible.value());
+    currentChanged = currentChanged || visible.value() == m_currentIndex;
+  }
+
+  if (!changedRows.isEmpty()) {
+    std::sort(changedRows.begin(), changedRows.end());
+    int first = changedRows.constFirst();
+    int last = first;
+    for (int i = 1; i < changedRows.size(); ++i) {
+      if (changedRows.at(i) == last + 1) {
+        last = changedRows.at(i);
+        continue;
+      }
+      emit dataChanged(index(first), index(last),
+                       {ThumbnailRole, ThumbnailPendingRole});
+      first = last = changedRows.at(i);
+    }
+    emit dataChanged(index(first), index(last),
+                     {ThumbnailRole, ThumbnailPendingRole});
+  }
+  if (currentChanged)
+    emitCurrentStat();
+  requestSourceThumbs(m_thumbRows, m_thumbSizePx);
 }
 
 void DirectoryModel::requestSourceThumbs(const QVector<int> &sourceRows,

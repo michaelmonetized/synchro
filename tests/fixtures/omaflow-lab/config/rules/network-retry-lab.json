@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "network-retry-lab",
+  "name": "Network recovery · bounded retry loop",
+  "enabled": false,
+  "renderOnly": true,
+  "trigger": { "type": "network-changed", "state": "offline" },
+  "conditions": [],
+  "actions": [{ "type": "notify", "message": "render lab only" }],
+  "source": "Attempt a bounded repair sequence, loop through a delayed health probe, and surface a clear exhausted state.",
+  "visualGraph": {
+    "nodes": [
+      { "id": "offline", "rank": 0, "kind": "trigger", "label": "Network offline", "detail": "default route disappeared" },
+      { "id": "probe", "rank": 1, "kind": "action", "label": "Probe gateway", "detail": "fast local health check" },
+      { "id": "healthy", "rank": 2, "kind": "condition", "label": "Reachable?", "detail": "gateway and DNS respond" },
+      { "id": "ready", "rank": 3, "kind": "terminal", "tone": "success", "order": 0, "label": "Recovered", "detail": "network is usable" },
+      { "id": "repair", "rank": 3, "kind": "action", "order": 1, "label": "Restart connection", "detail": "reapply active profile" },
+      { "id": "pause", "rank": 4, "kind": "delay", "label": "Back off 5 seconds", "detail": "avoid a tight retry loop", "parameters": { "seconds": 5, "jitter_ms": 400 } },
+      { "id": "budget", "rank": 5, "kind": "condition", "label": "Attempts remaining?", "detail": "maximum three repairs", "parameters": { "max_attempts": 3, "counter": "network_repair_attempts", "reset_on": "success" } },
+      { "id": "failed", "rank": 6, "kind": "terminal", "tone": "fail", "label": "Needs attention", "detail": "repair budget exhausted" }
+    ],
+    "edges": [
+      { "from": "offline", "to": "probe" },
+      { "from": "probe", "to": "healthy" },
+      { "from": "healthy", "to": "ready", "label": "YES", "tone": "pass" },
+      { "from": "healthy", "to": "repair", "label": "NO", "tone": "fail" },
+      { "from": "repair", "to": "pause" },
+      { "from": "pause", "to": "budget" },
+      { "from": "budget", "to": "probe", "label": "RETRY", "tone": "retry" },
+      { "from": "budget", "to": "failed", "label": "EXHAUSTED", "tone": "fail" }
+    ]
+  }
+}

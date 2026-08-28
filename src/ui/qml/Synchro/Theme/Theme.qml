@@ -53,6 +53,14 @@ QtObject {
                        Math.max(0, Math.min(1, Number(amount))))
     }
 
+    function blend(a, b, amount) {
+        var t = Math.max(0, Math.min(1, Number(amount)))
+        return Qt.rgba(a.r + (b.r - a.r) * t,
+                       a.g + (b.g - a.g) * t,
+                       a.b + (b.b - a.b) * t,
+                       a.a + (b.a - a.a) * t)
+    }
+
     readonly property color foreground: impl.foreground
     readonly property color background: impl.background
     readonly property color opaqueBackground: Qt.rgba(
@@ -78,6 +86,51 @@ QtObject {
         darkerBackground, number("canvas.glass-alpha-bottom", 0.80))
     readonly property color canvasGlassEdge: alpha(
         accent, number("canvas.glass-edge-alpha", 0.16))
+
+    // StrataV / MapV use the browser palette. The category hues come from the
+    // active Omarchy terminal palette, but are pulled toward one neutral
+    // material base so a district reads as a place rather than a heat map.
+    // Themes can still override any fsn.* token directly.
+    readonly property color fsnRed: themedColor("colors.red", urgent)
+    readonly property color fsnOrange: themedColor("colors.orange", fsnRed)
+    readonly property color fsnYellow: themedColor("colors.yellow", lightForeground)
+    readonly property color fsnGreen: themedColor("colors.green", accent)
+    readonly property color fsnCyan: themedColor("colors.cyan", lightForeground)
+    readonly property color fsnBlue: themedColor("colors.blue", accent)
+    readonly property color fsnMagenta: themedColor("colors.magenta", urgent)
+    readonly property color fsnMaterial: blend(lighterBackground, foreground, 0.52)
+    readonly property color fsnPlatform: themedColor(
+        "fsn.platform", blend(darkerBackground, accent, 0.24))
+    readonly property color fsnDirectory: themedColor(
+        "fsn.directory", blend(lighterBackground, accent, 0.34))
+    readonly property color fsnFile: themedColor(
+        "fsn.file", fsnMaterial)
+    readonly property color fsnImage: themedColor(
+        "fsn.image", blend(fsnMaterial, fsnCyan, 0.58))
+    readonly property color fsnVideo: themedColor(
+        "fsn.video", blend(fsnMaterial, fsnMagenta, 0.60))
+    readonly property color fsnAudio: themedColor(
+        "fsn.audio", blend(fsnMaterial, fsnGreen, 0.56))
+    readonly property color fsnCode: themedColor(
+        "fsn.code", blend(fsnMaterial, fsnBlue, 0.66))
+    readonly property color fsnData: themedColor(
+        "fsn.data", blend(fsnMaterial, fsnYellow, 0.52))
+    readonly property color fsnArchive: themedColor(
+        "fsn.archive", blend(fsnMaterial, fsnOrange, 0.62))
+    readonly property color fsnSymlink: themedColor(
+        "fsn.symlink", brightForeground)
+    readonly property color fsnRoad: themedColor(
+        "fsn.road", blend(darkerBackground, accent, 0.62))
+    readonly property color fsnRoadEdge: themedColor(
+        "fsn.road-edge", blend(darkerBackground, accent, 0.84))
+    readonly property color fsnEdge: themedColor(
+        "fsn.edge", alpha(foreground, 0.22))
+    readonly property color fsnLabel: themedColor(
+        "fsn.label", lightForeground)
+    readonly property color fsnSelection: themedColor(
+        "fsn.selection", accent)
+    readonly property color fsnSurfaceText: themedColor(
+        "fsn.surface-text", darkerBackground)
 
     readonly property color normalFill: alpha(
         colorFor(raw("controls.normal-color", foreground), foreground),
@@ -129,7 +182,12 @@ QtObject {
         impl.foreground.r, impl.foreground.g, impl.foreground.b, 0.08)
     readonly property int radius: impl.radius
     readonly property int gapsOut: impl.gapsOut
-    readonly property string fontFamily: impl.fontFamily
+    // Interface copy is proportional by default. Technical material opts
+    // into mono explicitly, so typography communicates what kind of thing a
+    // user is looking at instead of making the whole app resemble a console.
+    readonly property string fontFamily: impl.sansFontFamily
+    readonly property string sansFontFamily: impl.sansFontFamily
+    readonly property string monoFontFamily: impl.monoFontFamily
     readonly property int fontBaseSize: impl.fontBaseSize
     readonly property int fontCaption: fontToken("caption", 0.833)
     readonly property int fontBodySmall: fontToken("body-small", 0.917)
@@ -162,6 +220,20 @@ QtObject {
         var fallback = Math.max(1, Math.round(root.fontBaseSize * mult))
         var value = Number(root.raw("font." + name, fallback))
         return isFinite(value) && value > 0 ? Math.round(value) : fallback
+    }
+
+    function markdownStyle() {
+        return {
+            format: "markdown",
+            foreground: root.foreground,
+            muted: root.muted,
+            accent: root.accent,
+            surface: root.darkerBackground,
+            border: root.normalBorder,
+            sansFamily: root.sansFontFamily,
+            monoFamily: root.monoFontFamily,
+            bodyPx: root.fontBody
+        }
     }
 
     function spacingToken(name, fallback) {

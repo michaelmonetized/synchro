@@ -107,6 +107,7 @@ void Config::applyDefaults() {
   m_panelApp = QStringLiteral("synchro.panel.terminal");
   m_panelLookOpen = true;
   m_panelLookRatio = 0.34;
+  m_lookSize = 360;
   m_gridSize = 132;
 }
 
@@ -163,6 +164,8 @@ bool Config::load() {
     m_panelLookRatio =
         qBound(0.2, panel.value(QStringLiteral("lookRatio")).toDouble(0.34),
                0.5);
+    m_lookSize = qBound(
+        240, panel.value(QStringLiteral("lookSize")).toInt(360), 1200);
   }
   if (obj.contains(QStringLiteral("gridSize")))
     m_gridSize = qBound(88, obj.value(QStringLiteral("gridSize")).toInt(132), 240);
@@ -221,6 +224,7 @@ bool Config::save() const {
   panel.insert(QStringLiteral("app"), m_panelApp);
   panel.insert(QStringLiteral("lookOpen"), m_panelLookOpen);
   panel.insert(QStringLiteral("lookRatio"), m_panelLookRatio);
+  panel.insert(QStringLiteral("lookSize"), m_lookSize);
   obj.insert(QStringLiteral("panel"), panel);
   obj.insert(QStringLiteral("gridSize"), m_gridSize);
   QSaveFile out(m_path);
@@ -393,6 +397,14 @@ void Config::setPanelLookRatio(double ratio) {
   if (qFuzzyCompare(m_panelLookRatio, next))
     return;
   m_panelLookRatio = next;
+  emit panelChanged();
+}
+
+void Config::setLookSize(int px) {
+  const int next = qBound(240, px, 1200);
+  if (m_lookSize == next)
+    return;
+  m_lookSize = next;
   emit panelChanged();
 }
 

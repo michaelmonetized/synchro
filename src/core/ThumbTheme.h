@@ -17,4 +17,5 @@ struct ThumbTheme {
 
   QString cacheId() const;
   static ThumbTheme current();
+  static void invalidateCache();
 };

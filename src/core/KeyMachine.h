@@ -41,6 +41,8 @@ class KeyMachine : public QObject {
                  panelChanged)
   Q_PROPERTY(bool panelFocused READ panelFocused WRITE setPanelFocused NOTIFY
                  panelFocusedChanged)
+  Q_PROPERTY(bool lookKeyMode READ lookKeyMode WRITE setLookKeyMode NOTIFY
+                 lookKeyModeChanged)
   Q_PROPERTY(int gridStride READ gridStride WRITE setGridStride NOTIFY
                  gridStrideChanged)
   Q_PROPERTY(bool helpOpen READ helpOpen NOTIFY helpOpenChanged)
@@ -106,6 +108,7 @@ public:
   QString panelId() const { return m_panelId; }
   QString panelSide() const { return m_panelSide; }
   bool panelFocused() const { return m_panelFocused; }
+  bool lookKeyMode() const { return m_lookKeyMode; }
   int gridStride() const { return m_gridStride; }
   bool helpOpen() const { return m_helpOpen; }
   QString helpText() const { return CommandPalette::helpText(); }
@@ -124,7 +127,11 @@ public:
   Q_INVOKABLE void setPanelSide(const QString &side);
   Q_INVOKABLE void togglePanel(const QString &id);
   Q_INVOKABLE void setPanelFocused(bool on);
+  Q_INVOKABLE void setLookKeyMode(bool on);
   Q_INVOKABLE void setGridStride(int columns);
+  // Browser grids resolve adjacency from their rendered delegates, then hand
+  // the chosen model row back here so visual selection semantics stay central.
+  Q_INVOKABLE void moveGridCursorTo(int index);
   Q_INVOKABLE void setStatusMessage(const QString &text);
   Q_INVOKABLE void focusFilter();
   Q_INVOKABLE void focusJump();
@@ -169,7 +176,10 @@ signals:
   void panelChanged();
   void panelFocusRequested();
   void sqlScanRequested();
+  void agentSearchRequested();
   void panelFocusedChanged();
+  void lookKeyModeChanged();
+  void lookToggleRequested();
   void gridStrideChanged();
   void helpOpenChanged();
   void statusMessageChanged();
@@ -250,6 +260,7 @@ private:
   QString m_panelId;
   QString m_panelSide = QStringLiteral("bottom");
   bool m_panelFocused = false;
+  bool m_lookKeyMode = false;
   int m_gridStride = 1;
   bool m_helpOpen = false;
   bool m_trashAvailable = true;

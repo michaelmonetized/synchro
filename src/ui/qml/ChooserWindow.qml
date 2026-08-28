@@ -11,6 +11,12 @@ Window {
     readonly property var history: chooser.navStack
     readonly property var keys: chooser.keyMachine
     readonly property var selection: chooser.selectionModel
+    readonly property int themeEpoch: Theme.epoch
+
+    onThemeEpochChanged: {
+        if (chooser && chooser.hostApi)
+            chooser.hostApi.refreshThemedPreviews()
+    }
 
     width: 875
     height: 600
@@ -89,7 +95,10 @@ Window {
             host: chooser.hostApi
             dndEnabled: false
             onViewToggleRequested: if (root.keys) root.keys.gridMode = true
-            onDoRequested: if (chooser.hostApi) chooser.hostApi.openDoLayer()
+            onDoRequested: function(sceneX, sceneY) {
+                if (chooser.hostApi)
+                    chooser.hostApi.openDoContext(sceneX, sceneY)
+            }
         }
     }
 
@@ -105,7 +114,10 @@ Window {
             host: chooser.hostApi
             dndEnabled: false
             onViewToggleRequested: if (root.keys) root.keys.gridMode = false
-            onDoRequested: if (chooser.hostApi) chooser.hostApi.openDoLayer()
+            onDoRequested: function(sceneX, sceneY) {
+                if (chooser.hostApi)
+                    chooser.hostApi.openDoContext(sceneX, sceneY)
+            }
         }
     }
 
@@ -370,7 +382,7 @@ Window {
                         if (chooser.overwriteOpen)
                             chooser.confirmOverwrite()
                         else
-                            chooser.accept()
+                            chooser.activateOrAccept()
                     }
                 }
             }

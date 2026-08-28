@@ -16,7 +16,7 @@
   "entryPoints": {},
   "action": {
     "runtime": "exec",
-    "exec": "omarchy agent prompt \"Work with the current Synchro file-browser context. Start by reading the JSON selection manifest named by the SYNCHRO_SELECTION environment variable. Your working folder is %d. Use synchro query --help for read-only access to Synchro's persistent indexed metadata, saved SQL folders, and deterministic file facts.\"",
+    "exec": "omarchy agent prompt \"Work with the current Synchro file-browser context. Run the executable named by SYNCHRO_BIN with arguments 'agent context --compact' first; it reads the complete selection and working folder from the inherited environment and documents the read-only catalog and result-navigation commands. Use that CLI contract for indexed discovery and deterministic metadata. Synchro MCP is optional and is never required for this task.\"",
     "tryExec": "omarchy"
   },
   "permissions": ["exec"]

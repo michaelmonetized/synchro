@@ -1,4 +1,5 @@
 #include "HostApi.h"
+#include "MarkdownRender.h"
 
 #include <QCryptographicHash>
 #include <QElapsedTimer>
@@ -10,6 +11,8 @@
 
 #include <dlfcn.h>
 
+#include "ArchiveMeta.h"
+#include "DbPreview.h"
 #include "DirectoryModel.h"
 #include "FileCatalog.h"
 #include "FileOpEngine.h"
@@ -18,8 +21,7 @@
 #include "HandlerRegistry.h"
 #include "MimeMap.h"
 #include "NavStack.h"
-#include "ArchiveMeta.h"
-#include "DbPreview.h"
+#include "OmaflowBridge.h"
 #include "ParquetMeta.h"
 #include "SelectionModel.h"
 #include "SyntaxHighlight.h"
@@ -29,12 +31,13 @@
 
 #include <QAbstractItemModel>
 #include <QClipboard>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFont>
-#include <QIODevice>
 #include <QGuiApplication>
+#include <QIODevice>
 #include <QImageReader>
 #include <QJsonArray>
 #include <QMetaObject>
@@ -48,6 +51,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <utility>
 
 namespace {
 
@@ -75,11 +79,12 @@ protected:
   void highlightBlock(const QString &text) override {
     setFormat(0, text.size(), m_normal);
     static const QRegularExpression keywords(
-        QStringLiteral("\\b(select|from|where|join|left|right|full|inner|outer|"
-                       "on|as|group|by|order|having|limit|offset|with|union|all|"
-                       "distinct|case|when|then|else|end|and|or|not|null|true|"
-                       "false|is|in|like|ilike|between|asc|desc|over|partition|"
-                       "filter|qualify|unnest|cast|count|sum|avg|min|max)\\b"),
+        QStringLiteral(
+            "\\b(select|from|where|join|left|right|full|inner|outer|"
+            "on|as|group|by|order|having|limit|offset|with|union|all|"
+            "distinct|case|when|then|else|end|and|or|not|null|true|"
+            "false|is|in|like|ilike|between|asc|desc|over|partition|"
+            "filter|qualify|unnest|cast|count|sum|avg|min|max)\\b"),
         QRegularExpression::CaseInsensitiveOption);
     static const QRegularExpression numbers(
         QStringLiteral("\\b(?:0x[0-9A-Fa-f]+|\\d+(?:\\.\\d+)?)\\b"));
@@ -99,9 +104,8 @@ protected:
     paint(lineComment, m_comment);
 
     setCurrentBlockState(0);
-    int start = previousBlockState() == 1
-                    ? 0
-                    : text.indexOf(QStringLiteral("/*"));
+    int start =
+        previousBlockState() == 1 ? 0 : text.indexOf(QStringLiteral("/*"));
     while (start >= 0) {
       const int end = text.indexOf(QStringLiteral("*/"), start + 2);
       const bool open = end < 0;
@@ -142,20 +146,61 @@ HostApi::HostApi(DirectoryModel *model, FilterProxy *proxy, NavStack *nav,
             &HostApi::onStatsApplied);
     connect(m_model, &DirectoryModel::searchQueryChanged, this,
             &HostApi::peekFindQueryChanged);
+    connect(m_model, &DirectoryModel::imageFactsReady, this,
+            [this](const QString &path, qint64, const QVariantMap &facts) {
+              if (path == m_inlinePreviewPath && !facts.isEmpty()) {
+                for (auto it = facts.cbegin(); it != facts.cend(); ++it)
+                  m_inlinePreviewStat.insert(it.key(), it.value());
+                emit inlinePreviewChanged();
+              }
+              if (m_actionOpen && path == m_doMetadataPath)
+                mergeDoImageFacts(facts);
+            });
+    if (ThumbnailService *thumbs = m_model->thumbnailService()) {
+      connect(thumbs, &ThumbnailService::thumbnailReady, this,
+              [this](const QString &path, const QString &url) {
+                m_inlineThumbPending.remove(path);
+                if (path != m_inlinePreviewPath || url.isEmpty() ||
+                    m_inlinePreviewStat.value(QStringLiteral("thumbnail"))
+                            .toString() == url)
+                  return;
+                m_inlinePreviewStat.insert(QStringLiteral("thumbnail"), url);
+                emit inlinePreviewChanged();
+              });
+    }
   }
   refreshListingChrome();
+}
+
+void HostApi::setOmaflowBridge(OmaflowBridge *bridge) {
+  if (m_omaflow == bridge)
+    return;
+  if (m_omaflow)
+    disconnect(m_omaflow, nullptr, this, nullptr);
+  m_omaflow = bridge;
+  if (!m_omaflow)
+    return;
+  connect(m_omaflow, &OmaflowBridge::operationChanged, this, [this] {
+    if (!m_doOperationRule.isEmpty() &&
+        m_omaflow->operationRule() == m_doOperationRule)
+      emit doOperationChanged();
+  });
+  connect(m_omaflow, &OmaflowBridge::operationFinished, this,
+          &HostApi::finishDoOperation);
 }
 
 void HostApi::onStatsApplied(const QStringList &paths) {
   // Handlers only exist inside an open preview; with nothing open there is
   // nobody to notify, and skipping keeps big listings cheap (the old
   // per-entry path built 50k QVariantMaps per directory).
-  if (!m_open && !m_previewItem && !m_inlinePreviewItem)
+  if (!m_open && !m_previewItem && !m_inlinePreviewItem && !m_actionOpen)
     return;
   for (const QString &path : paths)
     emit statReady(QUrl::fromLocalFile(path), m_model->cachedStat(path));
   if (m_inlinePreviewActive && paths.contains(m_inlinePreviewPath))
     refreshInlinePreview();
+  if (m_actionOpen && paths.contains(m_doMetadataPath))
+    refreshDoMetadata();
   if (m_open && !m_previewItem) {
     const QString current = currentItem().path;
     if (paths.contains(current))
@@ -165,9 +210,9 @@ void HostApi::onStatsApplied(const QStringList &paths) {
 
 Manifest::Item HostApi::itemAt(int proxyRow) const {
   Manifest::Item item;
-  const QAbstractItemModel *src = m_proxy
-                                      ? static_cast<QAbstractItemModel *>(m_proxy)
-                                      : static_cast<QAbstractItemModel *>(m_model);
+  const QAbstractItemModel *src =
+      m_proxy ? static_cast<QAbstractItemModel *>(m_proxy)
+              : static_cast<QAbstractItemModel *>(m_model);
   if (!src || proxyRow < 0 || proxyRow >= src->rowCount())
     return item;
   const QModelIndex idx = src->index(proxyRow, 0);
@@ -183,6 +228,21 @@ Manifest::Item HostApi::itemAt(int proxyRow) const {
 }
 
 Manifest::Item HostApi::currentItem() const {
+  if (m_sel && m_sel->selectedCount() == 1) {
+    const QVariantMap row = m_sel->primaryItem();
+    Manifest::Item item;
+    item.path = row.value(QStringLiteral("path")).toString();
+    if (!item.path.isEmpty()) {
+      item.uri = row.value(QStringLiteral("uri")).toUrl();
+      item.mime = row.value(QStringLiteral("mime")).toString();
+      item.isDir = row.value(QStringLiteral("isDir")).toBool();
+      if (item.uri.isEmpty())
+        item.uri = QUrl::fromLocalFile(item.path);
+      if (item.mime.isEmpty() && m_mime)
+        item.mime = m_mime->mimeForFile(item.path);
+      return item;
+    }
+  }
   if (m_proxy)
     return itemAt(m_proxy->currentIndex());
   if (m_model)
@@ -214,8 +274,8 @@ QVector<Manifest::Item> HostApi::currentItems() const {
 
 void HostApi::setCurrentFromModel() {
   const Manifest::Item item = currentItem();
-  const QUrl file = item.uri.isEmpty() ? QUrl::fromLocalFile(item.path)
-                                       : item.uri;
+  const QUrl file =
+      item.uri.isEmpty() ? QUrl::fromLocalFile(item.path) : item.uri;
   if (m_file != file) {
     m_file = file;
     emit fileChanged();
@@ -285,9 +345,8 @@ bool HostApi::loadPreviewFor(const Manifest::Item &item, QObject **slot) {
     return true;
   }
   HandlerRegistry::Record rec = m_registry->handler(best.id);
-  QQuickItem *itemQml =
-      m_loader->create(m_engine, rec, QStringLiteral("preview"), this, m_file,
-                       m_selection);
+  QQuickItem *itemQml = m_loader->create(
+      m_engine, rec, QStringLiteral("preview"), this, m_file, m_selection);
   if (!itemQml) {
     std::fprintf(stderr, "synchro: peek %s: %s\n", qPrintable(best.id),
                  qPrintable(m_loader->lastError()));
@@ -310,11 +369,16 @@ Manifest::Item HostApi::inlineCurrentItem() const {
   if (!m_model)
     return item;
 
+  QVariantMap selected;
   QString path;
-  if (m_sel && m_sel->selectedCount() == 1)
-    path = m_sel->selectedPaths().value(0);
-  QVariantMap st = path.isEmpty() ? m_model->currentStat()
-                                  : m_model->cachedStat(path);
+  if (m_sel && m_sel->selectedCount() == 1) {
+    selected = m_sel->primaryItem();
+    path = selected.value(QStringLiteral("path")).toString();
+  }
+  QVariantMap st =
+      path.isEmpty() ? m_model->currentStat() : m_model->cachedStat(path);
+  if (st.isEmpty() && !selected.isEmpty())
+    st = selected;
   if (path.isEmpty())
     path = st.value(QStringLiteral("path")).toString();
   if (path.isEmpty())
@@ -328,8 +392,13 @@ Manifest::Item HostApi::inlineCurrentItem() const {
     item.uri = DirectoryModel::isVirtualPath(path) ? QUrl(path)
                                                    : QUrl::fromLocalFile(path);
   }
-  // Cached model metadata is deliberate here. Ambient preview must not turn a
-  // cursor move into synchronous MIME probing on the browser thread.
+  // Recursive StrataV/MapV descendants are outside DirectoryModel's flat cache.
+  // Extension matching is the same cheap path used by the initial listing;
+  // MimeMap only sniffs content for extensionless files, which we deliberately
+  // leave as a generic card here rather than blocking a cursor move.
+  if (item.mime.isEmpty() && m_mime &&
+      !QFileInfo(path).suffix().isEmpty())
+    item.mime = m_mime->mimeForFile(path);
   return item;
 }
 
@@ -369,18 +438,20 @@ void HostApi::setFileCatalog(FileCatalog *catalog) {
               return;
             m_inlineFolderRequest = 0;
             m_inlineFolderLoading = false;
-            m_inlineFolderError = result.value(QStringLiteral("ok")).toBool()
-                                      ? QString()
-                                      : result.value(QStringLiteral("error"))
-                                            .toString();
+            m_inlineFolderError =
+                result.value(QStringLiteral("ok")).toBool()
+                    ? QString()
+                    : result.value(QStringLiteral("error")).toString();
             m_inlineFolderTruncated =
                 result.value(QStringLiteral("truncated")).toBool();
             if (m_inlineFolderModel && m_inlineFolderError.isEmpty())
               m_inlineFolderModel->showSqlResult(
-                  result, m_inlinePreviewStat.value(QStringLiteral("name"))
-                              .toString());
+                  result,
+                  m_inlinePreviewStat.value(QStringLiteral("name")).toString());
             emit inlineFolderChanged();
           });
+  connect(m_fileCatalog, &FileCatalog::metadataFinished, this,
+          &HostApi::applyDoMetadataResult);
 }
 
 void HostApi::setInlinePreviewActive(bool active) {
@@ -393,15 +464,30 @@ void HostApi::setInlinePreviewActive(bool active) {
     clearInlinePreview();
 }
 
+void HostApi::refreshThemedPreviews() {
+  QSet<DirectoryModel *> refreshed;
+  const auto refresh = [&refreshed](DirectoryModel *model) {
+    if (!model || refreshed.contains(model))
+      return;
+    refreshed.insert(model);
+    model->refreshThemedThumbnails();
+  };
+  refresh(m_model);
+  refresh(m_inlineFolderModel);
+  refresh(m_peekModel);
+  refresh(m_doFolderModel);
+  if (m_inlinePreviewActive)
+    refreshInlinePreview();
+}
+
 void HostApi::clearInlinePreview() {
-  const bool changed = m_inlinePreviewItem || !m_inlinePreviewMode.isEmpty() ||
-                       !m_inlinePreviewPath.isEmpty() ||
-                       !m_inlinePreviewHandler.isEmpty() ||
-                       m_inlinePreviewCount != 0 || !m_inlinePreviewStat.isEmpty();
-  const bool folderStateChanged = m_inlineFolderRequest != 0 ||
-                                  m_inlineFolderLoading ||
-                                  m_inlineFolderTruncated ||
-                                  !m_inlineFolderError.isEmpty();
+  const bool changed =
+      m_inlinePreviewItem || !m_inlinePreviewMode.isEmpty() ||
+      !m_inlinePreviewPath.isEmpty() || !m_inlinePreviewHandler.isEmpty() ||
+      m_inlinePreviewCount != 0 || !m_inlinePreviewStat.isEmpty();
+  const bool folderStateChanged =
+      m_inlineFolderRequest != 0 || m_inlineFolderLoading ||
+      m_inlineFolderTruncated || !m_inlineFolderError.isEmpty();
   m_inlineFolderRequest = 0;
   m_inlineFolderLoading = false;
   m_inlineFolderTruncated = false;
@@ -419,8 +505,10 @@ void HostApi::clearInlinePreview() {
 }
 
 void HostApi::refreshInlinePreview() {
-  if (!m_inlinePreviewActive || m_open || m_actionOpen || !m_model ||
-      !m_registry || !m_loader) {
+  // Action Deck owns a separate content preview. Do not tear down the ambient
+  // Look preview behind that overlay; it should resume without a reload.
+  if (!m_inlinePreviewActive || m_open || !m_model || !m_registry ||
+      !m_loader) {
     clearInlinePreview();
     return;
   }
@@ -451,15 +539,31 @@ void HostApi::refreshInlinePreview() {
       m_model->currentStat().value(QStringLiteral("path")).toString() ==
           item.path)
     previewStat = m_model->currentStat();
+  if (previewStat.isEmpty() && m_sel && m_sel->selectedCount() == 1)
+    previewStat = m_sel->primaryItem();
+  // Normalize sparse out-of-listing selections into the same preview record
+  // shape as directory, search, and SQL rows.
+  const QFileInfo previewInfo(item.path);
+  previewStat.insert(QStringLiteral("path"), item.path);
+  previewStat.insert(QStringLiteral("uri"), item.uri);
+  previewStat.insert(QStringLiteral("mime"), item.mime);
+  previewStat.insert(QStringLiteral("isDir"), item.isDir);
+  if (previewStat.value(QStringLiteral("name")).toString().isEmpty())
+    previewStat.insert(QStringLiteral("name"), previewInfo.fileName());
+  if (!item.isDir &&
+      previewStat.value(QStringLiteral("size")).toLongLong() < 0)
+    previewStat.insert(QStringLiteral("size"), previewInfo.size());
+  if (previewStat.value(QStringLiteral("mtime")).toLongLong() <= 0)
+    previewStat.insert(
+        QStringLiteral("mtime"),
+        previewInfo.lastModified().toMSecsSinceEpoch());
 
-  const QVariantMap sqlMeta =
-      item.isDir && DirectoryModel::isSqlPath(item.path)
-          ? m_model->sqlRowMetadata(item.path)
-          : QVariantMap();
-  const bool queryFolder = m_fileCatalog &&
-                           !sqlMeta.value(QStringLiteral("sql"))
-                                .toString()
-                                .isEmpty();
+  const QVariantMap sqlMeta = item.isDir && DirectoryModel::isSqlPath(item.path)
+                                  ? m_model->sqlRowMetadata(item.path)
+                                  : QVariantMap();
+  const bool queryFolder =
+      m_fileCatalog &&
+      !sqlMeta.value(QStringLiteral("sql")).toString().isEmpty();
   QString mode = item.isDir
                      ? (!DirectoryModel::isVirtualPath(item.path) || queryFolder
                             ? QStringLiteral("folder")
@@ -482,7 +586,9 @@ void HostApi::refreshInlinePreview() {
       if (rec.enabled && inlineKind.startsWith(QLatin1String("core-"))) {
         mode = inlineKind.mid(5);
         handlerId = rec.manifest.id;
-      } else if (rec.enabled && inlineKind == QLatin1String("safe")) {
+      } else if (rec.enabled &&
+                 (inlineKind == QLatin1String("quick-app") ||
+                  inlineKind == QLatin1String("safe"))) {
         mode = QStringLiteral("rich");
         handlerId = rec.manifest.id;
       }
@@ -498,15 +604,14 @@ void HostApi::refreshInlinePreview() {
       if (!m_inlinePreparing.contains(preparingId)) {
         m_inlinePreparing.insert(preparingId);
         const QPointer<HostApi> self(this);
-        m_loader->prepareAsync(
-            m_engine, rec, QStringLiteral("preview"), this,
-            [self, preparingId](bool ready) {
-              if (!self)
-                return;
-              self->m_inlinePreparing.remove(preparingId);
-              if (ready && self->m_inlinePreviewActive)
-                self->refreshInlinePreview();
-            });
+        m_loader->prepareAsync(m_engine, rec, QStringLiteral("preview"), this,
+                               [self, preparingId](bool ready) {
+                                 if (!self)
+                                   return;
+                                 self->m_inlinePreparing.remove(preparingId);
+                                 if (ready && self->m_inlinePreviewActive)
+                                   self->refreshInlinePreview();
+                               });
       }
     }
   }
@@ -515,8 +620,8 @@ void HostApi::refreshInlinePreview() {
                         m_inlinePreviewPath == item.path &&
                         m_inlinePreviewHandler == handlerId;
   if (reusable) {
-    const QUrl file = item.uri.isEmpty() ? QUrl::fromLocalFile(item.path)
-                                         : item.uri;
+    const QUrl file =
+        item.uri.isEmpty() ? QUrl::fromLocalFile(item.path) : item.uri;
     m_inlinePreviewItem->setProperty("file", file);
     if (m_inlinePreviewStat != previewStat) {
       m_inlinePreviewStat = previewStat;
@@ -531,6 +636,31 @@ void HostApi::refreshInlinePreview() {
   m_inlinePreviewHandler = handlerId;
   m_inlinePreviewCount = item.path.isEmpty() ? 0 : 1;
   m_inlinePreviewStat = previewStat;
+
+  if (mode == QLatin1String("image"))
+    m_model->requestImageFacts(item.path);
+
+  // Search/SQL rows already carry their cached thumbnail. Recursive FSV rows
+  // do not, so hydrate the same packed cache asynchronously. Images can paint
+  // their source immediately; videos gain the expected poster once ready.
+  if ((mode == QLatin1String("image") || mode == QLatin1String("video")) &&
+      m_inlinePreviewStat.value(QStringLiteral("thumbnail"))
+          .toString().isEmpty() &&
+      !m_inlineThumbPending.contains(item.path)) {
+    if (ThumbnailService *thumbs = m_model->thumbnailService()) {
+      const qint64 mtime =
+          m_inlinePreviewStat.value(QStringLiteral("mtime")).toLongLong();
+      if (mtime > 0) {
+        ThumbnailJob job;
+        job.path = item.path;
+        job.mime = item.mime;
+        job.mtime = mtime;
+        job.sizePx = 512;
+        m_inlineThumbPending.insert(item.path);
+        thumbs->requestBackground(QVector<ThumbnailJob>{job});
+      }
+    }
+  }
 
   if (mode == QLatin1String("folder")) {
     ensureInlineFolderListing();
@@ -569,8 +699,8 @@ void HostApi::refreshInlinePreview() {
 
   if (mode == QLatin1String("rich")) {
     const HandlerRegistry::Record rec = m_registry->handler(handlerId);
-    const QUrl file = item.uri.isEmpty() ? QUrl::fromLocalFile(item.path)
-                                         : item.uri;
+    const QUrl file =
+        item.uri.isEmpty() ? QUrl::fromLocalFile(item.path) : item.uri;
     QVariantMap row;
     row.insert(QStringLiteral("path"), item.path);
     row.insert(QStringLiteral("uri"), file);
@@ -578,9 +708,9 @@ void HostApi::refreshInlinePreview() {
     row.insert(QStringLiteral("isDir"), item.isDir);
     QElapsedTimer timer;
     timer.start();
-    m_inlinePreviewItem = m_loader->create(
-        m_engine, rec, QStringLiteral("preview"), this, file, {row},
-        {{QStringLiteral("inlinePreview"), true}});
+    m_inlinePreviewItem =
+        m_loader->create(m_engine, rec, QStringLiteral("preview"), this, file,
+                         {row}, {{QStringLiteral("inlinePreview"), true}});
     const qint64 elapsed = timer.elapsed();
     if (!m_inlinePreviewItem) {
       std::fprintf(stderr, "synchro: inline preview %s: %s\n",
@@ -588,8 +718,7 @@ void HostApi::refreshInlinePreview() {
       m_inlinePreviewMode = QStringLiteral("card");
       m_inlinePreviewHandler.clear();
     } else if (elapsed > 8) {
-      std::fprintf(stderr,
-                   "synchro: inline preview %s creation took %lld ms\n",
+      std::fprintf(stderr, "synchro: inline preview %s creation took %lld ms\n",
                    qPrintable(handlerId), static_cast<long long>(elapsed));
     }
   }
@@ -601,6 +730,36 @@ bool HostApi::promoteInlinePreview() {
     return false;
   clearInlinePreview();
   return openCurrent();
+}
+
+bool HostApi::promoteInlineFolderRow(int row) {
+  if (!m_inlineFolderProxy || row < 0 || row >= m_inlineFolderProxy->rowCount())
+    return false;
+  const QVariantMap child = m_inlineFolderProxy->rowMap(row);
+  Manifest::Item item;
+  item.path = child.value(QStringLiteral("path")).toString();
+  if (item.path.isEmpty() || DirectoryModel::isVirtualPath(item.path))
+    return false;
+  item.uri = child.value(QStringLiteral("uri")).toUrl();
+  if (item.uri.isEmpty())
+    item.uri = QUrl::fromLocalFile(item.path);
+  item.mime = child.value(QStringLiteral("mime")).toString();
+  item.isDir = child.value(QStringLiteral("isDir")).toBool();
+  if (item.mime.isEmpty() && m_mime)
+    item.mime = m_mime->mimeForFile(item.path);
+
+  clearInlinePreview();
+  if (item.isDir) {
+    startFolderPeek(item.path);
+    return m_open;
+  }
+
+  // Preserve the Miller parent as Peek's back target without navigating the
+  // authoritative browser listing. This also works for query-backed folders,
+  // whose child paths still have a real filesystem parent.
+  startFolderPeek(QFileInfo(item.path).absolutePath());
+  showPeekFile(item);
+  return m_open;
 }
 
 bool HostApi::commitInlineFolderRow(int row) {
@@ -615,7 +774,8 @@ bool HostApi::commitInlineFolderRow(int row) {
   if (child.value(QStringLiteral("isDir")).toBool())
     m_model->setPath(path);
   else
-    m_model->setPath(QFileInfo(path).absolutePath(), QFileInfo(path).fileName());
+    m_model->setPath(QFileInfo(path).absolutePath(),
+                     QFileInfo(path).fileName());
   return true;
 }
 
@@ -646,8 +806,7 @@ QUrl HostApi::panelSource(const QString &id) const {
   const HandlerRegistry::Record rec = m_registry->handler(id);
   if (!rec.enabled || !rec.manifest.kinds.contains(QStringLiteral("panel")))
     return QUrl();
-  const QString entry =
-      rec.manifest.entryPoints.value(QStringLiteral("panel"));
+  const QString entry = rec.manifest.entryPoints.value(QStringLiteral("panel"));
   if (entry.isEmpty())
     return QUrl();
   const QString path = QDir(rec.sourceDir).filePath(entry);
@@ -709,8 +868,7 @@ QVariantList HostApi::panelPeers(const QString &id) const {
   };
   QVector<Peer> peers;
   for (const HandlerRegistry::Record &rec : m_registry->handlers()) {
-    if (!rec.enabled ||
-        !rec.manifest.kinds.contains(QStringLiteral("panel")))
+    if (!rec.enabled || !rec.manifest.kinds.contains(QStringLiteral("panel")))
       continue;
     const QString candidate =
         rec.manifest.panel.value(QStringLiteral("group")).toString();
@@ -721,8 +879,9 @@ QVariantList HostApi::panelPeers(const QString &id) const {
     peer.order = rec.manifest.panel.value(QStringLiteral("order")).toInt();
     peer.info.insert(QStringLiteral("id"), rec.manifest.id);
     peer.info.insert(QStringLiteral("name"), rec.manifest.name);
-    peer.info.insert(QStringLiteral("glyph"),
-                     rec.manifest.panel.value(QStringLiteral("glyph")).toString());
+    peer.info.insert(
+        QStringLiteral("glyph"),
+        rec.manifest.panel.value(QStringLiteral("glyph")).toString());
     peer.info.insert(QStringLiteral("group"), candidate);
     peers.append(peer);
   }
@@ -740,16 +899,15 @@ QVariantList HostApi::panelPeers(const QString &id) const {
 bool HostApi::attachSqlHighlighter(QObject *quickDocument,
                                    const QColor &keyword,
                                    const QColor &stringColor,
-                                   const QColor &number,
-                                   const QColor &comment,
+                                   const QColor &number, const QColor &comment,
                                    const QColor &normal) const {
   auto *quick = qobject_cast<QQuickTextDocument *>(quickDocument);
   QTextDocument *document = quick ? quick->textDocument() : nullptr;
   if (!document)
     return false;
-  auto *highlighter = dynamic_cast<SqlEditorHighlighter *>(
-      document->findChild<QObject *>(QStringLiteral("synchroSqlHighlighter"),
-                                    Qt::FindDirectChildrenOnly));
+  auto *highlighter =
+      dynamic_cast<SqlEditorHighlighter *>(document->findChild<QObject *>(
+          QStringLiteral("synchroSqlHighlighter"), Qt::FindDirectChildrenOnly));
   if (!highlighter)
     highlighter = new SqlEditorHighlighter(document);
   highlighter->setColors(keyword, stringColor, number, comment, normal);
@@ -775,8 +933,7 @@ QVariantList HostApi::relevantPanels() const {
     out.append(m);
   };
   for (const HandlerRegistry::Record &rec : m_registry->handlers()) {
-    if (!rec.enabled ||
-        !rec.manifest.kinds.contains(QStringLiteral("panel")))
+    if (!rec.enabled || !rec.manifest.kinds.contains(QStringLiteral("panel")))
       continue;
     if (rec.manifest.panel.value(QStringLiteral("relevance")).toString() ==
         QLatin1String("always"))
@@ -791,8 +948,7 @@ QVariantList HostApi::relevantPanels() const {
                           : (m_model ? m_model->currentIndex() : -1);
   const Manifest::Item item = itemAt(row);
   if (!item.path.isEmpty()) {
-    const auto matches =
-        m_registry->resolve(QStringLiteral("panel"), {item});
+    const auto matches = m_registry->resolve(QStringLiteral("panel"), {item});
     for (const HandlerRegistry::Match &match : matches) {
       const HandlerRegistry::Record rec = m_registry->handler(match.id);
       if (rec.enabled)
@@ -839,8 +995,8 @@ QHash<QString, QString> readOmarchyTerminalPalette(const QString &themeDir) {
     QString section;
     static const QRegularExpression sectionRe(
         QStringLiteral("^\\s*\\[([^\\]]+)\\]"));
-    static const QRegularExpression kvRe(QStringLiteral(
-        "^\\s*([a-z]+)\\s*=\\s*[\"']?(#[0-9a-fA-F]{6})"));
+    static const QRegularExpression kvRe(
+        QStringLiteral("^\\s*([a-z]+)\\s*=\\s*[\"']?(#[0-9a-fA-F]{6})"));
     while (!ala.atEnd()) {
       const QString line = QString::fromUtf8(ala.readLine());
       const auto sm = sectionRe.match(line);
@@ -860,8 +1016,9 @@ QHash<QString, QString> readOmarchyTerminalPalette(const QString &themeDir) {
         const bool bright = section == QLatin1String("colors.bright");
         for (int i = 0; i < 8; ++i) {
           if (key == QLatin1String(names[i])) {
-            out.insert((bright ? QStringLiteral("b%1")
-                               : QStringLiteral("n%1")).arg(i), hex);
+            out.insert(
+                (bright ? QStringLiteral("b%1") : QStringLiteral("n%1")).arg(i),
+                hex);
             break;
           }
         }
@@ -904,17 +1061,16 @@ QHash<QString, QString> readOmarchyTerminalPalette(const QString &themeDir) {
 QString HostApi::terminalBackground() const {
   const QString themeDir =
       QDir::homePath() + QStringLiteral("/.local/state/omarchy/current/theme");
-  return readOmarchyTerminalPalette(themeDir)
-      .value(QStringLiteral("background"));
+  return readOmarchyTerminalPalette(themeDir).value(
+      QStringLiteral("background"));
 }
 
 static void *qmlTermWidgetHandle() {
   static void *handle = [] {
-    const QString plugin =
-        QLibraryInfo::path(QLibraryInfo::QmlImportsPath) +
-        QStringLiteral("/QMLTermWidget/libqmltermwidget.so");
-    void *loaded = dlopen(QFile::encodeName(plugin).constData(),
-                          RTLD_LAZY | RTLD_NOLOAD);
+    const QString plugin = QLibraryInfo::path(QLibraryInfo::QmlImportsPath) +
+                           QStringLiteral("/QMLTermWidget/libqmltermwidget.so");
+    void *loaded =
+        dlopen(QFile::encodeName(plugin).constData(), RTLD_LAZY | RTLD_NOLOAD);
     if (!loaded)
       loaded = dlopen("libqmltermwidget.so", RTLD_LAZY);
     return loaded;
@@ -932,9 +1088,8 @@ bool HostApi::setTerminalBackgroundOpacity(QObject *terminal,
   using SetOpacityFn = void (*)(void *, double);
   static SetOpacityFn setOpacity = [] {
     void *handle = qmlTermWidgetHandle();
-    return handle ? reinterpret_cast<SetOpacityFn>(
-                        dlsym(handle,
-                              "_ZN7Konsole15TerminalDisplay10setOpacityEd"))
+    return handle ? reinterpret_cast<SetOpacityFn>(dlsym(
+                        handle, "_ZN7Konsole15TerminalDisplay10setOpacityEd"))
                   : nullptr;
   }();
   if (!setOpacity)
@@ -963,7 +1118,8 @@ bool loadSchemeFile(const QString &path) {
     instanceFn = reinterpret_cast<InstanceFn>(
         dlsym(handle, "_ZN7Konsole18ColorSchemeManager8instanceEv"));
     loadFn = reinterpret_cast<LoadFn>(dlsym(
-        handle, "_ZN7Konsole18ColorSchemeManager21loadCustomColorSchemeERK7QString"));
+        handle,
+        "_ZN7Konsole18ColorSchemeManager21loadCustomColorSchemeERK7QString"));
     return instanceFn && loadFn;
   }();
   if (!resolved)
@@ -998,10 +1154,10 @@ QString HostApi::terminalColorScheme() const {
   body += QStringLiteral("[ForegroundIntense]\nColor=%1\n\n")
               .arg(color(QStringLiteral("b7"), QStringLiteral("foreground")));
   for (int i = 0; i < 8; ++i) {
-    const QString n = color(QStringLiteral("n%1").arg(i),
-                            QStringLiteral("foreground"));
-    const QString b = color(QStringLiteral("b%1").arg(i),
-                            QStringLiteral("n%1").arg(i));
+    const QString n =
+        color(QStringLiteral("n%1").arg(i), QStringLiteral("foreground"));
+    const QString b =
+        color(QStringLiteral("b%1").arg(i), QStringLiteral("n%1").arg(i));
     if (n.isEmpty() || b.isEmpty())
       return fallback;
     body += QStringLiteral("[Color%1]\nColor=%2\n\n").arg(i).arg(n);
@@ -1017,8 +1173,8 @@ QString HostApi::terminalColorScheme() const {
   const QString dir =
       QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
       QStringLiteral("/synchro/term-schemes");
-  const QString file = dir + QLatin1Char('/') + name +
-                       QStringLiteral(".colorscheme");
+  const QString file =
+      dir + QLatin1Char('/') + name + QStringLiteral(".colorscheme");
   if (!QFileInfo::exists(file)) {
     if (!QDir().mkpath(dir))
       return fallback;
@@ -1235,6 +1391,12 @@ void HostApi::destroyActionItem() {
 void HostApi::destroyAction() {
   destroyActionItem();
   destroyDoContent();
+  m_doMetadataRequest = 0;
+  m_doMetadataPath.clear();
+  if (!m_doMetadata.isEmpty()) {
+    m_doMetadata.clear();
+    emit doMetadataChanged();
+  }
   const bool wasOpen = m_actionOpen;
   m_doItems.clear();
   m_doSelection.clear();
@@ -1417,26 +1579,99 @@ QVariantMap HostApi::readPreview(const QUrl &url, int maxBytes,
   return readPreviewData(url, maxBytes, startByte, true);
 }
 
-quint64 HostApi::requestPreview(const QUrl &url, int maxBytes,
-                                qint64 startByte) {
+quint64 HostApi::requestPreview(const QUrl &url, int maxBytes, qint64 startByte,
+                                const QVariantMap &presentation) {
   const quint64 requestId = ++m_nextPreviewRequest;
   const QPointer<HostApi> self(this);
-  (void)QtConcurrent::run([self, requestId, url, maxBytes, startByte] {
-    // SyntaxHighlight owns GUI-thread-affine support objects on some Qt/KF
-    // builds. Ambient reads stay fully worker-safe; modal Peek still gets the
-    // existing highlighted path through readPreview().
-    const QVariantMap preview =
+  (void)QtConcurrent::run([self, requestId, url, maxBytes, startByte,
+                           presentation] {
+    // Keep I/O and UTF-8 decoding off the UI thread. KSyntax support objects
+    // are GUI-thread-affine on some Qt/KF builds, so the bounded 64 KiB color
+    // pass happens only after the worker result is delivered.
+    QVariantMap workerPreview =
         readPreviewData(url, maxBytes, startByte, false);
+    if (!self)
+      return;
+    QMetaObject::invokeMethod(
+        self,
+        [self, requestId, url, workerPreview, presentation] {
+          if (!self)
+            return;
+          QVariantMap preview = workerPreview;
+          // QTextDocument's Markdown parser consults the platform font theme
+          // for fenced code. On GTK that API is GUI-thread-only. I/O remains
+          // on the worker; this formatting pass is bounded by the preview cap.
+          const bool markdown =
+              presentation.value(QStringLiteral("format")).toString() ==
+              QStringLiteral("markdown");
+          if (markdown && preview.value(QStringLiteral("ok")).toBool() &&
+              !preview.value(QStringLiteral("binary")).toBool() &&
+              preview.value(QStringLiteral("startByte")).toLongLong() == 0) {
+            preview.insert(QStringLiteral("markdownHtml"),
+                           MarkdownRender::toHtml(
+                               preview.value(QStringLiteral("text")).toString(),
+                               preview.value(QStringLiteral("path")).toString(),
+                               presentation));
+          }
+          if (!preview.contains(QStringLiteral("markdownHtml")) &&
+              preview.value(QStringLiteral("ok")).toBool() &&
+              !preview.value(QStringLiteral("binary")).toBool() &&
+              preview.value(QStringLiteral("startByte")).toLongLong() == 0) {
+            const QString path =
+                preview.value(QStringLiteral("path")).toString();
+            const HighlightedText hl = SyntaxHighlight::highlight(
+                path, preview.value(QStringLiteral("text")).toString());
+            preview.insert(QStringLiteral("highlighted"), hl.ok);
+            preview.insert(QStringLiteral("language"), hl.language);
+            if (hl.ok)
+              preview.insert(QStringLiteral("html"), hl.html);
+          }
+          emit self->previewReady(requestId, url, preview);
+        },
+        Qt::QueuedConnection);
+  });
+  return requestId;
+}
+
+quint64 HostApi::requestParquet(const QUrl &url, int maxRows) {
+  const quint64 requestId = ++m_nextPreviewRequest;
+  const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+  const QPointer<HostApi> self(this);
+  (void)QtConcurrent::run([self, requestId, url, path, maxRows] {
+    const QVariantMap preview =
+        ParquetMeta::toMap(ParquetMeta::parseWithSample(path, maxRows));
     if (!self)
       return;
     QMetaObject::invokeMethod(
         self,
         [self, requestId, url, preview] {
           if (self)
-            emit self->previewReady(requestId, url, preview);
+            emit self->parquetReady(requestId, url, preview);
         },
         Qt::QueuedConnection);
   });
+  return requestId;
+}
+
+quint64 HostApi::requestDatabase(const QUrl &url, const QString &engine,
+                                 const QString &table, int offset, int limit) {
+  const quint64 requestId = ++m_nextPreviewRequest;
+  const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+  const QPointer<HostApi> self(this);
+  (void)QtConcurrent::run(
+      [self, requestId, url, path, engine, table, offset, limit] {
+        const QVariantMap preview =
+            DbPreview::inspect(path, engine, table, offset, limit);
+        if (!self)
+          return;
+        QMetaObject::invokeMethod(
+            self,
+            [self, requestId, url, preview] {
+              if (self)
+                emit self->databaseReady(requestId, url, preview);
+            },
+            Qt::QueuedConnection);
+      });
   return requestId;
 }
 
@@ -1484,7 +1719,8 @@ QVariantList HostApi::findInFile(const QUrl &url, const QString &needle,
       bytes += text.mid(scanned, at - scanned).toUtf8().size();
       const int matchChars = needle.size();
       const int matchBytes = text.mid(at, matchChars).toUtf8().size();
-      takeHit(line, col, bytes, matchBytes, snippetAround(text, at, matchChars));
+      takeHit(line, col, bytes, matchBytes,
+              snippetAround(text, at, matchChars));
       scanned = at;
       from = at + qMax(1, matchChars);
     }
@@ -1513,8 +1749,8 @@ QVariantList HostApi::findInFile(const QUrl &url, const QString &needle,
         break;
       walkLinesBytes(hay, walked, at, &line, &col);
       walked = at;
-      const QString snip = QString::fromUtf8(
-          hay.mid(qMax(0, at - 24), needleUtf8.size() + 48));
+      const QString snip =
+          QString::fromUtf8(hay.mid(qMax(0, at - 24), needleUtf8.size() + 48));
       takeHit(line, col, hayStart + at, needleUtf8.size(), snip.simplified());
       searchFrom = at + needleUtf8.size();
     }
@@ -2041,6 +2277,28 @@ bool HostApi::runAction(const QString &handlerId) {
   return true;
 }
 
+QVariantList HostApi::omaflowMatches() const {
+  if (!m_omaflow || !m_doExplicitSelection || m_doSelection.isEmpty())
+    return {};
+  return m_omaflow->matchingRules(m_doSelection);
+}
+
+bool HostApi::runOmaflow(const QString &ruleId, bool dryRun) {
+  m_error.clear();
+  if (!m_omaflow) {
+    m_error = QStringLiteral("Omaflow is not available");
+    return false;
+  }
+  const QString cwd = m_model ? m_model->path() : QString();
+  if (!m_omaflow->runSelection(ruleId, m_doSelection, cwd, dryRun)) {
+    m_error = m_omaflow->busy()
+                  ? QStringLiteral("Omaflow is already running")
+                  : QStringLiteral("Flow no longer matches the selection");
+    return false;
+  }
+  return true;
+}
+
 bool HostApi::openWithPalette() { return openDoLayer(); }
 
 QVariantMap HostApi::itemToMap(const Manifest::Item &item) {
@@ -2062,7 +2320,8 @@ QVector<Manifest::Item> HostApi::snapshotDoItems() const {
   if (folderPeek()) {
     Manifest::Item item = peekCurrentItem();
     if (item.path.isEmpty() && m_filePeekFromFolder && m_file.isValid()) {
-      item.path = m_file.isLocalFile() ? m_file.toLocalFile() : m_file.toString();
+      item.path =
+          m_file.isLocalFile() ? m_file.toLocalFile() : m_file.toString();
       item.uri = m_file;
       item.mime = m_mime ? m_mime->mimeForFile(item.path) : QString();
       item.isDir = false;
@@ -2083,6 +2342,9 @@ QVariantList HostApi::doVerbs() const {
     row.insert(QStringLiteral("description"), v.description);
     row.insert(QStringLiteral("runtime"), v.runtime);
     row.insert(QStringLiteral("group"), v.group);
+    row.insert(QStringLiteral("provider"), v.provider);
+    row.insert(QStringLiteral("providerId"), v.providerId);
+    row.insert(QStringLiteral("effect"), v.effect);
     row.insert(QStringLiteral("hasParams"), v.hasParams);
     out.append(row);
   }
@@ -2091,16 +2353,17 @@ QVariantList HostApi::doVerbs() const {
 
 QString HostApi::doCaption() const {
   if (m_doItems.size() == 1)
-    return QStringLiteral("do · %1")
+    return QStringLiteral("Actions · %1")
         .arg(QFileInfo(m_doItems.constFirst().path).fileName());
   if (m_doItems.size() > 1)
-    return QStringLiteral("do · %1 files").arg(m_doItems.size());
+    return QStringLiteral("Actions · %1 selected").arg(m_doItems.size());
   if (m_model && !m_model->path().isEmpty()) {
     const QFileInfo fi(m_model->path());
-    const QString name = fi.fileName().isEmpty() ? m_model->path() : fi.fileName();
-    return QStringLiteral("do · %1").arg(name);
+    const QString name =
+        fi.fileName().isEmpty() ? m_model->path() : fi.fileName();
+    return QStringLiteral("Actions · %1").arg(name);
   }
-  return QStringLiteral("do");
+  return QStringLiteral("Actions");
 }
 
 QString HostApi::doBriefTitle() const {
@@ -2115,6 +2378,18 @@ QString HostApi::doBriefBody() const {
   return m_doVerbs.at(m_doIndex).description;
 }
 
+QString HostApi::doProvider() const {
+  if (m_doIndex < 0 || m_doIndex >= m_doVerbs.size())
+    return {};
+  return m_doVerbs.at(m_doIndex).provider;
+}
+
+QString HostApi::doEffect() const {
+  if (m_doIndex < 0 || m_doIndex >= m_doVerbs.size())
+    return {};
+  return m_doVerbs.at(m_doIndex).effect;
+}
+
 bool HostApi::doHasParams() const {
   return m_doIndex >= 0 && m_doIndex < m_doVerbs.size() &&
          m_doVerbs.at(m_doIndex).hasParams;
@@ -2127,11 +2402,16 @@ QString HostApi::listHint() const {
 QString HostApi::doHint() const {
   if (!m_actionOpen)
     return {};
+  if (m_doOperationState == QLatin1String("running"))
+    return QStringLiteral(
+        "Action running · Esc keeps it running in background");
+  if (!m_doOperationState.isEmpty())
+    return QStringLiteral("Enter done · Esc close");
   if (doHasParams())
-    return QStringLiteral("W/S verbs · A/D params · Enter run · Esc leave");
-  if (m_doPreviewItem)
-    return QStringLiteral("W/S verbs · D preview · Enter run · Esc leave");
-  return QStringLiteral("W/S verbs · Enter run · Esc leave");
+    return QStringLiteral("↑/↓ actions · Tab options · Enter run · Esc close");
+  if (m_doArmed)
+    return QStringLiteral("Enter again to confirm · Esc cancels");
+  return QStringLiteral("↑/↓ actions · Enter run · Esc close");
 }
 
 void HostApi::setDoParamsFocused(bool on) {
@@ -2149,6 +2429,7 @@ void HostApi::rebuildDoVerbs() {
   const QVector<Manifest::Item> items = m_doItems;
   const QString cwd = m_model ? m_model->path() : QString();
   const bool virt = HandlerActions::isVirtualLocation(cwd);
+  const QVariantList flowMatches = omaflowMatches();
 
   if (!items.isEmpty()) {
     DoVerb open;
@@ -2156,6 +2437,8 @@ void HostApi::rebuildDoVerbs() {
     open.name = QStringLiteral("Open");
     open.runtime = QStringLiteral("builtin");
     open.group = QStringLiteral("open");
+    open.provider = QStringLiteral("Synchro");
+    open.effect = QStringLiteral("read");
     if (items.size() == 1 && items.constFirst().isDir)
       open.description = QStringLiteral("Enter this folder.");
     else if (items.size() == 1)
@@ -2165,27 +2448,60 @@ void HostApi::rebuildDoVerbs() {
     m_doVerbs.append(open);
   }
 
-  const QVector<HandlerRegistry::Match> actions = m_actions.actionMatches(items);
+  const QVector<HandlerRegistry::Match> actions =
+      m_actions.actionMatches(items);
   auto appendAction = [&](const HandlerRegistry::Match &m) {
     if (m.id == QLatin1String("synchro.action.terminal") && virt)
       return;
     if (m.id == QLatin1String("synchro.action.agent") && virt)
+      return;
+    if (m.id == QLatin1String("synchro.action.omaflow"))
       return;
     DoVerb v;
     v.id = m.id;
     v.name = m.manifest.name;
     v.description = m.manifest.description;
     v.runtime = m.manifest.runtime(QStringLiteral("action"));
+    v.provider = QStringLiteral("Synchro");
     v.group = m.id == QLatin1String("synchro.action.open-with")
                   ? QStringLiteral("open")
                   : QStringLiteral("action");
-    v.hasParams = HandlerActions::classify(m.manifest, QStringLiteral("action")) ==
-                  HandlerActions::Kind::Qml;
+    v.hasParams =
+        HandlerActions::classify(m.manifest, QStringLiteral("action")) ==
+        HandlerActions::Kind::Qml;
+    if (m.id == QLatin1String("synchro.action.trash") ||
+        m.id == QLatin1String("synchro.action.eject"))
+      v.effect = QStringLiteral("destructive");
+    else if (m.id == QLatin1String("synchro.action.agent"))
+      v.effect = QStringLiteral("modify");
+    else
+      v.effect = QStringLiteral("read");
     m_doVerbs.append(v);
   };
   for (const auto &m : actions) {
     if (m.id == QLatin1String("synchro.action.open-with"))
       appendAction(m);
+  }
+  for (const QVariant &value : flowMatches) {
+    const QVariantMap flow = value.toMap();
+    const QString ruleId = flow.value(QStringLiteral("id")).toString();
+    if (ruleId.isEmpty())
+      continue;
+    DoVerb v;
+    v.id = QStringLiteral("synchro.flow.%1").arg(ruleId);
+    v.name = flow.value(QStringLiteral("name")).toString();
+    if (v.name.isEmpty())
+      v.name = ruleId;
+    v.description = flow.value(QStringLiteral("source")).toString();
+    if (v.description.isEmpty())
+      v.description = flow.value(QStringLiteral("matchReason")).toString();
+    v.runtime = QStringLiteral("omaflow");
+    v.group = QStringLiteral("automation");
+    v.provider = QStringLiteral("FLOW");
+    v.providerId = ruleId;
+    v.effect = flow.value(QStringLiteral("effect"), QStringLiteral("confirm"))
+                   .toString();
+    m_doVerbs.append(v);
   }
   for (const auto &m : actions) {
     if (m.id == QLatin1String("synchro.action.open-with"))
@@ -2275,6 +2591,226 @@ Manifest::Item HostApi::doContentItem() const {
   return cwd;
 }
 
+void HostApi::mergeDoImageFacts(const QVariantMap &facts) {
+  if (facts.isEmpty() || m_doMetadataPath.isEmpty())
+    return;
+  QVariantMap next = m_doMetadata;
+  const auto copy = [&next, &facts](const QString &source,
+                                    const QString &target = QString()) {
+    const QVariant value = facts.value(source);
+    if (value.isValid() && !value.isNull())
+      next.insert(target.isEmpty() ? source : target, value);
+  };
+  copy(QStringLiteral("width"));
+  copy(QStringLiteral("height"));
+  copy(QStringLiteral("aspect_ratio"), QStringLiteral("aspectRatio"));
+  copy(QStringLiteral("orientation"));
+  copy(QStringLiteral("dominant_color"), QStringLiteral("dominantColor"));
+  copy(QStringLiteral("average_color"), QStringLiteral("averageColor"));
+  copy(QStringLiteral("color_family"), QStringLiteral("colorFamily"));
+  copy(QStringLiteral("brightness"));
+  copy(QStringLiteral("saturation"));
+
+  QVariantList palette;
+  for (int i = 0; i < 3; ++i) {
+    const QString color =
+        facts.value(QStringLiteral("palette_%1").arg(i)).toString();
+    if (color.isEmpty())
+      continue;
+    QVariantMap swatch;
+    swatch.insert(QStringLiteral("color"), color);
+    const QVariant weight =
+        facts.value(QStringLiteral("palette_weight_%1").arg(i));
+    swatch.insert(QStringLiteral("weight"), weight.isValid() && !weight.isNull()
+                                                ? weight.toDouble()
+                                                : 1.0);
+    palette.append(swatch);
+  }
+  if (!palette.isEmpty())
+    next.insert(QStringLiteral("palette"), palette);
+  next.insert(QStringLiteral("analyzed"), true);
+  if (next == m_doMetadata)
+    return;
+  m_doMetadata = next;
+  emit doMetadataChanged();
+}
+
+void HostApi::applyDoMetadataResult(quint64 request,
+                                    const QVariantMap &result) {
+  if (request == 0 || request != m_doMetadataRequest)
+    return;
+  m_doMetadataRequest = 0;
+  if (!m_actionOpen || m_doMetadataPath.isEmpty())
+    return;
+
+  QVariantMap next = m_doMetadata;
+  next.insert(QStringLiteral("loading"), false);
+  const QVariantList rows = result.value(QStringLiteral("rows")).toList();
+  QVariantMap row;
+  if (result.value(QStringLiteral("ok")).toBool() && !rows.isEmpty()) {
+    row = rows.constFirst().toMap();
+    if (row.value(QStringLiteral("path")).toString() == m_doMetadataPath) {
+      next.insert(QStringLiteral("cataloged"), true);
+      const QStringList baseKeys = {
+          QStringLiteral("parent"),    QStringLiteral("extension"),
+          QStringLiteral("mime"),      QStringLiteral("size"),
+          QStringLiteral("mtime"),     QStringLiteral("hidden"),
+          QStringLiteral("is_symlink")};
+      for (const QString &key : baseKeys) {
+        const QVariant value = row.value(key);
+        if (value.isValid() && !value.isNull())
+          next.insert(key == QLatin1String("is_symlink")
+                          ? QStringLiteral("symlink")
+                          : key,
+                      value);
+      }
+    }
+  }
+  if (next != m_doMetadata) {
+    m_doMetadata = next;
+    emit doMetadataChanged();
+  }
+  if (!row.isEmpty())
+    mergeDoImageFacts(row);
+}
+
+void HostApi::refreshDoMetadata() {
+  m_doMetadataRequest = 0;
+  m_doMetadataPath.clear();
+  const Manifest::Item item = doContentItem();
+  QVariantMap next;
+  next.insert(QStringLiteral("count"), m_doItems.size());
+
+  if (m_doItems.size() > 1) {
+    qint64 bytes = 0;
+    int files = 0;
+    int folders = 0;
+    int sizedFiles = 0;
+    qint64 newest = 0;
+    for (const Manifest::Item &selected : std::as_const(m_doItems)) {
+      if (selected.isDir)
+        ++folders;
+      else
+        ++files;
+      const QVariantMap stat =
+          m_model ? m_model->cachedStat(selected.path) : QVariantMap();
+      if (!selected.isDir && stat.contains(QStringLiteral("size"))) {
+        bytes +=
+            qMax<qint64>(0, stat.value(QStringLiteral("size")).toLongLong());
+        ++sizedFiles;
+      }
+      newest = qMax(newest, stat.value(QStringLiteral("mtime")).toLongLong());
+    }
+    next.insert(QStringLiteral("multiple"), true);
+    next.insert(QStringLiteral("files"), files);
+    next.insert(QStringLiteral("folders"), folders);
+    next.insert(QStringLiteral("size"), bytes);
+    next.insert(QStringLiteral("sizeComplete"), sizedFiles == files);
+    next.insert(QStringLiteral("mtime"), newest);
+    next.insert(QStringLiteral("typeLabel"), QStringLiteral("Mixed selection"));
+    if (next != m_doMetadata) {
+      m_doMetadata = next;
+      emit doMetadataChanged();
+    }
+    return;
+  }
+
+  if (item.path.isEmpty()) {
+    if (next != m_doMetadata) {
+      m_doMetadata = next;
+      emit doMetadataChanged();
+    }
+    return;
+  }
+
+  m_doMetadataPath = item.path;
+  const bool local = !DirectoryModel::isVirtualPath(item.path);
+  const QFileInfo info(item.path);
+  QVariantMap stat = m_model ? m_model->cachedStat(item.path) : QVariantMap();
+  if (stat.isEmpty() && m_model &&
+      m_model->currentStat().value(QStringLiteral("path")).toString() ==
+          item.path)
+    stat = m_model->currentStat();
+
+  next.insert(QStringLiteral("count"), 1);
+  next.insert(QStringLiteral("multiple"), false);
+  next.insert(QStringLiteral("name"),
+              stat.value(QStringLiteral("name"), info.fileName()));
+  next.insert(QStringLiteral("path"), item.path);
+  next.insert(QStringLiteral("parent"),
+              stat.value(QStringLiteral("parent"), info.absolutePath()));
+  next.insert(QStringLiteral("isDir"), item.isDir);
+  next.insert(QStringLiteral("mime"),
+              stat.value(QStringLiteral("mime"), item.mime));
+  next.insert(QStringLiteral("typeLabel"),
+              stat.value(QStringLiteral("typeLabel"),
+                         item.isDir ? QStringLiteral("Folder") : item.mime));
+  next.insert(QStringLiteral("extension"), info.suffix().toLower());
+  next.insert(QStringLiteral("hidden"),
+              stat.value(QStringLiteral("hidden"), local && info.isHidden()));
+  next.insert(QStringLiteral("symlink"), stat.value(QStringLiteral("isSymlink"),
+                                                    local && info.isSymLink()));
+  if (stat.contains(QStringLiteral("size")))
+    next.insert(QStringLiteral("size"), stat.value(QStringLiteral("size")));
+  else if (local && info.exists() && !item.isDir)
+    next.insert(QStringLiteral("size"), info.size());
+  if (stat.value(QStringLiteral("mtime")).toLongLong() > 0)
+    next.insert(QStringLiteral("mtime"), stat.value(QStringLiteral("mtime")));
+  else if (local && info.exists())
+    next.insert(QStringLiteral("mtime"),
+                info.lastModified().toMSecsSinceEpoch());
+  if (!stat.value(QStringLiteral("perm")).toString().isEmpty())
+    next.insert(QStringLiteral("permissions"),
+                stat.value(QStringLiteral("perm")));
+
+  const QVariantList cachedColors =
+      stat.value(QStringLiteral("imagePalette")).toList();
+  const QVariantList cachedWeights =
+      stat.value(QStringLiteral("imagePaletteWeights")).toList();
+  if (!cachedColors.isEmpty()) {
+    QVariantList palette;
+    for (int i = 0; i < cachedColors.size(); ++i) {
+      QVariantMap swatch;
+      swatch.insert(QStringLiteral("color"), cachedColors.at(i));
+      swatch.insert(QStringLiteral("weight"),
+                    i < cachedWeights.size() ? cachedWeights.at(i) : 1.0);
+      palette.append(swatch);
+    }
+    next.insert(QStringLiteral("palette"), palette);
+    next.insert(QStringLiteral("dominantColor"),
+                stat.value(QStringLiteral("dominantColor")));
+    next.insert(QStringLiteral("brightness"),
+                stat.value(QStringLiteral("imageBrightness")));
+    next.insert(QStringLiteral("saturation"),
+                stat.value(QStringLiteral("imageSaturation")));
+  }
+
+  if (m_fileCatalog && local) {
+    next.insert(QStringLiteral("loading"), true);
+  } else {
+    next.insert(QStringLiteral("loading"), false);
+  }
+  if (next != m_doMetadata) {
+    m_doMetadata = next;
+    emit doMetadataChanged();
+  }
+
+  const QString suffix = info.suffix().toLower();
+  const bool imageCandidate =
+      item.mime.startsWith(QLatin1String("image/")) ||
+      QStringList{
+          QStringLiteral("jpg"), QStringLiteral("jpeg"), QStringLiteral("png"),
+          QStringLiteral("gif"), QStringLiteral("webp"), QStringLiteral("avif"),
+          QStringLiteral("bmp"), QStringLiteral("tif"),  QStringLiteral("tiff")}
+          .contains(suffix);
+  if (imageCandidate && m_model)
+    m_model->requestImageFacts(item.path);
+
+  if (!m_fileCatalog || !local)
+    return;
+  m_doMetadataRequest = m_fileCatalog->metadata(item.path);
+}
+
 void HostApi::attachDoPreview() {
   if (!m_doPreviewItem || !m_doContentSurface)
     return;
@@ -2288,8 +2824,8 @@ void HostApi::attachDoPreview() {
     m_doPreviewItem->setHeight(m_doContentSurface->height());
   };
   sync();
-  QObject::connect(m_doContentSurface, &QQuickItem::widthChanged, m_doPreviewItem,
-                   sync);
+  QObject::connect(m_doContentSurface, &QQuickItem::widthChanged,
+                   m_doPreviewItem, sync);
   QObject::connect(m_doContentSurface, &QQuickItem::heightChanged,
                    m_doPreviewItem, sync);
 }
@@ -2298,6 +2834,7 @@ void HostApi::loadDoContent() {
   destroyDoContent();
   const Manifest::Item item = doContentItem();
   if (item.path.isEmpty()) {
+    refreshDoMetadata();
     emit doPreviewChanged();
     return;
   }
@@ -2305,6 +2842,7 @@ void HostApi::loadDoContent() {
   m_doTargetName = QFileInfo(item.path).fileName();
   if (m_doTargetName.isEmpty())
     m_doTargetName = item.path;
+  refreshDoMetadata();
 
   if (item.isDir) {
     ensureDoFolderListing();
@@ -2359,6 +2897,10 @@ void HostApi::setDoIndex(int index) {
   index = qBound(0, index, m_doVerbs.size() - 1);
   const bool changed = index != m_doIndex;
   m_doIndex = index;
+  if (changed && m_doArmed) {
+    m_doArmed = false;
+    emit doOperationChanged();
+  }
   if (m_doParamsFocused && !doHasParams())
     setDoParamsFocused(false);
   if (changed)
@@ -2405,6 +2947,13 @@ bool HostApi::commitDoItems() {
 
 bool HostApi::runDoVerb() {
   m_error.clear();
+  if (m_doOperationState == QLatin1String("running"))
+    return false;
+  if (!m_doOperationState.isEmpty()) {
+    clearDoOperation();
+    closeAction();
+    return true;
+  }
   if (m_doIndex < 0 || m_doIndex >= m_doVerbs.size()) {
     m_error = QStringLiteral("no action");
     return false;
@@ -2412,6 +2961,24 @@ bool HostApi::runDoVerb() {
   const DoVerb v = m_doVerbs.at(m_doIndex);
   if (v.id == QLatin1String("synchro.do.open"))
     return commitDoItems();
+  if (v.runtime == QLatin1String("omaflow")) {
+    const bool confirm = v.effect == QLatin1String("modify") ||
+                         v.effect == QLatin1String("destructive") ||
+                         v.effect == QLatin1String("confirm");
+    if (confirm && !m_doArmed) {
+      m_doArmed = true;
+      emit doOperationChanged();
+      emit doHintChanged();
+      return false;
+    }
+    return startCurrentFlow(false);
+  }
+  if (v.effect == QLatin1String("destructive") && !m_doArmed) {
+    m_doArmed = true;
+    emit doOperationChanged();
+    emit doHintChanged();
+    return false;
+  }
   if (v.hasParams) {
     if (m_actionItem) {
       QVariant ok;
@@ -2438,6 +3005,91 @@ bool HostApi::runDoVerb() {
   }
   closeAction();
   return true;
+}
+
+bool HostApi::startCurrentFlow(bool dryRun) {
+  if (m_doIndex < 0 || m_doIndex >= m_doVerbs.size())
+    return false;
+  const DoVerb v = m_doVerbs.at(m_doIndex);
+  if (v.runtime != QLatin1String("omaflow") || v.providerId.isEmpty())
+    return false;
+
+  m_doArmed = false;
+  m_doOperationState = QStringLiteral("running");
+  m_doOperationTitle = v.name;
+  m_doOperationRule = v.providerId;
+  m_doOperationPaths.clear();
+  m_doOperationPaths.reserve(m_doItems.size());
+  for (const Manifest::Item &item : m_doItems)
+    m_doOperationPaths.append(item.path);
+  m_doOperationSummary =
+      dryRun
+          ? QStringLiteral("Inspecting the plan…")
+          : QStringLiteral("Running on %1 selected item%2…")
+                .arg(m_doItems.size())
+                .arg(m_doItems.size() == 1 ? QString() : QStringLiteral("s"));
+  m_doOperationArtifacts.clear();
+  emit doOperationChanged();
+  emit doHintChanged();
+
+  if (runOmaflow(v.providerId, dryRun))
+    return true;
+  m_doOperationState = QStringLiteral("failed");
+  m_doOperationSummary =
+      m_error.isEmpty() ? QStringLiteral("Could not start flow") : m_error;
+  emit doOperationChanged();
+  emit doHintChanged();
+  return false;
+}
+
+bool HostApi::inspectDoVerb() { return startCurrentFlow(true); }
+
+void HostApi::finishDoOperation(bool ok) {
+  if (!m_omaflow || m_doOperationRule.isEmpty() ||
+      m_omaflow->operationRule() != m_doOperationRule)
+    return;
+  const QVariantMap result = m_omaflow->operationResult();
+  m_doOperationState =
+      ok ? QStringLiteral("succeeded") : QStringLiteral("failed");
+  m_doOperationArtifacts = result.value(QStringLiteral("artifacts")).toList();
+  m_doOperationSummary = result.value(QStringLiteral("summary")).toString();
+  if (m_doOperationSummary.isEmpty())
+    m_doOperationSummary = m_omaflow->operationOutput();
+  if (m_doOperationSummary.isEmpty())
+    m_doOperationSummary = ok ? QStringLiteral("Action completed")
+                              : QStringLiteral("Action failed");
+  emit doOperationChanged();
+  emit doHintChanged();
+}
+
+void HostApi::cancelDoOperation() {
+  if (m_omaflow && m_doOperationState == QLatin1String("running"))
+    m_omaflow->cancel();
+}
+
+void HostApi::clearDoOperation() {
+  if (m_doOperationState == QLatin1String("running"))
+    return;
+  m_doOperationState.clear();
+  m_doOperationTitle.clear();
+  m_doOperationRule.clear();
+  m_doOperationPaths.clear();
+  m_doOperationSummary.clear();
+  m_doOperationArtifacts.clear();
+  m_doArmed = false;
+  emit doOperationChanged();
+  emit doHintChanged();
+}
+
+void HostApi::revealDoArtifact(int index) {
+  if (index < 0 || index >= m_doOperationArtifacts.size())
+    return;
+  const QString path = m_doOperationArtifacts.at(index)
+                           .toMap()
+                           .value(QStringLiteral("path"))
+                           .toString();
+  if (!path.isEmpty())
+    reveal(QUrl::fromLocalFile(path));
 }
 
 bool HostApi::deliverDoKey(int key, int modifiers) {
@@ -2474,16 +3126,39 @@ bool HostApi::copyText(const QString &text) {
 }
 
 bool HostApi::openDoLayer(const QString &focusId) {
+  return openDoLayerAt(focusId, false, -1, -1);
+}
+
+bool HostApi::openDoContext(qreal sceneX, qreal sceneY) {
+  return openDoLayerAt(QString(), true, sceneX, sceneY);
+}
+
+bool HostApi::openDoLayerAt(const QString &focusId, bool contextual,
+                            qreal sceneX, qreal sceneY) {
   m_error.clear();
+  m_doContextual = contextual;
+  m_doAnchorX = sceneX;
+  m_doAnchorY = sceneY;
+  emit doPresentationChanged();
+  m_doExplicitSelection = folderPeek() || (m_sel && m_sel->selectedCount() > 0);
   m_doItems = snapshotDoItems();
+  if (!m_doOperationState.isEmpty() &&
+      m_doOperationState != QLatin1String("running")) {
+    QStringList paths;
+    paths.reserve(m_doItems.size());
+    for (const Manifest::Item &item : m_doItems)
+      paths.append(item.path);
+    if (paths != m_doOperationPaths)
+      clearDoOperation();
+  }
   m_doSelection.clear();
   m_doSelection.reserve(m_doItems.size());
   for (const Manifest::Item &item : m_doItems)
     m_doSelection.append(itemToMap(item));
   if (!m_doItems.isEmpty()) {
     const Manifest::Item &first = m_doItems.constFirst();
-    const QUrl file = first.uri.isEmpty() ? QUrl::fromLocalFile(first.path)
-                                          : first.uri;
+    const QUrl file =
+        first.uri.isEmpty() ? QUrl::fromLocalFile(first.path) : first.uri;
     if (m_file != file) {
       m_file = file;
       emit fileChanged();
@@ -2498,7 +3173,9 @@ bool HostApi::openDoLayer(const QString &focusId) {
   int idx = 0;
   if (!focusId.isEmpty()) {
     for (int i = 0; i < m_doVerbs.size(); ++i) {
-      if (m_doVerbs.at(i).id == focusId) {
+      if (m_doVerbs.at(i).id == focusId ||
+          (focusId == QLatin1String("synchro.action.omaflow") &&
+           m_doVerbs.at(i).runtime == QLatin1String("omaflow"))) {
         idx = i;
         break;
       }
@@ -2508,6 +3185,7 @@ bool HostApi::openDoLayer(const QString &focusId) {
   m_actionOpen = true;
   m_doIndex = -1;
   m_doParamsFocused = false;
+  m_doArmed = false;
   if (!wasOpen)
     emit actionOpenChanged();
   // After actionOpen: QML binds doFolder* on doPreviewChanged.

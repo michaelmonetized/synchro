@@ -3,11 +3,11 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
-#include <QObject>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QObject>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryFile>
@@ -37,8 +37,6 @@ void trackSelectionFile(const QString &path) {
     g_selectionFiles.removeAll(path);
   });
 }
-
-
 
 QString firstPath(const HandlerExec::Request &req) {
   return req.items.isEmpty() ? QString() : req.items.constFirst().path;
@@ -240,6 +238,8 @@ QString HandlerExec::writeSelection(const Request &req) {
 
 QProcessEnvironment HandlerExec::buildEnv(const Request &req) {
   QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+  env.insert(QStringLiteral("SYNCHRO_BIN"),
+             QCoreApplication::applicationFilePath());
   env.insert(QStringLiteral("SYNCHRO_HANDLER_ID"), req.handlerId);
   env.insert(QStringLiteral("SYNCHRO_CWD"), req.cwd);
   env.insert(QStringLiteral("SYNCHRO_THEME_DIR"), themeDir());

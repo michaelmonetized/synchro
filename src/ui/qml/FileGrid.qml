@@ -42,7 +42,7 @@ Item {
     readonly property int sectionH: Math.max(Theme.fontBody + Theme.space(10), 24)
 
     signal viewToggleRequested()
-    signal doRequested()
+    signal doRequested(real sceneX, real sceneY)
 
     focus: true
     activeFocusOnTab: true
@@ -126,6 +126,134 @@ Item {
     function tilesView() {
         return bodyLoader.item && bodyLoader.item.objectName === "fileGridTiles"
                ? bodyLoader.item : null
+    }
+
+    // GridView, grouped search results, and future grid surfaces do not share
+    // a reliable row/column stride while the browser is being resized. Walk
+    // the live delegates and navigate their actual painted centers instead.
+    function renderedCells() {
+        var found = []
+        var seen = ({})
+        function visit(item) {
+            if (!item)
+                return
+            if (item.objectName === "gridCell" && item.visible &&
+                    item.width > 0 && item.height > 0) {
+                var row = Number(item.rowIndex)
+                if (isFinite(row) && row >= 0 && !seen[row]) {
+                    var center = item.mapToItem(grid, item.width / 2,
+                                                item.height / 2)
+                    found.push({ row: row, x: center.x, y: center.y,
+                                 width: item.width, height: item.height })
+                    seen[row] = true
+                }
+            }
+            var children = item.children
+            if (!children)
+                return
+            for (var i = 0; i < children.length; ++i)
+                visit(children[i])
+        }
+        visit(bodyLoader.item)
+        return found
+    }
+
+    function geometryTarget(row, dx, dy, steps) {
+        var cells = grid.renderedCells()
+        var current = null
+        for (var i = 0; i < cells.length; ++i) {
+            if (cells[i].row === row) {
+                current = cells[i]
+                break
+            }
+        }
+        if (!current)
+            return -1
+        steps = Math.max(1, Number(steps) || 1)
+        var epsilon = 1
+
+        if (dx !== 0) {
+            var sameRow = []
+            var rowTolerance = Math.max(3, current.height * 0.30)
+            for (i = 0; i < cells.length; ++i) {
+                var h = cells[i]
+                if (h.row === current.row ||
+                        Math.abs(h.y - current.y) > rowTolerance)
+                    continue
+                if ((dx > 0 && h.x > current.x + epsilon) ||
+                        (dx < 0 && h.x < current.x - epsilon))
+                    sameRow.push(h)
+            }
+            sameRow.sort(function(a, b) {
+                return dx > 0 ? a.x - b.x : b.x - a.x
+            })
+            if (!sameRow.length)
+                return -1
+            return sameRow[Math.min(steps, sameRow.length) - 1].row
+        }
+
+        if (dy !== 0) {
+            var directional = []
+            for (i = 0; i < cells.length; ++i) {
+                var v = cells[i]
+                if (v.row === current.row)
+                    continue
+                if ((dy > 0 && v.y > current.y + epsilon) ||
+                        (dy < 0 && v.y < current.y - epsilon))
+                    directional.push(v)
+            }
+            directional.sort(function(a, b) {
+                return dy > 0 ? a.y - b.y : b.y - a.y
+            })
+            if (!directional.length)
+                return -1
+
+            // Bucket delegates by their rendered row, then pick the nearest
+            // x-coordinate in the requested row. A short final row therefore
+            // bends only when the requested visual column truly does not exist.
+            var bands = []
+            var bandTolerance = Math.max(3, current.height * 0.30)
+            for (i = 0; i < directional.length; ++i) {
+                var candidate = directional[i]
+                var band = bands.length ? bands[bands.length - 1] : null
+                if (!band || Math.abs(candidate.y - band.y) > bandTolerance) {
+                    band = { y: candidate.y, cells: [] }
+                    bands.push(band)
+                }
+                band.cells.push(candidate)
+            }
+            var targetBand = bands[Math.min(steps, bands.length) - 1]
+            var best = targetBand.cells[0]
+            var bestDx = Math.abs(best.x - current.x)
+            for (i = 1; i < targetBand.cells.length; ++i) {
+                var distance = Math.abs(targetBand.cells[i].x - current.x)
+                if (distance < bestDx) {
+                    best = targetBand.cells[i]
+                    bestDx = distance
+                }
+            }
+            return best.row
+        }
+        return -1
+    }
+
+    function navigateGeometry(dx, dy, leap, retry) {
+        if (!grid.rows || !grid.keyMachine)
+            return false
+        var target = grid.geometryTarget(grid.rows.currentIndex, dx, dy,
+                                         leap ? 5 : 1)
+        if (target < 0) {
+            // A restored panel and the initial GridView population can settle
+            // one frame after browser focus arrives. Retry against that frame's
+            // delegates instead of falling back to stale column arithmetic.
+            if (retry !== false)
+                Qt.callLater(function () {
+                    grid.navigateGeometry(dx, dy, leap, false)
+                })
+            return false
+        }
+        grid.keyMachine.moveGridCursorTo(target)
+        return true
     }
 
     function ensureSearchRowVisible(row) {
@@ -459,6 +587,20 @@ Item {
 
     Keys.priority: Keys.BeforeItem
     Keys.onPressed: function (event) {
+        var wasd = event.key === Qt.Key_W || event.key === Qt.Key_A ||
+                   event.key === Qt.Key_S || event.key === Qt.Key_D
+        var chord = event.modifiers & (Qt.ControlModifier | Qt.AltModifier |
+                                       Qt.MetaModifier)
+        if (wasd && !chord) {
+            var dx = event.key === Qt.Key_A ? -1
+                   : (event.key === Qt.Key_D ? 1 : 0)
+            var dy = event.key === Qt.Key_W ? -1
+                   : (event.key === Qt.Key_S ? 1 : 0)
+            grid.navigateGeometry(dx, dy,
+                                  !!(event.modifiers & Qt.ShiftModifier), true)
+            event.accepted = true
+            return
+        }
         if (grid.keyMachine &&
                 grid.keyMachine.handleListKey(event.key, event.modifiers, event.text)) {
             event.accepted = true

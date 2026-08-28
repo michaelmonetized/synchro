@@ -10,6 +10,7 @@ Item {
     property var fileModel: null
     property var selectionModel: null
     property var navStack: null
+    property var shell: null
     property var catalog: typeof fileCatalog !== "undefined" ? fileCatalog : null
     property var config: null
 
@@ -104,7 +105,10 @@ Item {
         if (editorRelation === "image_facts")
             return ["path", "name", "extension", "size", "width", "height",
                     "aspect_ratio", "orientation", "color_family",
-                    "dominant_color", "brightness", "saturation",
+                    "dominant_color", "average_color", "palette_0",
+                    "palette_1", "palette_2", "palette_weight_0",
+                    "palette_weight_1", "palette_weight_2",
+                    "brightness", "saturation",
                     "blue_share", "chromatic_share", "visual_hash", "mtime",
                     "is_dir", "hidden", "kind", "file_id"]
         if (editorRelation === "projects")
@@ -126,6 +130,11 @@ Item {
                                   ? contextCwd
                                   : (fileModel && fileModel.path ? fileModel.path : "")
     readonly property string scopeName: cwd.length ? cwd.split("/").pop() || "/" : "—"
+
+    function publishRunning() {
+        if (shell && shell.mainSqlBusy !== undefined)
+            shell.mainSqlBusy = running
+    }
 
     function focusContent() {
         queryEdit.forceActiveFocus()
@@ -638,7 +647,7 @@ Item {
                         anchors.centerIn: parent
                         text: relationChip.modelData
                         color: relationArea.containsMouse ? Theme.accent : Theme.foreground
-                        font.family: Theme.fontFamily
+                        font.family: Theme.monoFontFamily
                         font.pixelSize: Theme.fontBody
                     }
 
@@ -875,6 +884,7 @@ Item {
 
             TextEdit {
                 id: queryEdit
+                objectName: "sqlQueryEdit"
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
@@ -887,8 +897,9 @@ Item {
                 color: Theme.foreground
                 selectionColor: Theme.selectionFill
                 selectedTextColor: Theme.foreground
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontBody
+                font.family: Theme.monoFontFamily
+                font.pixelSize: Theme.fontTitle
+                font.bold: true
                 wrapMode: TextEdit.NoWrap
                 clip: true
                 selectByMouse: true
@@ -970,7 +981,7 @@ Item {
                             text: modelData
                             color: Theme.darkForeground
                             opacity: 0.54
-                            font.family: Theme.fontFamily
+                            font.family: Theme.monoFontFamily
                             font.pixelSize: Theme.fontCaption
                             elide: Text.ElideRight
                             verticalAlignment: Text.AlignVCenter
@@ -1064,10 +1075,22 @@ Item {
             Text {
                 visible: panel.running
                 anchors.centerIn: parent
+                anchors.verticalCenterOffset: Theme.space(36)
                 text: "querying " + panel.scopeName + "…"
                 color: Theme.muted
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontBody
+                font.bold: true
+            }
+
+            ThumbLoadingGlyph {
+                objectName: "sqlResultSpinner"
+                visible: panel.running
+                running: panel.running
+                anchors.centerIn: parent
+                anchors.verticalCenterOffset: -Theme.space(14)
+                width: Theme.space(58)
+                height: width
             }
 
             Text {
@@ -1140,7 +1163,7 @@ Item {
                                     anchors.rightMargin: Theme.space(9)
                                     text: modelData.name
                                     color: Theme.muted
-                                    font.family: Theme.fontFamily
+                                    font.family: Theme.monoFontFamily
                                     font.pixelSize: Theme.fontCaption
                                     font.bold: true
                                     verticalAlignment: Text.AlignVCenter
@@ -1210,7 +1233,7 @@ Item {
                                                    : (modelData.name === "path"
                                                       ? Theme.accent
                                                       : Theme.foreground)
-                                            font.family: Theme.fontFamily
+                                            font.family: Theme.monoFontFamily
                                             font.pixelSize: Theme.fontBody
                                             font.bold: resultRow.selected
                                             verticalAlignment: Text.AlignVCenter
@@ -1261,7 +1284,7 @@ Item {
                     text: panel.rows.length + (panel.result.truncated ? "+" : "") +
                           " rows  ·  " + panel.result.elapsedMs + " ms"
                     color: Theme.muted
-                    font.family: Theme.fontFamily
+                    font.family: Theme.monoFontFamily
                     font.pixelSize: Theme.fontCaption
                 }
             }
@@ -1275,5 +1298,10 @@ Item {
         if (catalog)
             catalog.refreshCurrent()
         Qt.callLater(installHighlighter)
+        publishRunning()
     }
+    onRunningChanged: publishRunning()
+    onShellChanged: publishRunning()
+    Component.onDestruction: if (shell && shell.mainSqlBusy !== undefined)
+                                 shell.mainSqlBusy = false
 }

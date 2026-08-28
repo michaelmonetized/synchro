@@ -256,6 +256,13 @@ void KeyMachine::setPanelFocused(bool on) {
   emit panelFocusedChanged();
 }
 
+void KeyMachine::setLookKeyMode(bool on) {
+  if (m_lookKeyMode == on)
+    return;
+  m_lookKeyMode = on;
+  emit lookKeyModeChanged();
+}
+
 void KeyMachine::togglePanel(const QString &id) {
   setPanelId(m_panelId == id ? QString() : id);
 }
@@ -267,6 +274,8 @@ void KeyMachine::setGridStride(int columns) {
   m_gridStride = next;
   emit gridStrideChanged();
 }
+
+void KeyMachine::moveGridCursorTo(int index) { setCursorIndex(index); }
 
 void KeyMachine::setCursorIndex(int index) {
   if (m_selection)
@@ -293,8 +302,31 @@ void KeyMachine::nudgeCursor(int dx, int dy, bool leap) {
     setCursorIndex(next);
     return;
   }
-  const int stride = m_gridMode ? m_gridStride : 1;
-  const int delta = dy * step * stride + dx * step;
+  if (m_gridMode) {
+    const int count = m_proxy ? m_proxy->count()
+                              : (m_model ? m_model->rowCount() : 0);
+    if (count <= 0)
+      return;
+    const int stride = qMax(1, m_gridStride);
+    const int current = qBound(0, cursorIndex(), count - 1);
+    const int row = current / stride;
+    const int column = current % stride;
+    int next = current;
+    if (dx != 0) {
+      const int rowFirst = row * stride;
+      const int rowLast = qMin(count - 1, rowFirst + stride - 1);
+      next = qBound(rowFirst, current + dx * step, rowLast);
+    } else if (dy != 0) {
+      const int lastRow = (count - 1) / stride;
+      const int targetRow = qBound(0, row + dy * step, lastRow);
+      const int targetFirst = targetRow * stride;
+      const int targetLast = qMin(count - 1, targetFirst + stride - 1);
+      next = targetFirst + qMin(column, targetLast - targetFirst);
+    }
+    setCursorIndex(next);
+    return;
+  }
+  const int delta = dy * step + dx * step;
   if (delta == 0)
     return;
   if (m_selection)
@@ -1032,6 +1064,35 @@ void KeyMachine::runCommand(const QString &text) {
       emit panelFocusRequested();
       return;
     }
+    if (head == QLatin1String("ask") || head == QLatin1String("find-agent") ||
+        head == QLatin1String("agent-find")) {
+      if (m_chooserMode) {
+        setStatusMessage(QStringLiteral("no agent search in picker windows"));
+        return;
+      }
+      if (fsnToks.size() > 1) {
+        setStatusMessage(QStringLiteral(":ask"));
+        return;
+      }
+      finishCommand();
+      emit agentSearchRequested();
+      return;
+    }
+    if (head == QLatin1String("flow") || head == QLatin1String("flows") ||
+        head == QLatin1String("omaflow")) {
+      if (m_chooserMode) {
+        setStatusMessage(QStringLiteral("no automation panel in picker windows"));
+        return;
+      }
+      if (fsnToks.size() > 1) {
+        setStatusMessage(QStringLiteral(":flow"));
+        return;
+      }
+      setPanelId(QStringLiteral("synchro.panel.omaflow"));
+      finishCommand();
+      emit panelFocusRequested();
+      return;
+    }
     if (head == QLatin1String("fsn") || head == QLatin1String("fsv") ||
         head == QLatin1String("park") || head == QLatin1String("nedry")) {
       if (fsnToks.size() > 1) {
@@ -1528,9 +1589,13 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
       m_model->activateCurrent();
     return true;
   }
-  if (key == Qt::Key_Space && !alt && !chord && !shift) {
-    if (m_host)
-      m_host->toggle();
+  if (key == Qt::Key_Space && !alt && !chord) {
+    if (shift || !m_lookKeyMode) {
+      if (m_host)
+        m_host->toggle();
+    } else {
+      emit lookToggleRequested();
+    }
     return true;
   }
   if ((key == Qt::Key_H || key == Qt::Key_Backspace || key == Qt::Key_Left ||
@@ -1625,13 +1690,13 @@ bool KeyMachine::handleDoKey(int key, int modifiers) {
     closeAction();
     return true;
   }
-  if (key == Qt::Key_A && !hasChord(modifiers) && !hasAlt(modifiers) &&
-      !hasShift(modifiers)) {
+  if ((key == Qt::Key_Left || key == Qt::Key_Backtab) && params &&
+      !hasChord(modifiers) && !hasAlt(modifiers)) {
     m_host->setDoParamsFocused(false);
     return true;
   }
-  if (key == Qt::Key_D && !hasChord(modifiers) && !hasAlt(modifiers) &&
-      !hasShift(modifiers)) {
+  if ((key == Qt::Key_Right || key == Qt::Key_Tab) &&
+      !hasChord(modifiers) && !hasAlt(modifiers)) {
     m_host->setDoParamsFocused(true);
     return true;
   }

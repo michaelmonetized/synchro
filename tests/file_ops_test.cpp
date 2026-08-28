@@ -75,6 +75,8 @@ private slots:
   void escCollapsesMultiSetThenFilter();
   void leavingDirCollapsesSelection();
   void clickAndShiftClickAndCtrlClick();
+  void recursivePathSelectionIsFirstClass();
+  void previewSummaryIsBoundedAndUseful();
   void mkdirAndUndo();
   void mkdirCollisionSuffix();
   void renameAndUndo();
@@ -333,6 +335,64 @@ void FileOpsTest::clickAndShiftClickAndCtrlClick() {
   QCOMPARE(sel.selectedCount(), 3);
   sel.ctrlClick(1);
   QCOMPARE(sel.selectedCount(), 2);
+}
+
+void FileOpsTest::recursivePathSelectionIsFirstClass() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkpath(QStringLiteral("folder/deeper")));
+  const QString nested =
+      tmp.filePath(QStringLiteral("folder/deeper/notes.md"));
+  QVERIFY(writeFile(nested, "# nested\n"));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("top.txt"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  SelectionModel sel(&proxy, &model);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+
+  sel.selectPath(nested, QStringLiteral("notes.md"), false, 9);
+  QCOMPARE(sel.selectedCount(), 1);
+  QCOMPARE(sel.selectedPaths(), QStringList{nested});
+  QCOMPARE(sel.cursorPath(), nested);
+  QCOMPARE(sel.cursorName(), QStringLiteral("notes.md"));
+  QCOMPARE(sel.primaryItem().value(QStringLiteral("path")).toString(), nested);
+
+  const int top = findProxy(proxy, QStringLiteral("top.txt"));
+  QVERIFY(top >= 0);
+  sel.click(top);
+  QCOMPARE(sel.selectedPaths(),
+           QStringList{tmp.filePath(QStringLiteral("top.txt"))});
+}
+
+void FileOpsTest::previewSummaryIsBoundedAndUseful() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("photo.png")), "pixels"));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("notes.md")), "notes"));
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("folder")));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  SelectionModel sel(&proxy, &model);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  sel.selectAll();
+
+  const QVariantMap exact = sel.previewSummary(2, 10);
+  QCOMPARE(exact.value(QStringLiteral("count")).toInt(), 3);
+  QCOMPARE(exact.value(QStringLiteral("items")).toList().size(), 2);
+  QVERIFY(exact.value(QStringLiteral("aggregateComplete")).toBool());
+  QCOMPARE(exact.value(QStringLiteral("files")).toInt(), 2);
+  QCOMPARE(exact.value(QStringLiteral("folders")).toInt(), 1);
+  QVERIFY(!exact.value(QStringLiteral("kindSummary")).toStringList().isEmpty());
+
+  const QVariantMap sampled = sel.previewSummary(1, 1);
+  QVERIFY(!sampled.value(QStringLiteral("aggregateComplete")).toBool());
+  QCOMPARE(sampled.value(QStringLiteral("aggregateCount")).toInt(), 1);
 }
 
 void FileOpsTest::mkdirAndUndo() {

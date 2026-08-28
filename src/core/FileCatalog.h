@@ -28,11 +28,20 @@ public:
   ~FileCatalog() override;
 
   static QString dbPath();
+  static QString shadowPath();
+  // Build a complete native DuckDB generation beside the active one, then
+  // atomically promote it. Readers that already opened the previous inode are
+  // unaffected; subsequent queries see the new generation.
+  static QVariantMap rebuildShadow(bool force = false);
+  static QVariantMap shadowStatus();
   // Headless query seam shared by the SQL panel, CLI, and MCP server. It
   // reads only the durable catalog and does not require a GUI model.
   static QVariantMap querySync(const QString &sql, const QString &cwd,
                                const QStringList &selection = {},
                                int maxRows = 200);
+  // Cheap syntax/safety validation for handoff surfaces that should not open
+  // the multi-gigabyte catalog merely to decide whether a query may launch.
+  static bool validateReadOnlySql(const QString &sql, QString *error = nullptr);
   static QString sourceRelationForQuery(const QString &sql);
 
   bool indexing() const { return m_indexing; }
@@ -47,6 +56,19 @@ public:
   Q_INVOKABLE quint64 query(const QString &sql, const QString &cwd,
                             const QStringList &selection = {},
                             int maxRows = 200);
+  // Fast primary-key lookup for contextual UI. This deliberately bypasses
+  // DuckDB and never scans the catalog.
+  Q_INVOKABLE quint64 metadata(const QString &path);
+  // Build a bounded, hierarchical FSV scene from the durable catalog. Work
+  // runs independently of SQL queries and older requests are cancellable.
+  Q_INVOKABLE quint64 scene(const QString &root, const QString &view,
+                            bool hidden = false, int maxNodes = 2048,
+                            int maxDepth = 4);
+  // Structural FSV level-of-detail: root and every explicitly expanded
+  // directory are returned with complete immediate-child sets.
+  Q_INVOKABLE quint64 sceneExpanded(const QString &root, const QString &view,
+                                    bool hidden,
+                                    const QStringList &expandedPaths);
   Q_INVOKABLE QString sourceRelation(const QString &sql) const;
   Q_INVOKABLE bool coversTree(const QString &root) const;
   // maxEntries <= 0 means a complete recursive scan. Positive limits remain
@@ -61,6 +83,8 @@ public:
 
 signals:
   void queryFinished(quint64 requestId, const QVariantMap &result);
+  void metadataFinished(quint64 requestId, const QVariantMap &result);
+  void sceneFinished(quint64 requestId, const QVariantMap &result);
   void statusChanged();
   void analysisChanged();
 
@@ -71,19 +95,24 @@ private:
   void enqueueDelete(const QStringList &paths);
   void restoreScanState();
   void rememberCompleteRoot(const QString &root);
+  void requestShadowRefresh();
   void setStatus(bool indexing, const QString &root, int count,
                  const QString &text);
 
   DirectoryModel *m_model = nullptr;
   QTimer m_snapshotTimer;
+  QTimer m_shadowRefreshTimer;
   QThreadPool m_scanPool;
   QThreadPool m_writerPool;
   QThreadPool m_queryPool;
+  QThreadPool m_scenePool;
   QThreadPool m_analysisPool;
   std::shared_ptr<std::atomic_bool> m_scanCancel;
+  std::shared_ptr<std::atomic_bool> m_sceneCancel;
   quint64 m_scanGeneration = 0;
   quint64 m_nextRequest = 0;
   bool m_indexing = false;
+  qint64 m_lastShadowRefreshRequestAt = 0;
   QString m_indexedRoot;
   QStringList m_completeRoots;
   int m_indexedCount = 0;

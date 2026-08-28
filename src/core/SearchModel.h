@@ -128,6 +128,7 @@ public:
   Q_INVOKABLE QString currentName() const;
   Q_INVOKABLE bool currentIsDir() const;
   void setThumbnail(const QString &path, const QString &url);
+  void clearThemedThumbnails();
   Q_INVOKABLE QVariantMap rowMap(int row) const;
   static QString folderLabel(const QString &parentPath, const QString &root);
 

@@ -81,7 +81,9 @@ private slots:
   void textCardGeneratedWhenNoThumbnailer();
   void webpDecodesWithoutQtPlugin();
   void deterministicImageFactsAreStable();
+  void deterministicImageFactsBenchmark();
   void generatedImagePublishesFacts();
+  void warmImageThumbnailPublishesFacts();
   void folderMosaicFromChildImages();
   void folderMosaicFindsImagesPastEarlyFiles();
   void folderMosaicFollowsImageSymlink();
@@ -402,6 +404,29 @@ void ThumbnailServiceTest::deterministicImageFactsAreStable() {
   QCOMPARE(first.value(QStringLiteral("visual_hash")).toString(),
            second.value(QStringLiteral("visual_hash")).toString());
   QCOMPARE(first.value(QStringLiteral("visual_hash")).toString().size(), 16);
+  QCOMPARE(first.value(QStringLiteral("palette_0")).toString(),
+           second.value(QStringLiteral("palette_0")).toString());
+  QVERIFY(first.value(QStringLiteral("palette_0")).toString().startsWith('#'));
+  QVERIFY(first.value(QStringLiteral("palette_weight_0")).toDouble() > 0.99);
+}
+
+void ThumbnailServiceTest::deterministicImageFactsBenchmark() {
+  const QString src = m_files.filePath(QStringLiteral("palette-benchmark.png"));
+  QImage image(512, 320, QImage::Format_ARGB32);
+  for (int y = 0; y < image.height(); ++y) {
+    auto *line = reinterpret_cast<QRgb *>(image.scanLine(y));
+    for (int x = 0; x < image.width(); ++x)
+      line[x] = qRgba((x * 255) / image.width(),
+                      (y * 255) / image.height(), 190, 255);
+  }
+  QVERIFY(image.save(src, "PNG"));
+  const QImage decoded = ThumbnailService::decodeRaster(src, 128);
+  QVERIFY(!decoded.isNull());
+  QVariantMap facts;
+  QBENCHMARK {
+    facts = ThumbnailService::deterministicImageFacts(src, decoded);
+  }
+  QVERIFY(facts.value(QStringLiteral("palette_0")).toString().startsWith('#'));
 }
 
 void ThumbnailServiceTest::generatedImagePublishesFacts() {
@@ -423,6 +448,40 @@ void ThumbnailServiceTest::generatedImagePublishesFacts() {
            QStringLiteral("portrait"));
   QCOMPARE(facts.value(QStringLiteral("color_family")).toString(),
            QStringLiteral("blue"));
+  QVERIFY(facts.value(QStringLiteral("palette_0")).toString().startsWith('#'));
+}
+
+void ThumbnailServiceTest::warmImageThumbnailPublishesFacts() {
+  const QString src = m_files.filePath(QStringLiteral("facts-warm.png"));
+  QImage image(96, 64, QImage::Format_RGB32);
+  image.fill(qRgb(210, 45, 90));
+  QVERIFY(image.save(src, "PNG"));
+  const qint64 mtime = mtimeMsOf(src);
+  {
+    ThumbnailService cold;
+    QSignalSpy ready(&cold, &ThumbnailService::thumbnailReady);
+    cold.request(src, mtime, 128);
+    QVERIFY(QTest::qWaitFor([&] { return ready.count() >= 1; }, 3000));
+  }
+
+  ThumbnailService warm;
+  QSignalSpy ready(&warm, &ThumbnailService::thumbnailsReady);
+  QSignalSpy facts(&warm, &ThumbnailService::imageFactsReady);
+  ThumbnailJob job;
+  job.path = src;
+  job.mime = QStringLiteral("image/png");
+  job.mtime = mtime;
+  job.sizePx = 128;
+  warm.requestVisible(QVector<ThumbnailJob>{job});
+  QVERIFY(QTest::qWaitFor([&] { return ready.count() >= 1; }, 3000));
+  QVERIFY(QTest::qWaitFor([&] { return facts.count() >= 1; }, 3000));
+  QCOMPARE(facts.first().at(0).toString(), src);
+  QVERIFY(facts.first()
+              .at(2)
+              .toMap()
+              .value(QStringLiteral("palette_0"))
+              .toString()
+              .startsWith('#'));
 }
 
 void ThumbnailServiceTest::folderMosaicFromChildImages() {

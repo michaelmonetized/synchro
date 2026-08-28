@@ -5,6 +5,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
+#include <QVariantMap>
 
 class DirectoryModel;
 class FilterProxy;
@@ -24,7 +25,7 @@ public:
                           QObject *parent = nullptr);
 
   int cursor() const;
-  int selectedCount() const { return m_selected.size(); }
+  int selectedCount() const;
   int epoch() const { return m_epoch; }
   bool visual() const { return m_visual; }
   QString statusText() const;
@@ -35,6 +36,12 @@ public:
   Q_INVOKABLE void toggleRow(int proxyRow);
   Q_INVOKABLE void selectAll();
   Q_INVOKABLE void click(int proxyRow);
+  // StrataV/MapV render recursive descendants which need not have a row in the
+  // current directory proxy. Keep one such path as a proper browser selection
+  // so previews, actions, and file operations all target what was clicked.
+  Q_INVOKABLE void selectPath(const QString &path,
+                              const QString &name = QString(),
+                              bool isDir = false, qint64 size = -1);
   Q_INVOKABLE void shiftClick(int proxyRow);
   Q_INVOKABLE void ctrlClick(int proxyRow);
   Q_INVOKABLE void enterVisual();
@@ -44,8 +51,11 @@ public:
   Q_INVOKABLE bool isSelected(int proxyRow) const;
   Q_INVOKABLE QVariantList selectedIndices() const;
   Q_INVOKABLE QStringList selectedPaths() const;
+  Q_INVOKABLE QVariantMap previewSummary(int itemLimit = 10,
+                                         int aggregateLimit = 10000) const;
   Q_INVOKABLE QString cursorPath() const;
   Q_INVOKABLE QString cursorName() const;
+  Q_INVOKABLE QVariantMap primaryItem() const;
 
 signals:
   void cursorChanged();
@@ -62,6 +72,7 @@ private:
   void replaceSelected(const QSet<int> &rows);
   void setAnchor(int proxyRow);
   void syncNames();
+  bool clearExternalItem();
   int findName(const QString &name) const;
   QString nameAt(int proxyRow) const;
   QString pathAt(int proxyRow) const;
@@ -71,6 +82,7 @@ private:
   FilterProxy *m_proxy = nullptr;
   DirectoryModel *m_model = nullptr;
   QSet<int> m_selected;
+  QVariantMap m_externalItem;
   QStringList m_selectedNames;
   QString m_cursorName;
   QString m_anchorName;

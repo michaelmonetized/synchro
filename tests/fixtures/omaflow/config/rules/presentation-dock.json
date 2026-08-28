@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "presentation-dock",
+  "name": "Presentation dock",
+  "enabled": true,
+  "trigger": {
+    "type": "monitor-connected",
+    "match": {
+      "description": "Dell U3821DW"
+    }
+  },
+  "conditions": [
+    {
+      "type": "weekday",
+      "days": ["mon", "tue", "wed", "thu", "fri"]
+    },
+    {
+      "type": "time-between",
+      "from": "08:30",
+      "to": "18:00"
+    }
+  ],
+  "actions": [
+    {
+      "type": "dnd",
+      "state": "on"
+    },
+    {
+      "type": "stay-awake",
+      "state": "on"
+    },
+    {
+      "type": "audio-output",
+      "match": "DisplayPort"
+    },
+    {
+      "type": "workspace",
+      "number": 4
+    }
+  ],
+  "cooldownSeconds": 120,
+  "source": "Set up presentation mode when I connect the big Dell during work hours."
+}

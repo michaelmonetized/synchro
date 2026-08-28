@@ -1,4 +1,5 @@
 #include "Config.h"
+#include "AgentIntegration.h"
 #include "DirectoryModel.h"
 #include "FileOpEngine.h"
 #include "FileCatalog.h"
@@ -11,6 +12,7 @@
 #include "LocationChips.h"
 #include "MimeMap.h"
 #include "NavStack.h"
+#include "OmaflowBridge.h"
 #include "PortalService.h"
 #include "RecentStore.h"
 #include "SearchModel.h"
@@ -53,6 +55,8 @@ bool argvHasFlag(int argc, char **argv, const char *flag) {
 int main(int argc, char *argv[]) {
   if (argc >= 2 &&
       (std::strcmp(argv[1], "handler") == 0 ||
+       std::strcmp(argv[1], "agent") == 0 ||
+       std::strcmp(argv[1], "catalog") == 0 ||
        std::strcmp(argv[1], "query") == 0 ||
        std::strcmp(argv[1], "mcp") == 0)) {
     QCoreApplication app(argc, argv);
@@ -62,6 +66,10 @@ int main(int argc, char *argv[]) {
     app.setOrganizationDomain(QStringLiteral("omarchy.org"));
     if (std::strcmp(argv[1], "query") == 0)
       return runQueryCli(argc, argv);
+    if (std::strcmp(argv[1], "agent") == 0)
+      return runAgentCli(argc, argv);
+    if (std::strcmp(argv[1], "catalog") == 0)
+      return runCatalogCli(argc, argv);
     if (std::strcmp(argv[1], "mcp") == 0)
       return runMcpCli(argc, argv);
     return runHandlerCli(argc, argv);
@@ -88,6 +96,7 @@ int main(int argc, char *argv[]) {
   app.setApplicationVersion(QStringLiteral(SYNCHRO_VERSION));
   app.setOrganizationName(QStringLiteral("omarchy"));
   app.setOrganizationDomain(QStringLiteral("omarchy.org"));
+
 
   QCommandLineParser parser;
   parser.setApplicationDescription(QStringLiteral("Omarchy file OS"));
@@ -205,6 +214,11 @@ int main(int argc, char *argv[]) {
     return app.exec();
   }
 
+  // Omarchy discovers agent capabilities through shared skills. Keep the
+  // links current on ordinary browser startup; preserve any user-owned path
+  // collision and expose it through `synchro agent doctor`.
+  AgentIntegration::installSkill();
+
   Config config;
   QString startPath = QDir::homePath();
   const QStringList positional = parser.positionalArguments();
@@ -218,6 +232,8 @@ int main(int argc, char *argv[]) {
 
   DirectoryModel directoryModel;
   FileCatalog fileCatalog(&directoryModel);
+  AgentSearchBridge agentSearch;
+  OmaflowBridge omaflow;
   SearchModel searchModel;
   directoryModel.setSearchModel(&searchModel);
   directoryModel.setShowHidden(config.showHidden());
@@ -294,12 +310,17 @@ int main(int argc, char *argv[]) {
                                            &config);
   engine.rootContext()->setContextProperty(QStringLiteral("fileCatalog"),
                                            &fileCatalog);
+  engine.rootContext()->setContextProperty(QStringLiteral("agentSearch"),
+                                           &agentSearch);
+  engine.rootContext()->setContextProperty(QStringLiteral("omaflow"),
+                                           &omaflow);
 
   HostApi hostApi(&directoryModel, &filterProxy, &navStack, &handlerRegistry,
                   &handlerLoader, &xdgOpen, &mimeMap, &engine);
   hostApi.setSelection(&selectionModel);
   hostApi.setFileOps(&fileOpEngine);
   hostApi.setFileCatalog(&fileCatalog);
+  hostApi.setOmaflowBridge(&omaflow);
   keyMachine.setPeekHost(&hostApi);
   hostApi.setGridMode(keyMachine.gridMode());
   QObject::connect(&keyMachine, &KeyMachine::gridModeChanged, &hostApi, [&] {
@@ -327,6 +348,13 @@ int main(int argc, char *argv[]) {
                    &keyMachine, [&] {
                      if (!fileOpEngine.lastMessage().isEmpty())
                        keyMachine.setStatusMessage(fileOpEngine.lastMessage());
+                   });
+  QObject::connect(&omaflow, &OmaflowBridge::operationFinished, &keyMachine,
+                   [&](bool ok) {
+                     keyMachine.setStatusMessage(
+                         ok ? omaflow.operationOutput()
+                            : QStringLiteral("Omaflow: %1")
+                                  .arg(omaflow.operationOutput()));
                    });
 
   for (const auto &rec : handlerRegistry.handlers()) {

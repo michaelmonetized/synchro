@@ -1,9 +1,9 @@
 import QtQuick
+import Synchro 1.0
 import Synchro.Theme
 
-// fsv/fsn homage (":fsv"): software-rendered 3D filesystem, after fsv 0.9.
-// TreeV: gray platforms on dark-red roads, khaki file boxes, ground labels,
-// and camera flights that travel the roads. MapV: nested treemap slabs.
+// Synchro's StrataV / MapV 3D browser presentation. MapV keeps the fsv-style
+// size map; StrataV turns sibling folders into a navigable neighborhood.
 // See src/core/FsnLayout.cpp for the geometry.
 Item {
     id: fsn
@@ -13,6 +13,7 @@ Item {
     property var navStack
     property var keyMachine
     property var selection
+    property var catalog: null
     property var host: null
     property var fileOps: null
     readonly property var rows: filterProxy ? filterProxy : fileModel
@@ -22,9 +23,10 @@ Item {
     // the selected file) but dimmed so focus stays legible.
     readonly property bool cursorDim: keyMachine && keyMachine.panelFocused
     readonly property bool treeView: !keyMachine || keyMachine.fsnTreeView
+    readonly property int themeEpoch: Theme.epoch
 
     signal viewToggleRequested()
-    signal doRequested()
+    signal doRequested(real sceneX, real sceneY)
 
     focus: true
     activeFocusOnTab: true
@@ -40,7 +42,24 @@ Item {
     property bool camAnim: true
     property string focusPath: ""
     property string scenePath: ""
+    property var catalogBoxes: []
+    property int catalogRequest: 0
+    property bool catalogScene: false
+    property bool sceneLoading: false
+    property string sceneSource: "filesystem"
+    property var sceneMeta: ({})
+    property string requestedRoot: ""
+    property string expansionRoot: ""
+    property var expandedPaths: ({})
+    readonly property bool catalogOwned: catalogScene ||
+                                         (sceneLoading &&
+                                          sceneSource === "catalog")
+    readonly property var sceneBoxes: catalogOwned
+                                      ? catalogBoxes
+                                      : (fileModel && fileModel.fsnBoxes
+                                         ? fileModel.fsnBoxes : [])
     readonly property real nearPlane: 0.6
+    property var visibleLabels: []
 
     Behavior on tx { enabled: fsn.camAnim; NumberAnimation { duration: 750; easing.type: Easing.InOutCubic } }
     Behavior on ty { enabled: fsn.camAnim; NumberAnimation { duration: 750; easing.type: Easing.InOutCubic } }
@@ -51,19 +70,34 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: "#000000"
+        color: "transparent"
+        gradient: Gradient {
+            orientation: Gradient.Vertical
+            GradientStop {
+                position: 0
+                color: Theme.alpha(Theme.darkerBackground, 0.76)
+            }
+            GradientStop {
+                position: 0.48
+                color: Theme.alpha(Theme.background, 0.62)
+            }
+            GradientStop {
+                position: 1
+                color: Theme.alpha(Theme.darkerBackground, 0.72)
+            }
+        }
     }
 
     // ------------------------------------------------------------- scene
     property var scene: null
 
     function rebuildScene() {
-        var raw = fsn.fileModel && fsn.fileModel.fsnBoxes
-                  ? fsn.fileModel.fsnBoxes : []
+        var raw = fsn.sceneBoxes || []
         var solids = []
         var flats = []
         var isTree = false
-        var minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9, maxY = 0
+        var minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9
+        var minY = 1e9, maxY = -1e9
         var rootPrim = null
         var platByPath = ({})
         for (var i = 0; i < raw.length; ++i) {
@@ -89,6 +123,22 @@ Item {
                 isDir: !!b.isDir,
                 root: !!b.root,
                 bytes: Number(b.bytes),
+                sourceParent: b.sourceParent || "",
+                extension: b.extension || "",
+                mime: b.mime || "",
+                category: b.category || "",
+                ageBucket: b.ageBucket || "",
+                mtime: Number(b.mtime || 0),
+                childCount: Number(b.childCount || 0),
+                fileCount: Number(b.fileCount || 0),
+                dirCount: Number(b.dirCount || 0),
+                hidden: !!b.hidden,
+                isLink: !!b.isLink,
+                aggregate: !!b.aggregate,
+                expanded: !!b.expanded,
+                depthLevel: Number(b.depthLevel || 0),
+                sizeScore: Number(b.sizeScore === undefined ? 0.5
+                                                            : b.sizeScore),
                 base: pts,
                 top: top,
                 n: n,
@@ -107,9 +157,12 @@ Item {
                 exitX: Number(b.exitX || 0),
                 exitZ: Number(b.exitZ || 0),
                 parentPath: b.parentPath !== undefined ? b.parentPath : null,
+                neighbors: b.neighbors || [],
+                ownerPath: b.ownerPath || "",
                 kids: []
             }
             var yTop = p.y0 + p.h
+            if (p.y0 < minY) minY = p.y0
             if (yTop > maxY) maxY = yTop
             if (p.kind === 3) { // road
                 flats.push(p)
@@ -162,7 +215,9 @@ Item {
             rootPrim: rootPrim,
             platByPath: platByPath,
             topLevel: topLevel,
-            ctrX: ctrX, ctrZ: ctrZ, radius: radius, maxY: maxY,
+            ctrX: ctrX, ctrZ: ctrZ, radius: radius,
+            spanX: maxX - minX, spanZ: maxZ - minZ,
+            minY: minY, maxY: maxY,
             count: solids.length
         }
         var freshPath = fsn.fileModel ? fsn.fileModel.path : ""
@@ -181,18 +236,23 @@ Item {
             return
         var wantTx, wantTy, wantTz, wantPitch, wantYaw, wantDist
         if (s.isTree) {
-            var rp = s.rootPrim
-            // fsn framing: root platform low in frame, children fanning away,
-            // aimed between the root and the scene's center so the whole
-            // tree sits centered in the viewport.
-            var rx = rp ? rp.cx : s.ctrX
-            var rz = rp ? rp.cz : s.ctrZ
-            wantTx = (rx + s.ctrX) / 2
-            wantTz = (rz + s.ctrZ) / 2
-            wantTy = 0
-            wantYaw = 0
-            wantPitch = 0.50
-            wantDist = Math.min(130, Math.max(16, s.radius * 0.85 + 8))
+            // StrataV has no root monument: frame the neighborhood itself.
+            wantTx = s.ctrX
+            wantTz = s.ctrZ
+            var spanY = Math.max(1, s.maxY - s.minY)
+            wantTy = s.minY + spanY * 0.38
+            // A shallow yaw keeps the street graph legible while exposing the
+            // MapV contents of an expanded building roof.
+            var aspect = fsn.height > 0 ? fsn.width / fsn.height : 1
+            wantYaw = aspect >= 1.0 ? 0.16 : 0.05
+            wantPitch = aspect >= 1.0 ? 0.62 : 0.57
+            var focal = Math.min(fsn.width, fsn.height) * 1.15
+            var fitX = s.spanX * focal / Math.max(1, fsn.width * 0.86)
+            // Ground depth is foreshortened at this pitch, so fitting the raw
+            // z span against viewport height left the neighborhood tiny.
+            var fitZ = s.spanZ * focal / Math.max(1, fsn.height * 1.10)
+            var fitY = spanY * focal / Math.max(1, fsn.height * 0.72)
+            wantDist = Math.max(18, fitX, fitZ, fitY) + 5
         } else {
             wantTx = s.ctrX
             wantTz = s.ctrZ
@@ -238,7 +298,11 @@ Item {
         var cp = Math.cos(fsn.pitch)
         var sp = Math.sin(fsn.pitch)
         return {
-            x: x1,
+            // QMatrix4x4::lookAt uses cross(forward, up) for camera-right.
+            // With StrataV's +Z-facing camera that is the negative of x1.
+            // Keep this identical to FsnRhiRenderer's view matrix so labels
+            // and picking stay attached to geometry during orbit and pan.
+            x: -x1,
             y: dy * cp + z1 * sp,
             d: z1 * cp - dy * sp + fsn.dist
         }
@@ -248,16 +312,38 @@ Item {
         var f = Math.min(fsn.width, fsn.height) * 1.15
         return {
             x: fsn.width * 0.5 + v.x * f / v.d,
-            y: fsn.height * 0.55 - v.y * f / v.d,
+            y: fsn.height * 0.5 - v.y * f / v.d,
             d: v.d
         }
     }
 
     function project(wx, wy, wz) {
-        var v = fsn.toView(wx, wy, wz)
-        if (v.d < fsn.nearPlane)
-            return null
-        return fsn.vProject(v)
+        var projected = rhiView.projectPoint(wx, wy, wz)
+        return projected && projected.d !== undefined ? projected : null
+    }
+
+    // Track-style camera pan in the current screen plane. Scaling by camera
+    // distance keeps the gesture useful both over the whole landscape and
+    // after a close bridge flight.
+    function panByPixels(dx, dy) {
+        if ((!dx && !dy) || fsn.width <= 0 || fsn.height <= 0)
+            return
+        fsn.cancelFlight()
+        var focal = Math.min(fsn.width, fsn.height) * 1.15
+        var worldPerPixel = Math.max(0.002, fsn.dist / Math.max(1, focal))
+        var cy = Math.cos(fsn.yaw)
+        var sy = Math.sin(fsn.yaw)
+        var cp = Math.cos(fsn.pitch)
+        var sp = Math.sin(fsn.pitch)
+        // Camera right = (cy, 0, -sy); camera up = (sy*sp, cp, cy*sp).
+        // Middle-drag moves the camera target in the drag direction, matching
+        // spatial-viewer pan conventions rather than content-drag scrolling.
+        fsn.camAnim = false
+        fsn.tx += (dx * cy - dy * sy * sp) * worldPerPixel
+        fsn.ty -= dy * cp * worldPerPixel
+        fsn.tz += (-dx * sy - dy * cy * sp) * worldPerPixel
+        fsn.camAnim = true
+        view.requestPaint()
     }
 
     function viewDepth(wx, wy, wz) {
@@ -311,13 +397,53 @@ Item {
         return true
     }
 
-    // fsv node palette (color.c defaults)
+    function rgb(color) {
+        return [Number(color.r), Number(color.g), Number(color.b)]
+    }
+
+    function rgba(color, alpha) {
+        return "rgba(" + Math.round(color.r * 255) + "," +
+                Math.round(color.g * 255) + "," +
+                Math.round(color.b * 255) + "," + alpha + ")"
+    }
+
+    function canvasFont(weight, family) {
+        return weight + ' 64px "' + String(family).replace(/"/g, "") + '"'
+    }
+
+    // Theme-derived node palette. Platforms remain distinct from folders,
+    // while files inherit the same foreground/accent relationship as tiles.
     function fillColor(p) {
+        if (p.kind === 0) {
+            var platform = fsn.rgb(Theme.fsnPlatform)
+            var scale = 0.80 + 0.28 * Math.max(0, Math.min(1, p.sizeScore))
+            return [platform[0] * scale, platform[1] * scale,
+                    platform[2] * scale]
+        }
         if (p.ntype === 1)
-            return [0.627, 0.627, 0.627]  // directory  #A0A0A0
+            return fsn.rgb(Theme.fsnDirectory)
         if (p.ntype === 3)
-            return [1.0, 1.0, 1.0]        // symlink    #FFFFFF
-        return [1.0, 1.0, 0.627]          // file       #FFFFA0
+            return fsn.rgb(Theme.fsnSymlink)
+        var color = Theme.fsnFile
+        if (p.category === "image")
+            color = Theme.fsnImage
+        else if (p.category === "video")
+            color = Theme.fsnVideo
+        else if (p.category === "audio")
+            color = Theme.fsnAudio
+        else if (p.category === "code")
+            color = Theme.fsnCode
+        else if (p.category === "data")
+            color = Theme.fsnData
+        else if (p.category === "archive")
+            color = Theme.fsnArchive
+        var rgb = fsn.rgb(color)
+        var age = p.ageBucket === "today" ? 1.08
+                : p.ageBucket === "week" ? 1.04
+                : p.ageBucket === "older" ? 0.88 : 1.0
+        if (p.hidden)
+            age *= 0.76
+        return [rgb[0] * age, rgb[1] * age, rgb[2] * age]
     }
 
     function css(rgb, k) {
@@ -326,6 +452,18 @@ Item {
         var b = Math.max(0, Math.min(1, rgb[2] * k))
         return "rgb(" + Math.round(r * 255) + "," + Math.round(g * 255) + ","
                 + Math.round(b * 255) + ")"
+    }
+
+    function humanBytes(value) {
+        var bytes = Math.max(0, Number(value || 0))
+        var units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]
+        var unit = 0
+        while (bytes >= 1024 && unit < units.length - 1) {
+            bytes /= 1024
+            ++unit
+        }
+        var digits = unit === 0 ? 0 : (bytes >= 100 ? 0 : bytes >= 10 ? 1 : 2)
+        return bytes.toFixed(digits) + " " + units[unit]
     }
 
     function shoelace(pts) {
@@ -385,7 +523,15 @@ Item {
         var yTop = p.y0 + p.h
         var isCursor = fsn.showCursorChrome && fsn.cursorPath.length &&
                        p.path === fsn.cursorPath && !p.root
-        var rgb = isCursor ? [1.0, 1.0, 1.0] : fsn.fillColor(p)
+        var rgb = isCursor ? fsn.rgb(Theme.fsnSelection) : fsn.fillColor(p)
+        var sideRgb = rgb
+        if (!isCursor && p.ownerPath) {
+            var platformRgb = fsn.rgb(Theme.fsnPlatform)
+            sideRgb = [platformRgb[0] * 0.40 + rgb[0] * 0.60,
+                       platformRgb[1] * 0.40 + rgb[1] * 0.60,
+                       platformRgb[2] * 0.40 + rgb[2] * 0.60]
+        }
+        var edge = fsn.rgba(Theme.fsnEdge, isCursor ? 0.72 : 0.42)
         var drew = false
         var i, j
         for (i = 0; i < p.n; ++i) {
@@ -400,14 +546,15 @@ Item {
             if (fsn.drawWorldPoly(ctx,
                                   [[bix, p.y0, biz], [bjx, p.y0, bjz],
                                    [tjx, yTop, tjz], [tix, yTop, tiz]],
-                                  fsn.css(rgb, k), "rgba(0,0,0,0.30)"))
+                                  fsn.css(sideRgb, k), edge))
                 drew = true
         }
         var topW = []
         for (i = 0; i < p.n; ++i)
             topW.push([Number(p.top[2 * i]), yTop, Number(p.top[2 * i + 1])])
-        if (fsn.drawWorldPoly(ctx, topW, fsn.css(rgb, fsn.shade(0, 1, 0)),
-                              "rgba(0,0,0,0.18)"))
+        var topShade = p.ownerPath ? 1.18 : fsn.shade(0, 1, 0)
+        if (fsn.drawWorldPoly(ctx, topW, fsn.css(rgb, topShade),
+                              edge))
             drew = true
         return drew
     }
@@ -442,28 +589,33 @@ Item {
         var ux = Math.cos(p.labelAngle)
         var uz = Math.sin(p.labelAngle)
         // Glyph-up points radially outward: rotate baseline by +90 in xz.
-        fsn.planeText(ctx, p.name, p.labelX, 0.02, p.labelZ,
+        var label = p.name
+        if (p.aggregate && p.childCount > 0)
+            label += "  ·  " + p.childCount
+        fsn.planeText(ctx, label, p.labelX, 0.02, p.labelZ,
                       ux, 0, uz, -uz, 0, ux, p.labelSize,
-                      "#FFFFFF", 'bold 64px "Times New Roman", Georgia, serif',
+                      fsn.rgba(Theme.fsnLabel, 0.92),
+                      fsn.canvasFont("700", Theme.sansFontFamily),
                       3)
     }
 
     function drawLeafLabel(ctx, p) {
-        // Black text near the top of the camera-facing wall (TreeV) or on
-        // the top face (MapV), like fsv's tmaptext labels.
+        // Surface labels keep file names technical but use the configured
+        // Omarchy mono face instead of a baked-in font.
         var b0x = Number(p.base[0]), b0z = Number(p.base[1])
         var b1x = Number(p.base[2]), b1z = Number(p.base[3])
         var ex = b1x - b0x, ez = b1z - b0z
         var w = Math.hypot(ex, ez) || 1
         var ux = ex / w, uz = ez / w
         var len = Math.max(1, p.name.length)
-        var font = 'bold 64px "DejaVu Sans Mono", monospace'
+        var font = fsn.canvasFont("700", Theme.monoFontFamily)
+        var surfaceText = fsn.rgba(Theme.fsnSurfaceText, 0.94)
         if (fsn.scene && fsn.scene.isTree && p.h > 0.3) {
             var size = Math.min(0.30, p.h * 0.5, w * 1.6 / len)
             fsn.planeText(ctx, p.name,
                           (b0x + b1x) / 2, p.y0 + p.h - size * 0.55,
                           (b0z + b1z) / 2,
-                          ux, 0, uz, 0, 1, 0, size, "#000000", font, 5)
+                          ux, 0, uz, 0, 1, 0, size, surfaceText, font, 5)
         } else {
             // Top-face label; glyph-up points to the rear (+ perpendicular).
             var t0x = Number(p.top[0]), t0z = Number(p.top[1])
@@ -486,7 +638,7 @@ Item {
             var vx = (t3x - t0x) / (dD || 1), vz = (t3z - t0z) / (dD || 1)
             fsn.planeText(ctx, p.name, cx2 + vx * size2 * -0.5,
                           p.y0 + p.h + 0.01, cz2 + vz * size2 * -0.5,
-                          ux, 0, uz, vx, 0, vz, size2, "#000000", font, 3.5)
+                          ux, 0, uz, vx, 0, vz, size2, surfaceText, font, 3.5)
         }
     }
 
@@ -515,7 +667,7 @@ Item {
         }
         var edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],
                      [0,4],[1,5],[2,6],[3,7]]
-        ctx.strokeStyle = "#FFFF33"
+        ctx.strokeStyle = fsn.rgba(Theme.fsnSelection, 1)
         ctx.globalAlpha = fsn.cursorDim ? 0.5 : 1
         ctx.lineWidth = 1.5
         ctx.beginPath()
@@ -624,12 +776,16 @@ Item {
     }
 
     function nearestPlatform() {
+        return fsn.nearestPlatformTo(fsn.tx, fsn.tz)
+    }
+
+    function nearestPlatformTo(x, z) {
         var s = fsn.scene
         var best = null
         var bestD = 1e18
         for (var path in s.platByPath) {
             var p = s.platByPath[path]
-            var d = Math.hypot(p.cx - fsn.tx, p.cz - fsn.tz)
+            var d = Math.hypot(p.cx - x, p.cz - z)
             if (d < bestD) {
                 bestD = d
                 best = p
@@ -638,16 +794,69 @@ Item {
         return best
     }
 
-    // Waypoints for one hop between a parent platform and its child: down
-    // the trunk, along the arc junction, up the stub, onto the platform.
+    function streetAncestor(plat) {
+        var s = fsn.scene
+        var guard = 0
+        while (plat && plat.parentPath && guard++ < 16) {
+            var parent = s.platByPath[plat.parentPath]
+            if (!parent)
+                break
+            plat = parent
+        }
+        return plat
+    }
+
+    function streetRoute(start, target) {
+        var s = fsn.scene
+        if (!start || !target)
+            return []
+        if (start.path === target.path)
+            return [start]
+        var queue = [start.path]
+        var previous = ({})
+        previous[start.path] = ""
+        for (var head = 0; head < queue.length; ++head) {
+            var path = queue[head]
+            var node = s.platByPath[path]
+            var links = node ? node.neighbors : []
+            for (var i = 0; i < links.length; ++i) {
+                var next = String(links[i])
+                if (previous[next] !== undefined)
+                    continue
+                previous[next] = path
+                if (next === target.path) {
+                    var paths = [next]
+                    var cursor = next
+                    while (previous[cursor]) {
+                        cursor = previous[cursor]
+                        paths.unshift(cursor)
+                    }
+                    var route = []
+                    for (var r = 0; r < paths.length; ++r) {
+                        if (s.platByPath[paths[r]])
+                            route.push(s.platByPath[paths[r]])
+                    }
+                    return route
+                }
+                queue.push(next)
+            }
+        }
+        return []
+    }
+
+    // Waypoints for one hop between a parent terrace and its child. The camera
+    // rides above the stepped bridge while descending with the hierarchy.
     function hopPoints(parent, child) {
-        var gr = Math.hypot(child.gateX, child.gateZ) || 1
-        var jr = Math.max(1, gr - 0.5 * 8)
+        var py = parent.y0 + parent.h + 0.78
+        var cy = child.y0 + child.h + 0.78
+        var branchZ = parent.exitZ + (child.gateZ - parent.exitZ) * 0.46
+        var branchY = (py + cy) * 0.5 + 0.45
         return [
-            [parent.exitX, 0.25, parent.exitZ],
-            [child.gateX / gr * jr, 0.25, child.gateZ / gr * jr],
-            [child.gateX, 0.25, child.gateZ],
-            [child.cx, 0.85, child.cz]
+            [parent.exitX, py, parent.exitZ],
+            [parent.exitX, branchY, branchZ],
+            [child.gateX, branchY, branchZ],
+            [child.gateX, cy, child.gateZ],
+            [child.cx, cy, child.cz]
         ]
     }
 
@@ -656,35 +865,53 @@ Item {
         if (!s || !s.isTree)
             return false
         var target = fsn.platformOf(hit)
+        if (!target && hit)
+            target = fsn.nearestPlatformTo(hit.cx, hit.cz)
         if (!target)
             return false
         var start = fsn.nearestPlatform()
         if (!start)
             return false
-        var a = fsn.platformChain(start)
-        var b = fsn.platformChain(target)
-        var cp = 0
-        while (cp < a.length && cp < b.length && a[cp].path === b[cp].path)
-            ++cp
+        var startStreet = fsn.streetAncestor(start)
+        var targetStreet = fsn.streetAncestor(target)
+        var street = fsn.streetRoute(startStreet, targetStreet)
         var pts = [[fsn.tx, fsn.ty, fsn.tz]]
         var i
-        if (cp === 0) {
-            // Disconnected (shouldn't happen): fly direct.
-            pts.push([target.cx, 0.85, target.cz])
-        } else {
-            // Climb from the start platform back toward the common ancestor…
-            for (i = a.length - 1; i >= cp; --i) {
-                var hop = fsn.hopPoints(a[i - 1], a[i])
-                pts.push([a[i].cx, 0.85, a[i].cz])
-                for (var h = hop.length - 2; h >= 0; --h)
-                    pts.push(hop[h])
+        if (street.length) {
+            for (i = 0; i < street.length; ++i) {
+                var stop = street[i]
+                pts.push([stop.cx, stop.y0 + stop.h + 0.82, stop.cz])
             }
-            pts.push([a[cp - 1].cx, 0.85, a[cp - 1].cz])
-            // …then ride the roads out to the target.
-            for (i = cp; i < b.length; ++i) {
-                var hop2 = fsn.hopPoints(b[i - 1], b[i])
-                for (var h2 = 0; h2 < hop2.length; ++h2)
-                    pts.push(hop2[h2])
+            if (target.path !== targetStreet.path)
+                pts.push([target.cx, target.y0 + target.h + 0.78, target.cz])
+        } else {
+            var a = fsn.platformChain(start)
+            var b = fsn.platformChain(target)
+            var cp = 0
+            while (cp < a.length && cp < b.length &&
+                   a[cp].path === b[cp].path)
+                ++cp
+            if (cp === 0) {
+                // An isolated building or rooftop: fly direct.
+                pts.push([target.cx, target.y0 + target.h + 0.78, target.cz])
+            } else {
+                // Climb from the start platform back toward the common ancestor…
+                for (i = a.length - 1; i >= cp; --i) {
+                    var hop = fsn.hopPoints(a[i - 1], a[i])
+                    pts.push([a[i].cx,
+                              a[i].y0 + a[i].h + 0.78, a[i].cz])
+                    for (var h = hop.length - 2; h >= 0; --h)
+                        pts.push(hop[h])
+                }
+                pts.push([a[cp - 1].cx,
+                          a[cp - 1].y0 + a[cp - 1].h + 0.78,
+                          a[cp - 1].cz])
+                // …then ride the roads out to the target.
+                for (i = cp; i < b.length; ++i) {
+                    var hop2 = fsn.hopPoints(b[i - 1], b[i])
+                    for (var h2 = 0; h2 < hop2.length; ++h2)
+                        pts.push(hop2[h2])
+                }
             }
         }
         // Final approach: hover before the clicked node itself.
@@ -842,9 +1069,11 @@ Item {
     }
 
     function syncCursor(glide) {
-        var i = fsn.rows ? fsn.rows.currentIndex : -1
         var p = ""
-        if (i >= 0) {
+        if (fsn.selection && fsn.selection.cursorPath)
+            p = fsn.selection.cursorPath()
+        var i = fsn.rows ? fsn.rows.currentIndex : -1
+        if (!p.length && i >= 0) {
             var rec = fsn.recAt(i)
             p = rec && rec.path ? rec.path : ""
         }
@@ -889,59 +1118,195 @@ Item {
         return -1
     }
 
-    // ------------------------------------------------------------- canvas
-    Canvas {
+    // Geometry is uploaded only when the scene, theme, or selection changes.
+    // Camera motion updates one matrix; the GPU owns projection and depth.
+    FsnRhiView {
+        id: rhiView
+        objectName: "fsnRhiView"
+        anchors.fill: parent
+        primitives: fsn.sceneBoxes || []
+        selectedPath: fsn.showCursorChrome ? fsn.cursorPath : ""
+        cameraX: fsn.tx
+        cameraY: fsn.ty
+        cameraZ: fsn.tz
+        yaw: fsn.yaw
+        pitch: fsn.pitch
+        distance: fsn.dist
+        scenePalette: ({
+            platform: Theme.fsnPlatform,
+            directory: Theme.fsnDirectory,
+            file: Theme.fsnFile,
+            image: Theme.fsnImage,
+            video: Theme.fsnVideo,
+            audio: Theme.fsnAudio,
+            code: Theme.fsnCode,
+            data: Theme.fsnData,
+            archive: Theme.fsnArchive,
+            symlink: Theme.fsnSymlink,
+            road: Theme.fsnRoad,
+            roadEdge: Theme.fsnRoadEdge,
+            edge: Theme.fsnEdge,
+            selection: Theme.fsnSelection
+        })
+    }
+
+    function refreshVisibleLabels() {
+        var s = fsn.scene
+        if (!s) {
+            fsn.visibleLabels = []
+            return
+        }
+        var candidates = []
+        for (var i = 0; i < s.solids.length; ++i) {
+            var p = s.solids[i]
+            if (!p.name.length || p.root)
+                continue
+            // Rooftop MapV geometry explains its district but is deliberately
+            // not a second selectable browser nested inside StrataV.
+            if (s.isTree && p.ownerPath.length)
+                continue
+            var anchor = fsn.labelAnchor(p)
+            var top = fsn.project(anchor.x, anchor.y, anchor.z)
+            var bottom = fsn.project(p.cx, p.y0, p.cz)
+            if (!top || !bottom || top.x < -80 || top.x > fsn.width + 80 ||
+                    top.y < -40 || top.y > fsn.height + 40)
+                continue
+            var pixelHeight = Math.abs(bottom.y - top.y)
+            var chosen = p.path === fsn.cursorPath || p.isDir || p.hasLabel ||
+                         pixelHeight >= 12
+            if (!chosen)
+                continue
+            var priority = p.path === fsn.cursorPath ? -1000000
+                         : p.isDir ? -10000
+                         : p.hasLabel ? -5000 : 0
+            candidates.push({ prim: p, screen: top,
+                              score: priority + top.d })
+        }
+        candidates.sort(function(a, b) { return a.score - b.score })
+        var labels = []
+        var occupied = []
+        var rows = Math.max(1, Math.floor(fsn.height / 42))
+        var cols = Math.max(1, Math.floor(fsn.width / 150))
+        var limit = Math.min(72, Math.max(14, rows * cols), candidates.length)
+        for (i = 0; i < candidates.length && labels.length < limit; ++i) {
+            var candidate = candidates[i]
+            var prim = candidate.prim
+            var selected = prim.path === fsn.cursorPath
+            var px = selected ? Theme.fontBody : Theme.fontCaption
+            var labelWidth = Math.min(fsn.width * 0.36,
+                                      Math.max(36, prim.name.length * px * 0.62))
+            var labelHeight = px + (prim.hasLabel && prim.isDir
+                                    ? Theme.fontCaption + 4 : 0) + 8
+            var rect = {
+                x0: candidate.screen.x - labelWidth / 2 - 5,
+                x1: candidate.screen.x + labelWidth / 2 + 5,
+                y0: candidate.screen.y - labelHeight - 5,
+                y1: candidate.screen.y + 5
+            }
+            var collides = false
+            if (!selected) {
+                for (var j = 0; j < occupied.length; ++j) {
+                    var other = occupied[j]
+                    if (rect.x0 < other.x1 && rect.x1 > other.x0 &&
+                            rect.y0 < other.y1 && rect.y1 > other.y0) {
+                        collides = true
+                        break
+                    }
+                }
+            }
+            if (!collides) {
+                labels.push(prim)
+                occupied.push(rect)
+            }
+        }
+        fsn.visibleLabels = labels
+    }
+
+    function labelAnchor(p) {
+        if (p && p.hasLabel)
+            return { x: p.labelX, y: p.y0 + p.h + 0.08, z: p.labelZ }
+        return { x: p.cx, y: p.y0 + p.h + 0.18, z: p.cz }
+    }
+
+    property bool labelRefreshPending: false
+
+    function scheduleLabels() {
+        fsn.labelRefreshPending = true
+        if (!labelRefresh.running)
+            labelRefresh.start()
+    }
+
+    Timer {
+        id: labelRefresh
+        interval: 16
+        repeat: true
+        onTriggered: {
+            if (!fsn.labelRefreshPending) {
+                stop()
+                return
+            }
+            fsn.labelRefreshPending = false
+            fsn.refreshVisibleLabels()
+        }
+    }
+
+    // Bounded glyph nodes replace the old full-window Canvas texture. Their
+    // positions and collision selection follow the same frame cadence as the
+    // camera, favoring folders and the cursor when the scene gets dense.
+    Item {
         id: view
         objectName: "fileFsnView"
         anchors.fill: parent
-        renderStrategy: Canvas.Immediate
+        function requestPaint() { fsn.scheduleLabels() }
 
-        onPaint: {
-            var ctx = getContext("2d")
-            ctx.reset()
-            ctx.fillStyle = "#000000"
-            ctx.fillRect(0, 0, width, height)
-            var s = fsn.scene
-            if (!s)
-                return
-            var i, k
-            // Roads first: flat, painted onto the black ground.
-            var flats = s.flats.slice()
-            flats.sort(function (a, b) {
-                return fsn.viewDepth(b.cx, 0, b.cz) - fsn.viewDepth(a.cx, 0, a.cz)
-            })
-            for (i = 0; i < flats.length; ++i) {
-                var road = flats[i]
-                var wpts = []
-                for (k = 0; k < road.n; ++k)
-                    wpts.push([Number(road.base[2 * k]), 0,
-                               Number(road.base[2 * k + 1])])
-                fsn.drawWorldPoly(ctx, wpts, "rgb(128,0,0)",
-                                  "rgba(60,0,0,0.8)")
-            }
-            // Ground labels over the roads, fsn style.
-            for (i = 0; i < s.solids.length; ++i) {
-                if (s.solids[i].hasLabel)
-                    fsn.drawGroundLabel(ctx, s.solids[i])
-            }
-            // Solid geometry: hierarchical painter — parents before their
-            // descendants, siblings far to near.
-            var found = { cursor: null }
-            var top = s.topLevel.slice()
-            top.sort(fsn.depthCompare)
-            for (i = 0; i < top.length; ++i)
-                fsn.drawNode(ctx, top[i], s, found)
-            var cursorPrim = found.cursor
-            if (cursorPrim && fsn.showCursorChrome) {
-                fsn.drawCursor(ctx, cursorPrim)
-                var above = fsn.project(cursorPrim.cx,
-                                        cursorPrim.y0 + cursorPrim.h + 0.6,
-                                        cursorPrim.cz)
-                if (above) {
-                    ctx.font = "bold " + Theme.fontBody + "px " + Theme.fontFamily
-                    ctx.textAlign = "center"
-                    ctx.fillStyle = "#FFFF33"
-                    ctx.fillText(cursorPrim.name, above.x, above.y)
+        Repeater {
+            model: fsn.visibleLabels
+            delegate: Item {
+                required property var modelData
+                readonly property var anchor: fsn.labelAnchor(modelData)
+                readonly property var screen: fsn.project(
+                    anchor.x, anchor.y, anchor.z)
+                readonly property bool selected:
+                    fsn.showCursorChrome && modelData.path === fsn.cursorPath
+                implicitWidth: Math.max(nameLabel.implicitWidth,
+                                        sizeLabel.implicitWidth)
+                implicitHeight: labelColumn.implicitHeight
+                visible: screen !== null
+                x: screen ? screen.x - implicitWidth / 2 : -10000
+                y: screen ? screen.y - implicitHeight : -10000
+                z: selected ? 2 : 1
+
+                Column {
+                    id: labelColumn
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: 1
+
+                    Text {
+                        id: nameLabel
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: modelData.name
+                        color: selected ? Theme.fsnSelection : Theme.fsnLabel
+                        font.family: modelData.hasLabel
+                                     ? Theme.sansFontFamily
+                                     : Theme.monoFontFamily
+                        font.pixelSize: selected ? Theme.fontBody
+                                                 : Theme.fontCaption
+                        font.bold: selected || modelData.isDir
+                        style: Text.Outline
+                        styleColor: Theme.alpha(Theme.darkerBackground, 0.92)
+                    }
+
+                    Text {
+                        id: sizeLabel
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: modelData.hasLabel && modelData.isDir
+                        text: fsn.humanBytes(modelData.bytes)
+                        color: selected ? Theme.fsnSelection : Theme.muted
+                        font.family: Theme.monoFontFamily
+                        font.pixelSize: Theme.fontCaption
+                        style: Text.Outline
+                        styleColor: Theme.alpha(Theme.darkerBackground, 0.92)
+                    }
                 }
             }
         }
@@ -1011,6 +1376,12 @@ Item {
         return null
     }
 
+    function interactionTarget(prim) {
+        if (!prim || !fsn.scene || !fsn.scene.isTree || !prim.ownerPath)
+            return prim
+        return fsn.findPrim(prim.ownerPath) || prim
+    }
+
     function pointInPoly(p, poly) {
         var inside = false
         for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -1053,7 +1424,7 @@ Item {
             fsn.fileModel.activateCurrent()
     }
 
-    function selectPath(path, isDir, mods, right) {
+    function selectPath(path, isDir, mods, right, name, bytes) {
         if (!path)
             return
         fsn.focusPath = path
@@ -1064,8 +1435,12 @@ Item {
             return
         }
         fsn.cursorPath = path
-        if (right)
-            return
+        // Recursive StrataV/MapV descendants do not have a row in the current
+        // directory proxy. Publish them as a real browser selection anyway so
+        // Look, Action Deck, and file operations target the visible object.
+        if (fsn.selection && fsn.selection.selectPath)
+            fsn.selection.selectPath(path, name || "", !!isDir,
+                                     bytes === undefined ? -1 : Number(bytes))
         if (isDir && fsn.navStack && (mods & Qt.ShiftModifier))
             fsn.navStack.navigate(path)
         view.requestPaint()
@@ -1075,7 +1450,7 @@ Item {
         if (!path)
             return
         var i = fsn.listingIndexFor(path)
-        // TreeV folders get a quick punch-in before the actual navigation;
+        // StrataV folders get a quick punch-in before the actual navigation;
         // the new scene's establishing fly-in picks up from there.
         if (isDir && fsn.scene && fsn.scene.isTree) {
             var prim = fsn.findPrim(path)
@@ -1097,9 +1472,72 @@ Item {
             fsn.host.openFile(path, "")
     }
 
+    function expandedPathList() {
+        var paths = []
+        for (var path in fsn.expandedPaths) {
+            if (fsn.expandedPaths[path])
+                paths.push(path)
+        }
+        paths.sort()
+        return paths
+    }
+
+    function setExpanded(path, on) {
+        if (!path || path === fsn.requestedRoot)
+            return false
+        var next = ({})
+        var prefix = path + "/"
+        for (var oldPath in fsn.expandedPaths) {
+            if (!on && (oldPath === path || oldPath.indexOf(prefix) === 0))
+                continue
+            if (fsn.expandedPaths[oldPath])
+                next[oldPath] = true
+        }
+        if (on)
+            next[path] = true
+        if (!!fsn.expandedPaths[path] === on &&
+                Object.keys(next).length === Object.keys(fsn.expandedPaths).length)
+            return false
+        fsn.expandedPaths = next
+        fsn.kickScan()
+        return true
+    }
+
+    function expandCursor(on) {
+        var prim = fsn.findPrim(fsn.cursorPath)
+        if (!prim || !prim.isDir || prim.root)
+            return false
+        return fsn.setExpanded(prim.path, on)
+    }
+
     function kickScan() {
-        if (fsn.fileModel && fsn.fileModel.refreshFsn)
-            fsn.fileModel.refreshFsn(fsn.treeView ? "tree" : "map")
+        var root = fsn.fileModel ? fsn.fileModel.path : ""
+        if (fsn.expansionRoot !== root) {
+            fsn.expansionRoot = root
+            fsn.expandedPaths = ({})
+        }
+        fsn.requestedRoot = root
+        fsn.catalogScene = false
+        fsn.catalogBoxes = []
+        fsn.sceneMeta = ({})
+        if (fsn.catalog && root && fsn.catalog.coversTree &&
+                fsn.catalog.coversTree(root) && fsn.catalog.sceneExpanded) {
+            fsn.sceneLoading = true
+            fsn.sceneSource = "catalog"
+            fsn.scene = null
+            fsn.catalogRequest = fsn.catalog.sceneExpanded(
+                        root, fsn.treeView ? "tree" : "map",
+                        fsn.fileModel ? fsn.fileModel.showHidden : false,
+                        fsn.expandedPathList())
+            view.requestPaint()
+            return
+        }
+        fsn.sceneLoading = false
+        fsn.sceneSource = "filesystem"
+        if (fsn.fileModel && fsn.fileModel.refreshFsnExpanded)
+            fsn.fileModel.refreshFsnExpanded(
+                        fsn.treeView ? "tree" : "map",
+                        fsn.expandedPathList())
     }
 
     // A plain click waits out the double-click window before its road
@@ -1140,7 +1578,9 @@ Item {
             lastY = mouse.y
         }
         onPositionChanged: function (mouse) {
-            if (!(pressedButtons & Qt.LeftButton))
+            var orbiting = !!(pressedButtons & Qt.LeftButton)
+            var panning = !!(pressedButtons & Qt.MiddleButton)
+            if (!orbiting && !panning)
                 return
             var dx = mouse.x - lastX
             var dy = mouse.y - lastY
@@ -1148,10 +1588,16 @@ Item {
                 didDrag = true
             if (didDrag)
                 fsn.cancelFlight()
-            fsn.camAnim = false
-            fsn.yaw += dx * 0.008
-            fsn.pitch = Math.max(0.10, Math.min(1.35, fsn.pitch + dy * 0.006))
-            fsn.camAnim = true
+            if (panning) {
+                fsn.panByPixels(dx, dy)
+            } else {
+                fsn.camAnim = false
+                fsn.yaw += dx * 0.008
+                fsn.pitch = Math.max(0.10,
+                                     Math.min(1.35,
+                                              fsn.pitch + dy * 0.006))
+                fsn.camAnim = true
+            }
             lastX = mouse.x
             lastY = mouse.y
             view.requestPaint()
@@ -1165,18 +1611,19 @@ Item {
             if (didDrag)
                 return
             if (mouse.button === Qt.MiddleButton) {
-                fsn.viewToggleRequested()
                 return
             }
-            var hit = fsn.pickAt(mouse.x, mouse.y)
+            var hit = fsn.interactionTarget(fsn.pickAt(mouse.x, mouse.y))
             if (!hit) {
                 fsn.cancelFlight()
                 return
             }
             fsn.selectPath(hit.path, hit.isDir, mouse.modifiers,
-                           mouse.button === Qt.RightButton)
+                           mouse.button === Qt.RightButton,
+                           hit.name, hit.bytes)
             if (mouse.button === Qt.RightButton) {
-                fsn.doRequested()
+                var point = drag.mapToItem(null, mouse.x, mouse.y)
+                fsn.doRequested(point.x, point.y)
             } else if (mouse.modifiers === Qt.NoModifier) {
                 // Plain click: navigate there VR-style, riding the roads —
                 // but only once the double-click window has passed.
@@ -1186,10 +1633,11 @@ Item {
             view.requestPaint()
         }
         onDoubleClicked: function (mouse) {
-            if (didDrag)
+            if (didDrag || mouse.button === Qt.MiddleButton)
                 return
             flightDelay.stop()
-            var hit = fsn.pendingHit || fsn.pickAt(mouse.x, mouse.y)
+            var hit = fsn.pendingHit ||
+                      fsn.interactionTarget(fsn.pickAt(mouse.x, mouse.y))
             fsn.pendingHit = null
             fsn.cancelFlight()
             if (hit)
@@ -1199,49 +1647,142 @@ Item {
         }
     }
 
-    Text {
+    Rectangle {
+        id: sceneHud
         anchors.left: parent.left
         anchors.bottom: parent.bottom
-        anchors.margins: Theme.space(8)
-        text: {
-            var bits = ["fsv"]
-            bits.push(fsn.treeView ? "treev" : "mapv")
-            if (fsn.fileModel && fsn.fileModel.fsnListing)
-                bits.push("scanning…")
-            else if (fsn.scene)
-                bits.push(fsn.scene.count + " nodes")
-            bits.push("click fly")
-            bits.push("WASD drive")
-            bits.push("drag orbit")
-            bits.push("wheel zoom")
-            bits.push("M " + (fsn.treeView ? "mapv" : "treev"))
-            bits.push("Enter dive")
-            bits.push("Esc leave")
-            return bits.join("  ·  ")
-        }
-        color: "#707070"
-        font.family: Theme.fontFamily
-        font.pixelSize: Theme.fontBody
+        anchors.margins: Theme.spaceLG
+        width: Math.min(parent.width - Theme.spaceLG * 2,
+                        hudRow.implicitWidth + Theme.controlPaddingX * 2)
+        height: Theme.controlHeight
+        radius: Theme.radius
+        clip: true
+        color: Theme.alpha(Theme.background, 0.78)
+        border.color: fsn.cursorDim ? Theme.normalBorder : Theme.focusBorder
+        border.width: 1
         z: 2
+
+        Row {
+            id: hudRow
+            anchors.centerIn: parent
+            spacing: Theme.controlGap
+
+            Text {
+                text: fsn.treeView ? "StrataV" : "MapV"
+                color: Theme.accent
+                font.family: Theme.sansFontFamily
+                font.pixelSize: Theme.fontCaption
+                font.bold: true
+                verticalAlignment: Text.AlignVCenter
+            }
+
+            Rectangle {
+                width: 1
+                height: Theme.fontBody
+                color: Theme.normalBorder
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Text {
+                text: {
+                    var bits = []
+                    if (fsn.sceneLoading ||
+                            (!fsn.catalogScene && fsn.fileModel &&
+                             fsn.fileModel.fsnListing))
+                        bits.push("scanning…")
+                    else if (fsn.scene)
+                        bits.push(fsn.scene.count + " nodes")
+                    if (fsn.sceneSource === "catalog") {
+                        bits.push("indexed")
+                        if (fsn.sceneMeta &&
+                                Number(fsn.sceneMeta.rootChildCount || 0) > 0)
+                            bits.push(Number(fsn.sceneMeta.rootChildCount) +
+                                      " here")
+                        if (fsn.sceneMeta &&
+                                Number(fsn.sceneMeta.expandedCount || 0) > 0)
+                            bits.push(Number(fsn.sceneMeta.expandedCount) +
+                                      " open")
+                    }
+                    bits.push("WASD")
+                    bits.push("drag")
+                    bits.push("middle pan")
+                    bits.push("wheel")
+                    bits.push("M switch")
+                    bits.push("E/→ expand")
+                    bits.push("C/← collapse")
+                    bits.push("Enter")
+                    return bits.join("  ·  ")
+                }
+                color: Theme.muted
+                font.family: Theme.monoFontFamily
+                font.pixelSize: Theme.fontCaption
+                verticalAlignment: Text.AlignVCenter
+            }
+        }
+    }
+
+    Row {
+        id: typeKey
+        objectName: "fsnTypeKey"
+        anchors.left: sceneHud.left
+        anchors.bottom: sceneHud.top
+        anchors.bottomMargin: Theme.spaceSM
+        spacing: Theme.controlGap
+        visible: fsn.width >= 680
+        z: 2
+
+        Repeater {
+            model: [
+                { label: "IMAGE", color: Theme.fsnImage },
+                { label: "VIDEO", color: Theme.fsnVideo },
+                { label: "AUDIO", color: Theme.fsnAudio },
+                { label: "CODE", color: Theme.fsnCode },
+                { label: "DATA", color: Theme.fsnData },
+                { label: "ARCHIVE", color: Theme.fsnArchive }
+            ]
+
+            delegate: Row {
+                required property var modelData
+                spacing: Theme.spaceXS
+
+                Rectangle {
+                    width: 5
+                    height: 5
+                    radius: 1
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: modelData.color
+                }
+
+                Text {
+                    text: modelData.label
+                    color: Theme.alpha(modelData.color, 0.78)
+                    font.family: Theme.monoFontFamily
+                    font.pixelSize: Math.max(8, Theme.fontCaption - 2)
+                    font.bold: true
+                }
+            }
+        }
     }
 
     EmptyListing {
         anchors.centerIn: parent
         fileModel: fsn.fileModel
         filterProxy: fsn.filterProxy
-        visible: !(fsn.fileModel && fsn.fileModel.fsnListing) &&
-                 !(fsn.fileModel && fsn.fileModel.fsnBoxes &&
-                   fsn.fileModel.fsnBoxes.length)
+        visible: !fsn.sceneLoading &&
+                 !(fsn.fileModel && fsn.fileModel.fsnListing) &&
+                 !(fsn.sceneBoxes && fsn.sceneBoxes.length)
         z: 2
     }
 
     Text {
         anchors.centerIn: parent
-        visible: fsn.fileModel && fsn.fileModel.fsnListing &&
-                 !(fsn.fileModel.fsnBoxes && fsn.fileModel.fsnBoxes.length)
-        text: "scanning filesystem…"
-        color: "#707070"
-        font.family: Theme.fontFamily
+        visible: (fsn.sceneLoading ||
+                  (fsn.fileModel && fsn.fileModel.fsnListing)) &&
+                 !(fsn.sceneBoxes && fsn.sceneBoxes.length)
+        text: fsn.sceneSource === "catalog"
+              ? "assembling indexed landscape…" : "scanning filesystem…"
+        color: Theme.muted
+        font.family: Theme.sansFontFamily
         font.pixelSize: Theme.fontBody
         z: 2
     }
@@ -1255,6 +1796,33 @@ Item {
     onTyChanged: view.requestPaint()
     onTzChanged: view.requestPaint()
     onTreeViewChanged: fsn.kickScan()
+    onThemeEpochChanged: view.requestPaint()
+
+    Connections {
+        target: fsn.catalog
+        function onSceneFinished(requestId, result) {
+            if (requestId !== fsn.catalogRequest)
+                return
+            fsn.sceneLoading = false
+            if (result.ok && result.root === fsn.requestedRoot &&
+                    fsn.fileModel && result.root === fsn.fileModel.path) {
+                fsn.catalogBoxes = result.boxes || []
+                fsn.catalogScene = true
+                fsn.sceneSource = "catalog"
+                fsn.sceneMeta = result
+                fsn.rebuildScene()
+                fsn.syncCursor(false)
+            } else {
+                fsn.catalogScene = false
+                fsn.sceneSource = "filesystem"
+                if (fsn.fileModel && fsn.fileModel.refreshFsnExpanded)
+                    fsn.fileModel.refreshFsnExpanded(
+                                fsn.treeView ? "tree" : "map",
+                                fsn.expandedPathList())
+            }
+            view.requestPaint()
+        }
+    }
 
     Connections {
         target: fsn.rows
@@ -1268,12 +1836,31 @@ Item {
         target: fsn.fileModel
         function onPathChanged() { fsn.kickScan() }
         function onShowHiddenChanged() { fsn.kickScan() }
-        function onFsnBoxesChanged() { fsn.rebuildScene(); fsn.syncCursor(false) }
+        function onFsnBoxesChanged() {
+            if (!fsn.catalogOwned) {
+                fsn.rebuildScene()
+                fsn.syncCursor(false)
+            }
+        }
         function onFsnListingChanged() { view.requestPaint() }
     }
 
     Keys.priority: Keys.BeforeItem
     Keys.onPressed: function (event) {
+        if (event.modifiers === Qt.NoModifier &&
+                (event.key === Qt.Key_E || event.key === Qt.Key_Right)) {
+            if (fsn.expandCursor(true)) {
+                event.accepted = true
+                return
+            }
+        }
+        if (event.modifiers === Qt.NoModifier &&
+                (event.key === Qt.Key_C || event.key === Qt.Key_Left)) {
+            if (fsn.expandCursor(false)) {
+                event.accepted = true
+                return
+            }
+        }
         if (fsn.keyMachine &&
                 fsn.keyMachine.handleListKey(event.key, event.modifiers, event.text)) {
             event.accepted = true

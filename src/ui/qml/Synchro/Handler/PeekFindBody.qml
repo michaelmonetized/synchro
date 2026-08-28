@@ -7,6 +7,7 @@ Item {
     property var host: null
     property url file
     property bool asyncLoad: false
+    property var renderOptions: ({})
     property double requestId: 0
     property alias flick: flick
     property bool findOpen: false
@@ -23,7 +24,8 @@ Item {
             return
         if (root.asyncLoad && root.host.requestPreview) {
             root.preview = ({ loading: true })
-            root.requestId = root.host.requestPreview(root.file, 65536, 0)
+            root.requestId = root.host.requestPreview(root.file, 65536, 0,
+                                                      root.renderOptions)
             return
         }
         root.preview = root.host.readPreview(root.file, 65536, 0)
@@ -461,7 +463,7 @@ Item {
                 text: root.bodyText()
                 textFormat: TextEdit.RichText
                 color: Theme.foreground
-                font.family: Theme.fontFamily
+                font.family: Theme.monoFontFamily
                 font.pixelSize: Theme.fontBody
                 wrapMode: TextEdit.NoWrap
                 padding: Theme.space(12)

@@ -118,6 +118,7 @@ Item {
 
         Row {
             id: tabContent
+            z: 2
             anchors.centerIn: parent
             spacing: Theme.spaceSM
 
@@ -143,6 +144,7 @@ Item {
 
             Text {
                 id: removeGlyph
+                objectName: "remove:" + tab.tabId
                 visible: tab.removable
                 opacity: tabHover.hovered ? 1 : 0
                 text: "×"
@@ -150,13 +152,6 @@ Item {
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontBody
                 z: 2
-
-                MouseArea {
-                    anchors.fill: parent
-                    anchors.margins: -Theme.spaceSM
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: tab.removeRequested()
-                }
             }
         }
 
@@ -174,10 +169,19 @@ Item {
         }
 
         MouseArea {
+            z: 3
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
             onClicked: function (mouse) {
-                if (tab.removable && mouse.button === Qt.MiddleButton)
+                var closePoint = mapToItem(removeGlyph, mouse.x, mouse.y)
+                var closePad = Theme.spaceSM
+                var onClose = tab.removable &&
+                              closePoint.x >= -closePad &&
+                              closePoint.x <= removeGlyph.width + closePad &&
+                              closePoint.y >= -closePad &&
+                              closePoint.y <= removeGlyph.height + closePad
+                if (onClose || (tab.removable &&
+                                mouse.button === Qt.MiddleButton))
                     tab.removeRequested()
                 else
                     tab.activated()
@@ -474,12 +478,18 @@ Item {
                         tabId: modelData && modelData.id ? modelData.id : ""
                         label: modelData && modelData.label ? modelData.label : ""
                         current: !!(modelData && modelData.active)
-                        removable: !!(modelData && modelData.runtime === "sql")
+                        removable: !!(modelData && modelData.pinned)
                         flick: tabFlick
                         onActivated: if (root.locationChips && tabId)
                             root.locationChips.activate(tabId)
-                        onRemoveRequested: if (root.locationChips && tabId)
-                            root.locationChips.removeSqlBookmark(tabId)
+                        onRemoveRequested: {
+                            if (!root.locationChips || !tabId)
+                                return
+                            if (modelData.runtime === "sql")
+                                root.locationChips.removeSqlBookmark(tabId)
+                            else if (modelData.path)
+                                root.locationChips.unpin(modelData.path)
+                        }
                     }
                 }
 

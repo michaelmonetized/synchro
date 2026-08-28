@@ -2,7 +2,7 @@ import QtQuick
 import Synchro.Theme 1.0
 
 // Reusable table/schema browser for peek handlers.
-// Host: host.readDatabase(file, engine, table, offset, limit)
+// Host: host.requestDatabase(file, engine, table, offset, limit)
 // Keys (when the peek pane is file-focused): W/S tables or rows,
 // Tab/E hop tables ↔ rows, Shift+W/S page rows.
 Item {
@@ -14,6 +14,7 @@ Item {
     property int pageSize: 40
 
     property var info: ({})
+    property double requestId: 0
     property string tableName: ""
     property int offset: 0
     property string inner: "tables"
@@ -50,13 +51,12 @@ Item {
     }
 
     function reload() {
-        if (!root.host || !root.file || !root.host.readDatabase)
+        if (!root.host || !root.file || !root.host.requestDatabase)
             return
-        root.info = root.host.readDatabase(root.file, root.engine,
-                                           root.tableName, root.offset,
-                                           root.pageSize)
-        if (root.info && root.info.table)
-            root.tableName = root.info.table
+        root.info = ({ loading: true })
+        root.requestId = root.host.requestDatabase(root.file, root.engine,
+                                                   root.tableName, root.offset,
+                                                   root.pageSize)
     }
 
     function selectTableAt(i) {
@@ -178,6 +178,27 @@ Item {
     }
     onEngineChanged: root.reload()
     Component.onCompleted: root.reload()
+
+    Connections {
+        target: root.host
+        function onDatabaseReady(requestId, file, preview) {
+            if (requestId !== root.requestId ||
+                    file.toString() !== root.file.toString())
+                return
+            root.info = preview
+            if (root.info && root.info.table)
+                root.tableName = root.info.table
+        }
+    }
+
+    Text {
+        visible: root.info && root.info.loading === true
+        anchors.centerIn: parent
+        text: "reading " + root.engine + "…"
+        color: Theme.muted
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.fontBody
+    }
 
     Text {
         visible: root.info && root.info.ok === false
@@ -304,7 +325,7 @@ Item {
                             text: (trow.modelData.type === "view" ? "view  " : "") +
                                   (trow.modelData.name || "")
                             color: Theme.foreground
-                            font.family: Theme.fontFamily
+                            font.family: Theme.monoFontFamily
                             font.pixelSize: Theme.fontBody
                             elide: Text.ElideMiddle
                             verticalAlignment: Text.AlignVCenter
@@ -379,7 +400,7 @@ Item {
                                       (modelData.type ? ("  " + modelData.type) : "") +
                                       (modelData.pk ? "  pk" : "")
                                 color: Theme.foreground
-                                font.family: Theme.fontFamily
+                                font.family: Theme.monoFontFamily
                                 font.pixelSize: Theme.fontBody
                             }
                         }
@@ -437,7 +458,7 @@ Item {
                                     anchors.rightMargin: Theme.space(6)
                                     text: modelData
                                     color: Theme.foreground
-                                    font.family: Theme.fontFamily
+                                    font.family: Theme.monoFontFamily
                                     font.pixelSize: Theme.fontBody
                                     wrapMode: Text.NoWrap
                                     elide: Text.ElideRight
@@ -495,7 +516,7 @@ Item {
                                             anchors.rightMargin: Theme.space(6)
                                             text: root.cellText(sampleRow.rowData, modelData)
                                             color: Theme.foreground
-                                            font.family: Theme.fontFamily
+                                            font.family: Theme.monoFontFamily
                                             font.pixelSize: Theme.fontBody
                                             wrapMode: Text.NoWrap
                                             elide: Text.ElideRight

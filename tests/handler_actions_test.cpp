@@ -69,17 +69,17 @@ void HandlerActionsTest::terminalExecShape() {
   HandlerExec exec;
   QString program;
   QStringList args;
-  exec.setLaunchHook([&](const QString &p, const QStringList &a,
-                         const QProcessEnvironment &) {
-    program = p;
-    args = a;
-    return true;
-  });
+  exec.setLaunchHook(
+      [&](const QString &p, const QStringList &a, const QProcessEnvironment &) {
+        program = p;
+        args = a;
+        return true;
+      });
   HandlerActions actions(&reg, &exec);
   const QString file = tmp.filePath(QStringLiteral("README.md"));
   QVERIFY(writeText(file, QByteArrayLiteral("hi\n")));
-  QVERIFY(actions.runTerminal(
-      {item(file, QStringLiteral("text/markdown"))}, tmp.path()));
+  QVERIFY(actions.runTerminal({item(file, QStringLiteral("text/markdown"))},
+                              tmp.path()));
   const QStringList all = QStringList{program} + args;
   QVERIFY(all.contains(QStringLiteral("xdg-terminal-exec")) ||
           program.endsWith(QStringLiteral("xdg-terminal-exec")));
@@ -116,11 +116,11 @@ void HandlerActionsTest::runActionTerminalDisabledOnVirtual() {
 
   HandlerExec exec;
   bool launched = false;
-  exec.setLaunchHook([&](const QString &, const QStringList &,
-                         const QProcessEnvironment &) {
-    launched = true;
-    return true;
-  });
+  exec.setLaunchHook(
+      [&](const QString &, const QStringList &, const QProcessEnvironment &) {
+        launched = true;
+        return true;
+      });
   HandlerActions actions(&reg, &exec);
   QVERIFY(!actions.runAction(QStringLiteral("synchro.action.terminal"), {},
                              QStringLiteral("trash://")));
@@ -145,11 +145,11 @@ void HandlerActionsTest::runActionAgentDisabledOnVirtual() {
 
   HandlerExec exec;
   bool launched = false;
-  exec.setLaunchHook([&](const QString &, const QStringList &,
-                         const QProcessEnvironment &) {
-    launched = true;
-    return true;
-  });
+  exec.setLaunchHook(
+      [&](const QString &, const QStringList &, const QProcessEnvironment &) {
+        launched = true;
+        return true;
+      });
   HandlerActions actions(&reg, &exec);
   QVERIFY(!actions.runAction(QStringLiteral("synchro.action.agent"), {},
                              QStringLiteral("trash://")));
@@ -182,17 +182,20 @@ void HandlerActionsTest::agentUsesOmarchyPromptAndSelectionContext() {
     return true;
   });
   HandlerActions actions(&reg, &exec);
-  QVERIFY2(actions.runAction(QStringLiteral("synchro.action.agent"),
-                             {item(project, QStringLiteral("inode/directory"),
-                                   true)},
-                             tmp.path()),
+  QVERIFY2(actions.runAction(
+               QStringLiteral("synchro.action.agent"),
+               {item(project, QStringLiteral("inode/directory"), true)},
+               tmp.path()),
            qPrintable(actions.lastError()));
   const QString command = launch.join(QLatin1Char(' '));
   QVERIFY(command.contains(QStringLiteral("omarchy")));
   QVERIFY(command.contains(QStringLiteral("agent")));
   QVERIFY(command.contains(QStringLiteral("prompt")));
-  QVERIFY(command.contains(QStringLiteral("synchro query --help")));
+  QVERIFY(command.contains(QStringLiteral("SYNCHRO_BIN")));
+  QVERIFY(command.contains(QStringLiteral("agent context --compact")));
+  QVERIFY(command.contains(QStringLiteral("MCP is optional")));
   QCOMPARE(environment.value(QStringLiteral("SYNCHRO_CWD")), project);
+  QVERIFY(!environment.value(QStringLiteral("SYNCHRO_BIN")).isEmpty());
   const QString manifest =
       environment.value(QStringLiteral("SYNCHRO_SELECTION"));
   QVERIFY(!manifest.isEmpty());
@@ -259,23 +262,23 @@ void HandlerActionsTest::runActionById() {
 
   HandlerExec exec;
   QString program;
-  exec.setLaunchHook([&](const QString &p, const QStringList &,
-                         const QProcessEnvironment &) {
-    program = p;
-    return true;
-  });
+  exec.setLaunchHook(
+      [&](const QString &p, const QStringList &, const QProcessEnvironment &) {
+        program = p;
+        return true;
+      });
   HandlerActions actions(&reg, &exec);
-  QVERIFY2(actions.runAction(QStringLiteral("synchro.action.terminal"),
-                             {item(tmp.path(), QStringLiteral("inode/directory"),
-                                   true)},
-                             tmp.path()),
+  QVERIFY2(actions.runAction(
+               QStringLiteral("synchro.action.terminal"),
+               {item(tmp.path(), QStringLiteral("inode/directory"), true)},
+               tmp.path()),
            qPrintable(actions.lastError()));
   QVERIFY(program.contains(QStringLiteral("xdg-terminal-exec")) ||
           program.endsWith(QStringLiteral("xdg-terminal-exec")) ||
           !program.isEmpty());
 
-  QVERIFY(!actions.runAction(QStringLiteral("synchro.open.xdg"), {},
-                             tmp.path()));
+  QVERIFY(
+      !actions.runAction(QStringLiteral("synchro.open.xdg"), {}, tmp.path()));
   QVERIFY(actions.lastError().contains(QStringLiteral("not an action")));
 }
 
@@ -320,17 +323,17 @@ void HandlerActionsTest::ejectRefusesSystemAndRunsHook() {
   HandlerRegistry reg;
   HandlerExec exec;
   HandlerActions actions(&reg, &exec);
-  QVERIFY(!actions.runEject({item(QStringLiteral("/"),
-                                  QStringLiteral("inode/directory"), true)},
-                            QStringLiteral("/")));
+  QVERIFY(!actions.runEject(
+      {item(QStringLiteral("/"), QStringLiteral("inode/directory"), true)},
+      QStringLiteral("/")));
   QVERIFY(actions.lastError().contains(QStringLiteral("system")));
 
   bool saw = false;
-  VolumeStore::instance().setEjectHook([&](const VolumeStore::Volume &v,
-                                           QString *) {
-    saw = v.mountPoint == usb.mountPoint;
-    return true;
-  });
+  VolumeStore::instance().setEjectHook(
+      [&](const VolumeStore::Volume &v, QString *) {
+        saw = v.mountPoint == usb.mountPoint;
+        return true;
+      });
   QVERIFY(actions.runEject(
       {item(usb.mountPoint, QStringLiteral("inode/directory"), true)},
       usb.mountPoint));
@@ -363,16 +366,16 @@ void HandlerActionsTest::ejectOnlyMatchesRemovableVolume() {
 
   const QString file = tmp.filePath(QStringLiteral("notes.md"));
   QVERIFY(writeText(file, QByteArrayLiteral("hi\n")));
-  QVERIFY(!HandlerActions::canEject(
-      {item(file, QStringLiteral("text/markdown"))}));
+  QVERIFY(
+      !HandlerActions::canEject({item(file, QStringLiteral("text/markdown"))}));
   QVERIFY(!HandlerActions::canEject(
       {item(QStringLiteral("/"), QStringLiteral("inode/directory"), true)}));
   QVERIFY(HandlerActions::canEject(
       {item(usb.mountPoint, QStringLiteral("inode/directory"), true)}));
 
   QStringList onFile;
-  for (const auto &m : actions.actionMatches(
-           {item(file, QStringLiteral("text/markdown"))}))
+  for (const auto &m :
+       actions.actionMatches({item(file, QStringLiteral("text/markdown"))}))
     onFile.append(m.id);
   QVERIFY(!onFile.contains(QStringLiteral("synchro.action.eject")));
 

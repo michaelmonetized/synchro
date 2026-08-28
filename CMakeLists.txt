@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Quick Svg Concurrent DBus)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Quick Svg Concurrent DBus Multimedia ShaderTools GuiPrivate)
 find_package(KF6SyntaxHighlighting QUIET)
 find_package(ZLIB QUIET)
 find_package(PkgConfig QUIET)
@@ -72,11 +72,14 @@ set(SYNCHRO_THUMB_SOURCES
 
 set(SYNCHRO_SYNTAX_SOURCES
     src/core/SyntaxHighlight.cpp
+    src/core/MarkdownRender.cpp
 )
 
 qt_add_executable(synchro
     src/main.cpp
+    src/ui/FsnRhiItem.cpp
     src/AgentBridge.cpp
+    src/integrations/AgentIntegration.cpp
     ${SYNCHRO_FS_SOURCES}
     src/core/DirectoryLister.cpp
     src/core/DirectoryWatcher.cpp
@@ -100,6 +103,7 @@ qt_add_executable(synchro
     src/core/UndoStack.cpp
     src/core/FileOpEngine.cpp
     src/core/PortalService.cpp
+    src/integrations/OmaflowBridge.cpp
     src/handlers/HandlerExec.cpp
     src/handlers/XdgOpen.cpp
     src/handlers/Manifest.cpp
@@ -114,13 +118,16 @@ qt_add_executable(synchro
 )
 
 target_include_directories(synchro PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/ui
     ${CMAKE_SOURCE_DIR}/src/core
     ${CMAKE_SOURCE_DIR}/src/handlers
+    ${CMAKE_SOURCE_DIR}/src/integrations
 )
 
 # Debug / uninstalled builds resolve first-party handlers from the source tree.
 target_compile_definitions(synchro PRIVATE
     SYNCHRO_FIRST_PARTY_HANDLER_DIR="${CMAKE_SOURCE_DIR}/handlers"
+    SYNCHRO_AGENT_SKILL_SOURCE="${CMAKE_SOURCE_DIR}/agents/synchro"
     SYNCHRO_VERSION="${PROJECT_VERSION}"
 )
 
@@ -139,13 +146,24 @@ qt_add_qml_module(synchro
         src/ui/qml/CommandField.qml
         src/ui/qml/PeekOverlay.qml
         src/ui/qml/DoOverlay.qml
+        src/ui/qml/DoMetadata.qml
         src/ui/qml/DoFolderGrid.qml
         src/ui/qml/PanelLook.qml
         src/ui/qml/FolderLens.qml
+        src/ui/qml/QueryBusy.qml
+        src/ui/qml/AgentSearchOverlay.qml
         src/ui/qml/StatusLine.qml
         src/ui/qml/Confirm.qml
         src/ui/qml/ChooserWindow.qml
         src/ui/qml/ScrollChrome.qml
+)
+
+qt_add_shaders(synchro "synchro_fsn_shaders"
+    PREFIX "/shaders"
+    BASE "shaders"
+    FILES
+        shaders/fsn.vert
+        shaders/fsn.frag
 )
 
 set_source_files_properties(src/ui/qml/Synchro/Theme/Theme.qml
@@ -187,9 +205,11 @@ qt_add_qml_module(synchro_handler
 
 target_link_libraries(synchro PRIVATE
     Qt6::Quick
+    Qt6::GuiPrivate
     Qt6::Svg
     Qt6::Concurrent
     Qt6::DBus
+    Qt6::Multimedia
     synchro_theme
     synchro_themeplugin
     synchro_handler
@@ -267,6 +287,7 @@ if(BUILD_TESTING)
 
     qt_add_executable(command_field_test
         tests/command_field_test.cpp
+        src/ui/FsnRhiItem.cpp
         ${SYNCHRO_FS_SOURCES}
         src/core/DirectoryLister.cpp
         src/core/DirectoryWatcher.cpp
@@ -288,17 +309,20 @@ if(BUILD_TESTING)
         src/handlers/HandlerRegistry.cpp
     )
     target_include_directories(command_field_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/ui
         ${CMAKE_SOURCE_DIR}/src/core
         ${CMAKE_SOURCE_DIR}/src/handlers
     )
     target_compile_definitions(command_field_test PRIVATE
         SYNCHRO_MAIN_QML="${CMAKE_SOURCE_DIR}/src/ui/qml/Main.qml"
+        SYNCHRO_SQL_PANEL_QML="${CMAKE_SOURCE_DIR}/handlers/synchro.panel.sql/Panel.qml"
     )
     target_link_libraries(command_field_test PRIVATE
         Qt6::Test
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
+        Qt6::GuiPrivate
         Qt6::Concurrent
         synchro_theme
         synchro_themeplugin
@@ -403,6 +427,40 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME manifest_validate_test COMMAND manifest_validate_test)
 
+    qt_add_executable(agent_integration_test
+        tests/agent_integration_test.cpp
+        src/integrations/AgentIntegration.cpp
+    )
+    target_include_directories(agent_integration_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/integrations
+    )
+    target_link_libraries(agent_integration_test PRIVATE
+        Qt6::Test
+        Qt6::Core
+        Qt6::Concurrent
+    )
+    synchro_use_sqlite(agent_integration_test)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(agent_integration_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME agent_integration_test COMMAND agent_integration_test)
+
+    qt_add_executable(omaflow_bridge_test
+        tests/omaflow_bridge_test.cpp
+        src/integrations/OmaflowBridge.cpp
+    )
+    target_include_directories(omaflow_bridge_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/integrations
+    )
+    target_link_libraries(omaflow_bridge_test PRIVATE
+        Qt6::Test
+        Qt6::Core
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(omaflow_bridge_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME omaflow_bridge_test COMMAND omaflow_bridge_test)
+
     qt_add_executable(match_test
         tests/match_test.cpp
         src/handlers/Manifest.cpp
@@ -425,6 +483,7 @@ if(BUILD_TESTING)
 
     qt_add_executable(peek_overlay_test
         tests/peek_overlay_test.cpp
+        src/ui/FsnRhiItem.cpp
         ${SYNCHRO_FS_SOURCES}
         src/core/DirectoryLister.cpp
         src/core/DirectoryWatcher.cpp
@@ -448,6 +507,7 @@ if(BUILD_TESTING)
         src/handlers/HandlerRegistry.cpp
         src/handlers/HandlerLoader.cpp
         src/handlers/HostApi.cpp
+        src/integrations/OmaflowBridge.cpp
         ${SYNCHRO_SYNTAX_SOURCES}
         src/handlers/HandlerExec.cpp
         src/handlers/XdgOpen.cpp
@@ -455,8 +515,10 @@ if(BUILD_TESTING)
         src/handlers/CoreVerbs.cpp
     )
     target_include_directories(peek_overlay_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/ui
         ${CMAKE_SOURCE_DIR}/src/core
         ${CMAKE_SOURCE_DIR}/src/handlers
+        ${CMAKE_SOURCE_DIR}/src/integrations
     )
     target_compile_definitions(peek_overlay_test PRIVATE
         SYNCHRO_MAIN_QML="${CMAKE_SOURCE_DIR}/src/ui/qml/Main.qml"
@@ -467,7 +529,9 @@ if(BUILD_TESTING)
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
+        Qt6::GuiPrivate
         Qt6::Concurrent
+        Qt6::Multimedia
         synchro_theme
         synchro_themeplugin
         synchro_handler
@@ -688,6 +752,7 @@ if(BUILD_TESTING)
         src/handlers/HandlerRegistry.cpp
         src/handlers/HandlerLoader.cpp
         src/handlers/HostApi.cpp
+        src/integrations/OmaflowBridge.cpp
         ${SYNCHRO_SYNTAX_SOURCES}
         src/handlers/HandlerExec.cpp
         src/handlers/XdgOpen.cpp
@@ -698,6 +763,7 @@ if(BUILD_TESTING)
     target_include_directories(portal_dbus_test PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core
         ${CMAKE_SOURCE_DIR}/src/handlers
+        ${CMAKE_SOURCE_DIR}/src/integrations
     )
     target_compile_definitions(portal_dbus_test PRIVATE
         SYNCHRO_FIRST_PARTY_HANDLER_DIR="${CMAKE_SOURCE_DIR}/handlers"
@@ -743,6 +809,25 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME syntax_highlight_test COMMAND syntax_highlight_test)
     set_tests_properties(syntax_highlight_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    qt_add_executable(markdown_render_test
+        tests/markdown_render_test.cpp
+        src/core/MarkdownRender.cpp
+    )
+    target_include_directories(markdown_render_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core
+    )
+    target_link_libraries(markdown_render_test PRIVATE
+        Qt6::Test
+        Qt6::Gui
+        Qt6::Core
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(markdown_render_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME markdown_render_test COMMAND markdown_render_test)
+    set_tests_properties(markdown_render_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     qt_add_executable(parquet_meta_test
@@ -850,6 +935,8 @@ install(FILES packaging/org.omarchy.synchro.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(DIRECTORY handlers/
         DESTINATION ${CMAKE_INSTALL_DATADIR}/synchro/handlers)
+install(DIRECTORY agents/synchro/
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/synchro/agent-skills/synchro)
 install(FILES packaging/portals/synchro.portal
         DESTINATION ${CMAKE_INSTALL_DATADIR}/xdg-desktop-portal/portals)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.freedesktop.impl.portal.desktop.synchro.service

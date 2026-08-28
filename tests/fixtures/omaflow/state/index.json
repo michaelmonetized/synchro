@@ -1,0 +1,38 @@
+{
+  "generatedAt": "2026-08-24T17:30:00-04:00",
+  "rules": [
+    {
+      "id": "night-shift",
+      "name": "Night shift",
+      "enabled": false,
+      "triggerSummary": "time 21:30",
+      "actionsSummary": "theme, nightlight",
+      "actionCount": 2,
+      "conditionCount": 0,
+      "source": "demo",
+      "lastFired": ""
+    },
+    {
+      "id": "presentation-dock",
+      "name": "Presentation dock",
+      "enabled": true,
+      "triggerSummary": "monitor-connected: Dell U3821DW",
+      "actionsSummary": "dnd, stay-awake, audio-output, workspace",
+      "actionCount": 4,
+      "conditionCount": 2,
+      "source": "demo",
+      "lastFired": "2026-08-24T13:45:12-04:00"
+    },
+    {
+      "id": "quiet-build",
+      "name": "Quiet build",
+      "enabled": true,
+      "triggerSummary": "custom: build-started",
+      "actionsSummary": "dnd, notify",
+      "actionCount": 2,
+      "conditionCount": 1,
+      "source": "demo",
+      "lastFired": "2026-08-24T16:08:44-04:00"
+    }
+  ]
+}

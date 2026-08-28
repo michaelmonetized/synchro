@@ -85,6 +85,11 @@ public:
   static QImage renderPathMosaicImage(const QStringList &paths,
                                       const QString &label, int sizePx);
   static QString packedUrl(const QString &path, qint64 mtime, int sizePx);
+  // Raw image/video thumbnails are content-derived and survive theme changes;
+  // folder mosaics and generated file cards contain palette colors.
+  static bool thumbnailDependsOnTheme(const QString &path,
+                                      const QString &mime, bool isDir);
+  static void invalidateThemeCache();
 
 signals:
   void thumbnailReady(const QString &path, const QString &url);

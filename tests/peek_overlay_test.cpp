@@ -1,12 +1,15 @@
+#include "Config.h"
 #include "DirectoryModel.h"
-#include "FilterProxy.h"
 #include "FileCatalog.h"
+#include "FilterProxy.h"
 #include "HandlerLoader.h"
 #include "HandlerRegistry.h"
 #include "HostApi.h"
 #include "KeyMachine.h"
+#include "LocationChips.h"
 #include "MimeMap.h"
 #include "NavStack.h"
+#include "OmaflowBridge.h"
 #include "SearchModel.h"
 #include "SearchService.h"
 #include "SelectionModel.h"
@@ -20,8 +23,12 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMetaObject>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -97,10 +104,10 @@ bool writePng(const QString &path) {
   static const unsigned char kPng[] = {
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
       0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-      0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xde, 0x00, 0x00, 0x00,
-      0x0c, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
-      0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xfe, 0xd4, 0xef, 0x00, 0x00,
-      0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+      0x08, 0x04, 0x00, 0x00, 0x00, 0xb5, 0x1c, 0x0c, 0x02, 0x00, 0x00, 0x00,
+      0x0b, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0x64, 0xf8, 0x0f, 0x00,
+      0x01, 0x05, 0x01, 0x01, 0x27, 0x18, 0xe3, 0x66, 0x00, 0x00, 0x00, 0x00,
+      0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
   QFile f(path);
   if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
     return false;
@@ -110,11 +117,111 @@ bool writePng(const QString &path) {
 
 } // namespace
 
+class FakeOmaflowBridge : public QObject {
+  Q_OBJECT
+  Q_PROPERTY(bool installed READ installed CONSTANT)
+  Q_PROPERTY(QString version READ version CONSTANT)
+  Q_PROPERTY(QVariantList rules READ rules NOTIFY stateChanged)
+  Q_PROPERTY(QVariantList activity READ activity NOTIFY stateChanged)
+  Q_PROPERTY(QVariantMap staging READ staging NOTIFY stateChanged)
+  Q_PROPERTY(bool busy READ busy NOTIFY operationChanged)
+  Q_PROPERTY(QString operationRule READ operationRule NOTIFY operationChanged)
+  Q_PROPERTY(QString operationKind READ operationKind NOTIFY operationChanged)
+  Q_PROPERTY(
+      QString operationOutput READ operationOutput NOTIFY operationChanged)
+
+public:
+  explicit FakeOmaflowBridge(QObject *parent = nullptr) : QObject(parent) {
+    const QVariantMap installedRule{
+        {QStringLiteral("id"), QStringLiteral("existing-flow")},
+        {QStringLiteral("name"), QStringLiteral("Existing flow")},
+        {QStringLiteral("enabled"), true},
+        {QStringLiteral("trigger"),
+         QVariantMap{{QStringLiteral("type"), QStringLiteral("manual")}}},
+        {QStringLiteral("actions"),
+         QVariantList{QVariantMap{
+             {QStringLiteral("type"), QStringLiteral("notify")},
+             {QStringLiteral("message"), QStringLiteral("existing")}}}}};
+    m_rules = {installedRule};
+
+    const QVariantMap draftRule{
+        {QStringLiteral("id"), QStringLiteral("presentation-draft")},
+        {QStringLiteral("name"), QStringLiteral("Presentation draft")},
+        {QStringLiteral("enabled"), true},
+        {QStringLiteral("trigger"),
+         QVariantMap{
+             {QStringLiteral("type"), QStringLiteral("monitor-connected")},
+             {QStringLiteral("match"),
+              QVariantMap{{QStringLiteral("description"),
+                           QStringLiteral("projector")}}}}},
+        {QStringLiteral("conditions"),
+         QVariantList{QVariantMap{
+             {QStringLiteral("type"), QStringLiteral("weekday")},
+             {QStringLiteral("days"),
+              QVariantList{QStringLiteral("mon"), QStringLiteral("tue")}}}}},
+        {QStringLiteral("actions"),
+         QVariantList{
+             QVariantMap{{QStringLiteral("type"), QStringLiteral("dnd")},
+                         {QStringLiteral("state"), QStringLiteral("on")}},
+             QVariantMap{{QStringLiteral("type"), QStringLiteral("workspace")},
+                         {QStringLiteral("number"), 4}}}}};
+    m_staging = {{QStringLiteral("status"), QStringLiteral("ready")},
+                 {QStringLiteral("agent"), QStringLiteral("codex")},
+                 {QStringLiteral("request"),
+                  QStringLiteral("Prepare the desktop for a projector")},
+                 {QStringLiteral("warnings"),
+                  QVariantList{QStringLiteral("projector is not connected")}},
+                 {QStringLiteral("rule"), draftRule}};
+  }
+
+  bool installed() const { return true; }
+  QString version() const { return QStringLiteral("test"); }
+  QVariantList rules() const { return m_rules; }
+  QVariantList activity() const { return {}; }
+  QVariantMap staging() const { return m_staging; }
+  bool busy() const { return false; }
+  QString operationRule() const { return {}; }
+  QString operationKind() const { return {}; }
+  QString operationOutput() const { return {}; }
+  int accepts() const { return m_accepts; }
+  QString authoredRequest() const { return m_authoredRequest; }
+
+  Q_INVOKABLE void setActive(bool) {}
+  Q_INVOKABLE void refresh() {}
+  Q_INVOKABLE bool dryRun(const QString &) { return true; }
+  Q_INVOKABLE bool run(const QString &) { return true; }
+  Q_INVOKABLE bool author(const QString &request) {
+    m_authoredRequest = request;
+    return true;
+  }
+  Q_INVOKABLE bool acceptStage() {
+    ++m_accepts;
+    return true;
+  }
+  Q_INVOKABLE bool rejectStage() { return true; }
+  Q_INVOKABLE void cancel() {}
+
+signals:
+  void stateChanged();
+  void operationChanged();
+
+private:
+  QVariantList m_rules;
+  QVariantMap m_staging;
+  int m_accepts = 0;
+  QString m_authoredRequest;
+};
+
 class PeekOverlayTest : public QObject {
   Q_OBJECT
 
 private slots:
-  void spaceTogglesImagePeekAndJSteps();
+  void tooltipRemapsAfterDockMoves();
+  void omaflowGraphAdaptsToDockShape();
+  void omaflowStepInspectorEscapesGraphClip();
+  void omaflowPanelReviewsStagedRule();
+  void omaflowRenderLabGraphsLoad();
+  void shiftSpaceOpensImagePeekAndJSteps();
   void ctrlKClosesOpenWithOverlay();
   void textAndMarkdownHandlersResolve();
   void videoHandlerAndWebpRaster();
@@ -131,18 +238,22 @@ private slots:
   void gridPeekIndexHidesFolders();
   void peekEnterCommitsFileAndFolder();
   void doLayerVerbsKeysAndCopyAs();
+  void doLayerOffersOnlyMatchingOmaflows();
   void doLayerOverlaySplitChrome();
   void doLayerShowsFilePreviewAndFolderGrid();
   void volumesListingChromeUrls();
   void volumesListingChromeVisible();
   void pathBarTabsSitAboveCommandField();
   void fileGridCellsFillWidth();
+  void gridWasdTracksRenderedGeometryAcrossRelayout();
+  void locationCloseConsumesClick();
   void searchGridCellsMatchRows();
   void searchGridDropsFolderTiles();
   void searchGridVirtualizesGroups();
   void fileGridFollowsProxySort();
   void contextualPanelRelevanceFollowsSelection();
-  void panelLookUsesSafeInlineHandlersAndAsyncReads();
+  void panelLookUsesOptInQuickAppsAndAsyncReads();
+  void standaloneLookFollowsSelectionAndMigrates();
   void findInFilePastDefaultWindow();
   void textPeekFindCyclesHits();
   void textPeekFindJumpsPastWindow();
@@ -151,7 +262,450 @@ private slots:
   void contentSearchPeekOpensFind();
 };
 
-void PeekOverlayTest::spaceTogglesImagePeekAndJSteps() {
+void PeekOverlayTest::tooltipRemapsAfterDockMoves() {
+  QQmlEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  QQmlComponent component(&engine);
+  component.setData(R"QML(
+import QtQuick
+import Synchro.Theme 1.0 as Synchro
+
+Window {
+    id: window
+    width: 640
+    height: 480
+    visible: true
+    property bool showTip: false
+
+    Item {
+        id: dock
+        objectName: "movingDock"
+        x: 24
+        y: 32
+        width: 300
+        height: 180
+
+        Item {
+            id: anchor
+            objectName: "tipAnchor"
+            x: 110
+            y: 20
+            width: 40
+            height: 24
+        }
+    }
+
+    Synchro.ToolTip {
+        objectName: "movingTooltip"
+        anchorItem: anchor
+        shown: window.showTip
+        label: "Dock action"
+    }
+}
+)QML",
+                    QUrl(QStringLiteral("inline:tooltip-remap.qml")));
+
+  QVERIFY(QTest::qWaitFor(
+      [&] { return component.status() != QQmlComponent::Loading; }, 3000));
+  QVERIFY2(component.status() == QQmlComponent::Ready,
+           qPrintable(component.errorString()));
+  std::unique_ptr<QObject> instance(component.create());
+  QVERIFY2(instance, qPrintable(component.errorString()));
+  auto *window = qobject_cast<QQuickWindow *>(instance.get());
+  QVERIFY(window);
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  auto *dock = window->findChild<QQuickItem *>(QStringLiteral("movingDock"));
+  auto *anchor = window->findChild<QQuickItem *>(QStringLiteral("tipAnchor"));
+  auto *tooltip =
+      window->findChild<QQuickItem *>(QStringLiteral("movingTooltip"));
+  QVERIFY(dock);
+  QVERIFY(anchor);
+  QVERIFY(tooltip);
+
+  // Simulate moving the whole app panel to another dock edge before the
+  // pointer enters a button and reveals its tooltip.
+  dock->setX(330);
+  dock->setY(250);
+  QVERIFY(window->setProperty("showTip", true));
+  QVERIFY(QTest::qWaitFor([&] { return tooltip->isVisible(); }, 1000));
+
+  const QPointF anchorScene = anchor->mapToScene(QPointF(0, 0));
+  const QPointF tooltipScene = tooltip->mapToScene(QPointF(0, 0));
+  const qreal anchorCenter = anchorScene.x() + anchor->width() / 2.0;
+  const qreal tooltipCenter = tooltipScene.x() + tooltip->width() / 2.0;
+  QVERIFY2(qAbs(anchorCenter - tooltipCenter) < 1.0,
+           qPrintable(QStringLiteral("tooltip center %1, anchor center %2")
+                          .arg(tooltipCenter)
+                          .arg(anchorCenter)));
+  QVERIFY(tooltipScene.y() > anchorScene.y());
+}
+
+void PeekOverlayTest::omaflowGraphAdaptsToDockShape() {
+  QQmlEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  const QString graphPath =
+      QDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR))
+          .filePath(QStringLiteral("synchro.panel.omaflow/FlowGraph.qml"));
+  QQmlComponent component(&engine, QUrl::fromLocalFile(graphPath));
+  QVERIFY(QTest::qWaitFor(
+      [&] { return component.status() != QQmlComponent::Loading; }, 3000));
+  QVERIFY2(component.status() == QQmlComponent::Ready,
+           qPrintable(component.errorString()));
+
+  std::unique_ptr<QObject> instance(component.create());
+  QVERIFY2(instance, qPrintable(component.errorString()));
+  auto *graph = qobject_cast<QQuickItem *>(instance.get());
+  QVERIFY(graph);
+  graph->setWidth(900);
+
+  const QVariantList nodes{
+      QVariantMap{
+          {QStringLiteral("id"), QStringLiteral("start")},
+          {QStringLiteral("kind"), QStringLiteral("trigger")},
+          {QStringLiteral("label"), QStringLiteral("Monitor connected")}},
+      QVariantMap{{QStringLiteral("id"), QStringLiteral("route")},
+                  {QStringLiteral("kind"), QStringLiteral("condition")},
+                  {QStringLiteral("label"), QStringLiteral("Weekday")}},
+      QVariantMap{{QStringLiteral("id"), QStringLiteral("work")},
+                  {QStringLiteral("kind"), QStringLiteral("action")},
+                  {QStringLiteral("label"), QStringLiteral("DND")}},
+      QVariantMap{{QStringLiteral("id"), QStringLiteral("weekend")},
+                  {QStringLiteral("kind"), QStringLiteral("action")},
+                  {QStringLiteral("label"), QStringLiteral("Notify")}},
+      QVariantMap{{QStringLiteral("id"), QStringLiteral("done")},
+                  {QStringLiteral("kind"), QStringLiteral("terminal")},
+                  {QStringLiteral("tone"), QStringLiteral("success")},
+                  {QStringLiteral("label"), QStringLiteral("Done")}}};
+  const QVariantList edges{
+      QVariantMap{{QStringLiteral("from"), QStringLiteral("start")},
+                  {QStringLiteral("to"), QStringLiteral("route")}},
+      QVariantMap{{QStringLiteral("from"), QStringLiteral("route")},
+                  {QStringLiteral("to"), QStringLiteral("work")},
+                  {QStringLiteral("label"), QStringLiteral("YES")},
+                  {QStringLiteral("tone"), QStringLiteral("pass")}},
+      QVariantMap{{QStringLiteral("from"), QStringLiteral("route")},
+                  {QStringLiteral("to"), QStringLiteral("weekend")},
+                  {QStringLiteral("label"), QStringLiteral("NO")},
+                  {QStringLiteral("tone"), QStringLiteral("fail")}},
+      QVariantMap{{QStringLiteral("from"), QStringLiteral("work")},
+                  {QStringLiteral("to"), QStringLiteral("done")}},
+      QVariantMap{{QStringLiteral("from"), QStringLiteral("weekend")},
+                  {QStringLiteral("to"), QStringLiteral("done")}}};
+  const QVariantMap graphSpec{{QStringLiteral("nodes"), nodes},
+                              {QStringLiteral("edges"), edges}};
+  QVERIFY(graph->setProperty("graphSpec", graphSpec));
+  QVERIFY(graph->setProperty("horizontalLayout", true));
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return visualNamed(graph, QStringLiteral("omaflowGraphNode")).size() ==
+               nodes.size();
+      },
+      1000));
+
+  auto cards = visualNamed(graph, QStringLiteral("omaflowGraphNode"));
+  QHash<QString, QQuickItem *> byId;
+  for (QQuickItem *card : cards)
+    byId.insert(card->property("modelData")
+                    .toMap()
+                    .value(QStringLiteral("id"))
+                    .toString(),
+                card);
+  QVERIFY(byId.contains(QStringLiteral("work")));
+  QVERIFY(byId.contains(QStringLiteral("weekend")));
+  QCOMPARE(byId.value(QStringLiteral("work"))->x(),
+           byId.value(QStringLiteral("weekend"))->x());
+  QVERIFY(byId.value(QStringLiteral("work"))->y() !=
+          byId.value(QStringLiteral("weekend"))->y());
+  QCOMPARE(graph->property("nodeCount").toInt(), nodes.size());
+  QVERIFY(graph->property("graphWidth").toReal() > graph->width());
+  const qreal horizontalHeight = graph->implicitHeight();
+
+  QVERIFY(graph->setProperty("horizontalLayout", false));
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        auto vertical = visualNamed(graph, QStringLiteral("omaflowGraphNode"));
+        if (vertical.size() != nodes.size())
+          return false;
+        QHash<QString, QQuickItem *> verticalById;
+        for (QQuickItem *card : vertical)
+          verticalById.insert(card->property("modelData")
+                                  .toMap()
+                                  .value(QStringLiteral("id"))
+                                  .toString(),
+                              card);
+        return verticalById.contains(QStringLiteral("work")) &&
+               verticalById.contains(QStringLiteral("weekend")) &&
+               verticalById.value(QStringLiteral("work"))->y() ==
+                   verticalById.value(QStringLiteral("weekend"))->y() &&
+               verticalById.value(QStringLiteral("work"))->x() !=
+                   verticalById.value(QStringLiteral("weekend"))->x();
+      },
+      1000));
+  QCOMPARE(graph->property("graphWidth").toReal(), graph->width());
+  QVERIFY(graph->implicitHeight() > horizontalHeight);
+
+  const auto labels =
+      visualNamed(graph, QStringLiteral("omaflowGraphEdgeLabel"));
+  int visibleLabels = 0;
+  for (QQuickItem *label : labels)
+    visibleLabels += label->isVisible() ? 1 : 0;
+  QCOMPARE(visibleLabels, 2);
+}
+
+void PeekOverlayTest::omaflowStepInspectorEscapesGraphClip() {
+  QQmlEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  const QString graphPath =
+      QDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR))
+          .filePath(QStringLiteral("synchro.panel.omaflow/FlowGraph.qml"));
+  QQmlComponent component(&engine, QUrl::fromLocalFile(graphPath));
+  QVERIFY(QTest::qWaitFor(
+      [&] { return component.status() != QQmlComponent::Loading; }, 3000));
+  QVERIFY2(component.status() == QQmlComponent::Ready,
+           qPrintable(component.errorString()));
+
+  std::unique_ptr<QObject> instance(component.create());
+  QVERIFY2(instance, qPrintable(component.errorString()));
+  auto *graph = qobject_cast<QQuickItem *>(instance.get());
+  QVERIFY(graph);
+
+  QQuickWindow window;
+  window.resize(720, 480);
+  graph->setParentItem(window.contentItem());
+  graph->setX(24);
+  graph->setY(42);
+  graph->setWidth(660);
+  graph->setHeight(360);
+
+  const QVariantList nodes{
+      QVariantMap{{QStringLiteral("id"), QStringLiteral("start")},
+                  {QStringLiteral("kind"), QStringLiteral("trigger")},
+                  {QStringLiteral("label"), QStringLiteral("New file")}},
+      QVariantMap{
+          {QStringLiteral("id"), QStringLiteral("route")},
+          {QStringLiteral("kind"), QStringLiteral("condition")},
+          {QStringLiteral("label"), QStringLiteral("Image family?")},
+          {QStringLiteral("detail"), QStringLiteral("Route by detected kind")},
+          {QStringLiteral("parameters"),
+           QVariantMap{{QStringLiteral("match"), QStringLiteral("image/*")},
+                       {QStringLiteral("case_sensitive"), false},
+                       {QStringLiteral("limit"), 24}}}},
+      QVariantMap{{QStringLiteral("id"), QStringLiteral("yes")},
+                  {QStringLiteral("label"), QStringLiteral("Optimize")}},
+      QVariantMap{{QStringLiteral("id"), QStringLiteral("no")},
+                  {QStringLiteral("label"), QStringLiteral("Retain")}}};
+  const QVariantList edges{
+      QVariantMap{{QStringLiteral("from"), QStringLiteral("start")},
+                  {QStringLiteral("to"), QStringLiteral("route")}},
+      QVariantMap{{QStringLiteral("from"), QStringLiteral("route")},
+                  {QStringLiteral("to"), QStringLiteral("yes")},
+                  {QStringLiteral("label"), QStringLiteral("YES")}},
+      QVariantMap{{QStringLiteral("from"), QStringLiteral("route")},
+                  {QStringLiteral("to"), QStringLiteral("no")},
+                  {QStringLiteral("label"), QStringLiteral("ARCHIVE")}}};
+  QVERIFY(graph->setProperty("graphSpec",
+                             QVariantMap{{QStringLiteral("nodes"), nodes},
+                                         {QStringLiteral("edges"), edges}}));
+  QVERIFY(graph->setProperty("horizontalLayout", true));
+
+  window.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&window));
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return visualNamed(graph, QStringLiteral("omaflowGraphNode")).size() ==
+               nodes.size();
+      },
+      1000));
+
+  QQuickItem *routeCard = nullptr;
+  const auto cards = visualNamed(graph, QStringLiteral("omaflowGraphNode"));
+  for (QQuickItem *card : cards) {
+    if (card->property("modelData").toMap().value(QStringLiteral("id")) ==
+        QStringLiteral("route")) {
+      routeCard = card;
+      break;
+    }
+  }
+  QVERIFY(routeCard);
+
+  auto *inspector =
+      graph->findChild<QQuickItem *>(QStringLiteral("omaflowNodeInspector"));
+  QVERIFY(inspector);
+  QTest::mouseMove(&window, QPoint(4, 4));
+  const QPoint routeCenter =
+      routeCard
+          ->mapToScene(
+              QPointF(routeCard->width() / 2.0, routeCard->height() / 2.0))
+          .toPoint();
+  QTest::mouseMove(&window, routeCenter);
+  QVERIFY(QTest::qWaitFor([&] { return inspector->isVisible(); }, 1000));
+  QVERIFY(!graph->property("inspectorPinned").toBool());
+
+  QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, routeCenter);
+  QVERIFY(QTest::qWaitFor(
+      [&] { return graph->property("inspectorPinned").toBool(); }, 1000));
+  QCOMPARE(inspector->parentItem(), window.contentItem());
+  QVERIFY(inspector->x() >= 0);
+  QVERIFY(inspector->y() >= 0);
+  QVERIFY(inspector->x() + inspector->width() <= window.width());
+  QVERIFY(inspector->y() + inspector->height() <= window.height());
+  QCOMPARE(inspector->property("parameterRows").toList().size(), 3);
+  QCOMPARE(
+      visualNamed(inspector, QStringLiteral("omaflowInspectorRoute")).size(),
+      3);
+  const auto routePills =
+      visualNamed(inspector, QStringLiteral("omaflowInspectorRoutePill"));
+  QCOMPARE(routePills.size(), 3);
+  for (QQuickItem *pill : routePills)
+    QVERIFY(pill->property("contentFits").toBool());
+
+  QVERIFY(QMetaObject::invokeMethod(graph, "dismissInspector"));
+  QVERIFY(QTest::qWaitFor([&] { return !inspector->isVisible(); }, 1000));
+}
+
+void PeekOverlayTest::omaflowPanelReviewsStagedRule() {
+  QQmlEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  FakeOmaflowBridge bridge;
+  engine.rootContext()->setContextProperty(QStringLiteral("omaflow"), &bridge);
+  const QString panelPath =
+      QDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR))
+          .filePath(QStringLiteral("synchro.panel.omaflow/Panel.qml"));
+  QQmlComponent component(&engine, QUrl::fromLocalFile(panelPath));
+  QVERIFY(QTest::qWaitFor(
+      [&] { return component.status() != QQmlComponent::Loading; }, 3000));
+  QVERIFY2(component.status() == QQmlComponent::Ready,
+           qPrintable(component.errorString()));
+
+  std::unique_ptr<QObject> instance(component.create());
+  QVERIFY2(instance, qPrintable(component.errorString()));
+  auto *panel = qobject_cast<QQuickItem *>(instance.get());
+  QVERIFY(panel);
+  panel->setWidth(900);
+  panel->setHeight(560);
+
+  QQuickWindow window;
+  window.resize(900, 560);
+  panel->setParentItem(window.contentItem());
+  window.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&window));
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        return panel->property("reviewingDraft").toBool() &&
+               panel->property("displayRule")
+                       .toMap()
+                       .value(QStringLiteral("id")) ==
+                   QStringLiteral("presentation-draft");
+      },
+      1000));
+
+  auto *graph =
+      panel->findChild<QQuickItem *>(QStringLiteral("omaflowFlowGraph"));
+  auto *install =
+      panel->findChild<QQuickItem *>(QStringLiteral("omaflowInstallDraft"));
+  auto *discard =
+      panel->findChild<QQuickItem *>(QStringLiteral("omaflowDiscardDraft"));
+  QVERIFY(graph);
+  QVERIFY(install);
+  QVERIFY(discard);
+  QVERIFY(graph->isVisible());
+  QVERIFY(install->isVisible());
+  QVERIFY(discard->isVisible());
+  QCOMPARE(graph->property("nodeCount").toInt(), 6);
+
+  QVERIFY(QMetaObject::invokeMethod(panel, "installDraft"));
+  QVERIFY(panel->property("stageArmed").toBool());
+  QCOMPARE(bridge.accepts(), 0);
+  QVERIFY(QMetaObject::invokeMethod(panel, "installDraft"));
+  QCOMPARE(bridge.accepts(), 1);
+
+  QVERIFY(QMetaObject::invokeMethod(panel, "openAuthor"));
+  auto *composer =
+      panel->findChild<QQuickItem *>(QStringLiteral("omaflowAuthorComposer"));
+  QVERIFY(composer);
+  QVERIFY(QTest::qWaitFor([&] { return composer->isVisible(); }, 1000));
+  QVERIFY(panel->setProperty("authorPrompt",
+                             QStringLiteral("Draft a quieter flow")));
+  QVERIFY(QMetaObject::invokeMethod(panel, "submitAuthor"));
+  QCOMPARE(bridge.authoredRequest(), QStringLiteral("Draft a quieter flow"));
+  QVERIFY(!panel->property("authoring").toBool());
+}
+
+void PeekOverlayTest::omaflowRenderLabGraphsLoad() {
+  QQmlEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  const QDir handlers(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  QQmlComponent component(
+      &engine, QUrl::fromLocalFile(handlers.filePath(
+                   QStringLiteral("synchro.panel.omaflow/FlowGraph.qml"))));
+  QVERIFY(QTest::qWaitFor(
+      [&] { return component.status() != QQmlComponent::Loading; }, 3000));
+  QVERIFY2(component.status() == QQmlComponent::Ready,
+           qPrintable(component.errorString()));
+
+  const QDir fixtureDir(QDir(handlers.absolutePath())
+                            .filePath(QStringLiteral(
+                                "../tests/fixtures/omaflow-lab/config/rules")));
+  const QStringList fixtures =
+      fixtureDir.entryList({QStringLiteral("*.json")}, QDir::Files, QDir::Name);
+  QCOMPARE(fixtures.size(), 4);
+
+  for (const QString &name : fixtures) {
+    QFile file(fixtureDir.filePath(name));
+    QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(file.fileName()));
+    QJsonParseError error;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &error);
+    QVERIFY2(error.error == QJsonParseError::NoError,
+             qPrintable(name + QStringLiteral(": ") + error.errorString()));
+    const QJsonObject visual =
+        doc.object().value(QStringLiteral("visualGraph")).toObject();
+    QVERIFY(!visual.isEmpty());
+    const int expectedNodes =
+        visual.value(QStringLiteral("nodes")).toArray().size();
+    QVERIFY(expectedNodes >= 8);
+
+    std::unique_ptr<QObject> instance(component.create());
+    QVERIFY2(instance, qPrintable(component.errorString()));
+    auto *graph = qobject_cast<QQuickItem *>(instance.get());
+    QVERIFY(graph);
+    graph->setWidth(540);
+    QVERIFY(graph->setProperty("graphSpec", visual.toVariantMap()));
+    QVERIFY(graph->setProperty("horizontalLayout", false));
+    QVERIFY(QTest::qWaitFor(
+        [&] {
+          return visualNamed(graph, QStringLiteral("omaflowGraphNode"))
+                     .size() == expectedNodes;
+        },
+        1000));
+    QCOMPARE(graph->property("nodeCount").toInt(), expectedNodes);
+    QVERIFY(graph->property("graphWidth").toReal() >= graph->width());
+    QVERIFY(graph->implicitHeight() > 0);
+
+    QVERIFY(graph->setProperty("horizontalLayout", true));
+    QCOMPARE(graph->property("nodeCount").toInt(), expectedNodes);
+    QVERIFY(graph->property("graphWidth").toReal() >= graph->width());
+
+    if (name == QStringLiteral("network-retry-lab.json")) {
+      const QVariantList laidOutEdges = graph->property("layoutData")
+                                            .toMap()
+                                            .value(QStringLiteral("edges"))
+                                            .toList();
+      bool foundBackEdge = false;
+      for (const QVariant &edge : laidOutEdges)
+        foundBackEdge = foundBackEdge ||
+                        edge.toMap().value(QStringLiteral("backEdge")).toBool();
+      QVERIFY(foundBackEdge);
+    }
+  }
+}
+
+void PeekOverlayTest::shiftSpaceOpensImagePeekAndJSteps() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   QVERIFY(writePng(tmp.filePath(QStringLiteral("a.png"))));
@@ -222,20 +776,21 @@ void PeekOverlayTest::spaceTogglesImagePeekAndJSteps() {
 
   auto *list = window->findChild<QQuickItem *>(QStringLiteral("fileList"));
   QVERIFY(list);
-  auto *overlay = window->findChild<QQuickItem *>(QStringLiteral("peekOverlay"));
+  auto *overlay =
+      window->findChild<QQuickItem *>(QStringLiteral("peekOverlay"));
   QVERIFY(overlay);
 
   list->forceActiveFocus();
   QVERIFY(QTest::qWaitFor([&] { return list->hasActiveFocus(); }, 1000));
 
-  QTest::keyClick(window, Qt::Key_Space);
+  QTest::keyClick(window, Qt::Key_Space, Qt::ShiftModifier);
   QVERIFY(QTest::qWaitFor([&] { return hostApi.isOpen(); }, 2000));
   QVERIFY(overlay->isVisible());
   auto *frame = window->findChild<QQuickItem *>(QStringLiteral("peekPanel"));
-  auto *keyline = window->findChild<QQuickItem *>(
-      QStringLiteral("peekModalKeyline"));
-  auto *blocker = window->findChild<QQuickItem *>(
-      QStringLiteral("peekModalBlocker"));
+  auto *keyline =
+      window->findChild<QQuickItem *>(QStringLiteral("peekModalKeyline"));
+  auto *blocker =
+      window->findChild<QQuickItem *>(QStringLiteral("peekModalBlocker"));
   QVERIFY(frame);
   QVERIFY(keyline);
   QVERIFY(blocker);
@@ -244,8 +799,8 @@ void PeekOverlayTest::spaceTogglesImagePeekAndJSteps() {
   QCOMPARE(keyline->height(), frame->height());
   QVERIFY(frame->x() > 0);
   QVERIFY(frame->x() + frame->width() < overlay->width());
-  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
-                          2000));
+  QVERIFY(
+      QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; }, 2000));
   auto *fileBackground = window->findChild<QQuickItem *>(
       QStringLiteral("peekFileSurfaceBackground"));
   QVERIFY(fileBackground);
@@ -253,7 +808,8 @@ void PeekOverlayTest::spaceTogglesImagePeekAndJSteps() {
   QVERIFY(QTest::qWaitFor(
       [&] {
         return !visualNamed(window->contentItem(),
-                            QStringLiteral("peekIndexSelection")).isEmpty();
+                            QStringLiteral("peekIndexSelection"))
+                    .isEmpty();
       },
       1000));
   QVERIFY2(list->hasActiveFocus(),
@@ -264,14 +820,13 @@ void PeekOverlayTest::spaceTogglesImagePeekAndJSteps() {
   QVERIFY(!overlay->isVisible());
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
 
-  QTest::keyClick(window, Qt::Key_Space);
+  QTest::keyClick(window, Qt::Key_Space, Qt::ShiftModifier);
   QVERIFY(QTest::qWaitFor([&] { return hostApi.isOpen(); }, 2000));
   QVERIFY(list->hasActiveFocus());
   QTest::keyClick(window, Qt::Key_J);
-  QVERIFY(QTest::qWaitFor([&] { return proxy.currentIndex() == second; },
-                          2000));
-  QCOMPARE(nameAt(proxy, proxy.currentIndex()),
-           nameAt(proxy, second));
+  QVERIFY(
+      QTest::qWaitFor([&] { return proxy.currentIndex() == second; }, 2000));
+  QCOMPARE(nameAt(proxy, proxy.currentIndex()), nameAt(proxy, second));
   QVERIFY(hostApi.isOpen());
 }
 
@@ -337,7 +892,8 @@ void PeekOverlayTest::ctrlKClosesOpenWithOverlay() {
 
   auto *list = window->findChild<QQuickItem *>(QStringLiteral("fileList"));
   QVERIFY(list);
-  auto *overlay = window->findChild<QQuickItem *>(QStringLiteral("actionOverlay"));
+  auto *overlay =
+      window->findChild<QQuickItem *>(QStringLiteral("actionOverlay"));
   QVERIFY(overlay);
 
   list->forceActiveFocus();
@@ -351,7 +907,8 @@ void PeekOverlayTest::ctrlKClosesOpenWithOverlay() {
   QVERIFY(verbs);
   auto *caption = window->findChild<QQuickItem *>(QStringLiteral("doCaption"));
   QVERIFY(caption);
-  QCOMPARE(caption->property("text").toString().left(4), QStringLiteral("do ·"));
+  QVERIFY(caption->property("text").toString().startsWith(
+      QStringLiteral("Actions ·")));
 
   keys.focusFilter();
   QVERIFY(QTest::qWaitFor([&] { return !hostApi.actionOpen(); }, 2000));
@@ -445,14 +1002,15 @@ void PeekOverlayTest::textAndMarkdownHandlersResolve() {
   QQmlApplicationEngine engine;
   HostApi host(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
                &engine);
-  const QVariantMap preview = host.readPreview(
-      QUrl::fromLocalFile(txt.path), 1024);
+  const QVariantMap preview =
+      host.readPreview(QUrl::fromLocalFile(txt.path), 1024);
   QVERIFY(preview.value(QStringLiteral("ok")).toBool());
-  QVERIFY(preview.value(QStringLiteral("text")).toString().contains(
-      QStringLiteral("hello text")));
+  QVERIFY(preview.value(QStringLiteral("text"))
+              .toString()
+              .contains(QStringLiteral("hello text")));
 }
 
-void PeekOverlayTest::panelLookUsesSafeInlineHandlersAndAsyncReads() {
+void PeekOverlayTest::panelLookUsesOptInQuickAppsAndAsyncReads() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   const QString textPath = tmp.filePath(QStringLiteral("notes.txt"));
@@ -465,6 +1023,39 @@ void PeekOverlayTest::panelLookUsesSafeInlineHandlersAndAsyncReads() {
     QFile f(tmp.filePath(QStringLiteral("bundle.zip")));
     QVERIFY(f.open(QIODevice::WriteOnly));
     f.write("not really a zip");
+  }
+  const QString duckdbPath = tmp.filePath(QStringLiteral("sample.duckdb"));
+  {
+    QFile f(duckdbPath);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("not really duckdb");
+  }
+  const QString parquetPath = tmp.filePath(QStringLiteral("sample.parquet"));
+  {
+    QFile f(parquetPath);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("not really parquet");
+  }
+  const QString imagePath = tmp.filePath(QStringLiteral("search-image.png"));
+  QVERIFY(writePng(imagePath));
+  {
+    QFile f(imagePath);
+    QVERIFY(f.open(QIODevice::Append));
+    f.write("png trailer");
+  }
+  const QString contentImagePath =
+      tmp.filePath(QStringLiteral("search-vector.svg"));
+  {
+    QFile f(contentImagePath);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("<svg xmlns=\"http://www.w3.org/2000/svg\">"
+            "<text>visual_search_token</text></svg>\n");
+  }
+  const QString videoPath = tmp.filePath(QStringLiteral("search-video.mp4"));
+  {
+    QFile f(videoPath);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("not a real video");
   }
   QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("child-folder")));
   {
@@ -481,6 +1072,8 @@ void PeekOverlayTest::panelLookUsesSafeInlineHandlersAndAsyncReads() {
   registry.scan();
 
   DirectoryModel model;
+  SearchModel search;
+  model.setSearchModel(&search);
   FilterProxy proxy;
   proxy.setDirectoryModel(&model);
   NavStack nav(&model);
@@ -504,16 +1097,19 @@ void PeekOverlayTest::panelLookUsesSafeInlineHandlersAndAsyncReads() {
   QVERIFY(waitListingDone(model));
   const int textRow = findProxy(proxy, QStringLiteral("notes.txt"));
   const int zipRow = findProxy(proxy, QStringLiteral("bundle.zip"));
+  const int duckdbRow = findProxy(proxy, QStringLiteral("sample.duckdb"));
+  const int parquetRow = findProxy(proxy, QStringLiteral("sample.parquet"));
   const int folderRow = findProxy(proxy, QStringLiteral("child-folder"));
   QVERIFY(textRow >= 0);
   QVERIFY(zipRow >= 0);
+  QVERIFY(duckdbRow >= 0);
+  QVERIFY(parquetRow >= 0);
   QVERIFY(folderRow >= 0);
 
   proxy.setCurrentIndex(textRow);
   host.setInlinePreviewActive(true);
   QCOMPARE(host.inlinePreviewMode(), QStringLiteral("text"));
-  QCOMPARE(host.inlinePreviewHandler(),
-           QStringLiteral("synchro.preview.text"));
+  QCOMPARE(host.inlinePreviewHandler(), QStringLiteral("synchro.preview.text"));
   QVERIFY(!host.inlinePreviewItem());
 
   QSignalSpy ready(&host, &HostApi::previewReady);
@@ -535,7 +1131,9 @@ void PeekOverlayTest::panelLookUsesSafeInlineHandlersAndAsyncReads() {
       break;
     }
   }
-  QVERIFY(result.at(2).toMap().value(QStringLiteral("text"))
+  QVERIFY(result.at(2)
+              .toMap()
+              .value(QStringLiteral("text"))
               .toString()
               .contains(QStringLiteral("ambient preview")));
 
@@ -545,11 +1143,54 @@ void PeekOverlayTest::panelLookUsesSafeInlineHandlersAndAsyncReads() {
   QVERIFY(!host.inlinePreviewItem());
   QVERIFY(host.inlinePreviewHandler().isEmpty());
 
+  // Data handlers explicitly opt into Look as chrome-less quick apps. Their
+  // file inspection still happens on a worker and is request-tagged.
+  proxy.setCurrentIndex(duckdbRow);
+  host.refreshInlinePreview();
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewMode(), QStringLiteral("rich"),
+                            3000);
+  QCOMPARE(host.inlinePreviewHandler(),
+           QStringLiteral("synchro.preview.duckdb"));
+  QVERIFY(host.inlinePreviewItem());
+  QVERIFY(host.inlinePreviewItem()->property("inlinePreview").toBool());
+  QSignalSpy databaseReady(&host, &HostApi::databaseReady);
+  const quint64 databaseRequest = host.requestDatabase(
+      QUrl::fromLocalFile(duckdbPath), QStringLiteral("duckdb"));
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        for (const QList<QVariant> &args : databaseReady) {
+          if (args.at(0).toULongLong() == databaseRequest)
+            return true;
+        }
+        return false;
+      },
+      3000));
+
+  proxy.setCurrentIndex(parquetRow);
+  host.refreshInlinePreview();
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewMode(), QStringLiteral("rich"),
+                            3000);
+  QCOMPARE(host.inlinePreviewHandler(),
+           QStringLiteral("synchro.preview.parquet"));
+  QVERIFY(host.inlinePreviewItem());
+  QVERIFY(host.inlinePreviewItem()->property("inlinePreview").toBool());
+  QSignalSpy parquetReady(&host, &HostApi::parquetReady);
+  const quint64 parquetRequest =
+      host.requestParquet(QUrl::fromLocalFile(parquetPath), 12);
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        for (const QList<QVariant> &args : parquetReady) {
+          if (args.at(0).toULongLong() == parquetRequest)
+            return true;
+        }
+        return false;
+      },
+      3000));
+
   proxy.setCurrentIndex(folderRow);
   host.refreshInlinePreview();
   QCOMPARE(host.inlinePreviewMode(), QStringLiteral("folder"));
-  auto *folderModel =
-      qobject_cast<DirectoryModel *>(host.inlineFolderModel());
+  auto *folderModel = qobject_cast<DirectoryModel *>(host.inlineFolderModel());
   auto *folderProxy = qobject_cast<FilterProxy *>(host.inlineFolderProxy());
   QVERIFY(folderModel);
   QVERIFY(folderProxy);
@@ -566,6 +1207,68 @@ void PeekOverlayTest::panelLookUsesSafeInlineHandlersAndAsyncReads() {
                    .canonicalFilePath();
       },
       2000));
+
+  // Name and content search are virtual listings, but their real files must
+  // use the same MIME-backed preview dispatch as ordinary folder rows.
+  model.setPath(QStringLiteral("search://"));
+  search.start(QStringLiteral("search-image"), tmp.path(), false, false);
+  QVERIFY(QTest::qWaitFor([&] { return !search.listing(); }, 5000));
+  QCOMPARE(search.count(), 1);
+  proxy.setCurrentIndex(0);
+  host.refreshInlinePreview();
+  QCOMPARE(host.inlinePreviewPath(), imagePath);
+  QCOMPARE(host.inlinePreviewMode(), QStringLiteral("image"));
+  QCOMPARE(host.inlinePreviewHandler(),
+           QStringLiteral("synchro.preview.image"));
+
+  search.start(QStringLiteral("visual_search_token"), tmp.path(), false, true);
+  QVERIFY(QTest::qWaitFor([&] { return !search.listing(); }, 5000));
+  QCOMPARE(search.count(), 1);
+  proxy.setCurrentIndex(0);
+  host.refreshInlinePreview();
+  QCOMPARE(host.inlinePreviewPath(), contentImagePath);
+  QCOMPARE(host.inlinePreviewMode(), QStringLiteral("image"));
+  QCOMPARE(host.inlinePreviewHandler(),
+           QStringLiteral("synchro.preview.image"));
+
+  search.start(QStringLiteral("search-video"), tmp.path(), false, false);
+  QVERIFY(QTest::qWaitFor([&] { return !search.listing(); }, 5000));
+  QCOMPARE(search.count(), 1);
+  proxy.setCurrentIndex(0);
+  host.refreshInlinePreview();
+  QCOMPARE(host.inlinePreviewMode(), QStringLiteral("video"));
+  QCOMPARE(host.inlinePreviewHandler(),
+           QStringLiteral("synchro.preview.video"));
+  QVERIFY(!host.inlinePreviewItem());
+  QCOMPARE(host.inlinePreviewPath(), videoPath);
+  QCOMPARE(model.data(model.index(0, 0), DirectoryModel::MimeRole).toString(),
+           QStringLiteral("video/mp4"));
+  search.setThumbnail(videoPath,
+                      QStringLiteral("image://synchrothumb/video-poster"));
+  host.refreshInlinePreview();
+  QCOMPARE(
+      host.inlinePreviewStat().value(QStringLiteral("thumbnail")).toString(),
+      QStringLiteral("image://synchrothumb/video-poster"));
+
+  // A direct SQL file projection has the same contract even when the query
+  // did not include a MIME column.
+  QVariantMap sqlImage;
+  sqlImage.insert(QStringLiteral("cwd"), tmp.path());
+  sqlImage.insert(QStringLiteral("columns"),
+                  QVariantList{QVariantMap{
+                      {QStringLiteral("name"), QStringLiteral("path")}}});
+  sqlImage.insert(QStringLiteral("rows"),
+                  QVariantList{QVariantMap{{QStringLiteral("name"),
+                                            QStringLiteral("search-image.png")},
+                                           {QStringLiteral("path"), imagePath},
+                                           {QStringLiteral("is_dir"), false}}});
+  model.showSqlResult(sqlImage, QStringLiteral("image result"));
+  proxy.setCurrentIndex(0);
+  host.refreshInlinePreview();
+  QCOMPARE(host.inlinePreviewPath(), imagePath);
+  QCOMPARE(host.inlinePreviewMode(), QStringLiteral("image"));
+  QCOMPARE(host.inlinePreviewHandler(),
+           QStringLiteral("synchro.preview.image"));
 
   // Aggregate rows are query-backed folders too. The Look surface runs the
   // generated drill SQL asynchronously, and a newer cursor wins even if an
@@ -601,12 +1304,13 @@ void PeekOverlayTest::panelLookUsesSafeInlineHandlersAndAsyncReads() {
   QCOMPARE(host.inlinePreviewMode(), QStringLiteral("folder"));
   QVERIFY(host.inlineFolderLoading());
   QVERIFY(QTest::qWaitFor(
-      [&] {
-        return !host.inlineFolderLoading() && folderProxy->count() == 1;
-      },
+      [&] { return !host.inlineFolderLoading() && folderProxy->count() == 1; },
       10000));
   QCOMPARE(folderProxy->rowMap(0).value(QStringLiteral("name")).toString(),
            QStringLiteral("bundle.zip"));
+  QCOMPARE(folderProxy->data(folderProxy->index(0, 0), DirectoryModel::MimeRole)
+               .toString(),
+           QStringLiteral("application/zip"));
   QTest::qWait(100);
   QCOMPARE(folderProxy->rowMap(0).value(QStringLiteral("name")).toString(),
            QStringLiteral("bundle.zip"));
@@ -614,6 +1318,409 @@ void PeekOverlayTest::panelLookUsesSafeInlineHandlersAndAsyncReads() {
 
   host.setInlinePreviewActive(false);
   QVERIFY(host.inlinePreviewMode().isEmpty());
+}
+
+void PeekOverlayTest::standaloneLookFollowsSelectionAndMigrates() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  {
+    QFile note(tmp.filePath(QStringLiteral("notes.txt")));
+    QVERIFY(note.open(QIODevice::WriteOnly));
+    note.write("standalone look\n");
+  }
+  {
+    QFile source(tmp.filePath(QStringLiteral("sample.cpp")));
+    QVERIFY(source.open(QIODevice::WriteOnly));
+    source.write("int main() { return 0; }\n");
+  }
+  {
+    QFile markdown(tmp.filePath(QStringLiteral("guide.md")));
+    QVERIFY(markdown.open(QIODevice::WriteOnly));
+    markdown.write(
+        "# Project guide\n\nReadable prose.\n\n```sh\necho ready\n```\n");
+  }
+  QImage colorfulPreview(64, 40, QImage::Format_RGB32);
+  colorfulPreview.fill(qRgb(35, 85, 220));
+  QVERIFY(
+      colorfulPreview.save(tmp.filePath(QStringLiteral("sample.png")), "PNG"));
+  {
+    QFile video(tmp.filePath(QStringLiteral("sample.mp4")));
+    QVERIFY(video.open(QIODevice::WriteOnly));
+    video.write("not-media");
+  }
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("folder")));
+  {
+    QFile child(tmp.filePath(QStringLiteral("folder/inside.txt")));
+    QVERIFY(child.open(QIODevice::WriteOnly));
+    child.write("inside\n");
+  }
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  SelectionModel selection(&proxy, &model);
+  keys.setSelection(&selection);
+  MimeMap mimeMap;
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user-handlers")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+  HandlerLoader loader;
+  XdgOpen xdg;
+  Config config(tmp.filePath(QStringLiteral("config.json")));
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const int noteRow = findProxy(proxy, QStringLiteral("notes.txt"));
+  const int sourceRow = findProxy(proxy, QStringLiteral("sample.cpp"));
+  const int markdownRow = findProxy(proxy, QStringLiteral("guide.md"));
+  const int imageRow = findProxy(proxy, QStringLiteral("sample.png"));
+  const int videoRow = findProxy(proxy, QStringLiteral("sample.mp4"));
+  const int folderRow = findProxy(proxy, QStringLiteral("folder"));
+  QVERIFY(noteRow >= 0);
+  QVERIFY(sourceRow >= 0);
+  QVERIFY(markdownRow >= 0);
+  QVERIFY(imageRow >= 0);
+  QVERIFY(videoRow >= 0);
+  QVERIFY(folderRow >= 0);
+  selection.click(noteRow);
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  ThumbImageProvider::install(&engine);
+  HostApi host(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+               &engine);
+  host.setSelection(&selection);
+  keys.setPeekHost(&host);
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("selectionModel"),
+                                           &selection);
+  engine.rootContext()->setContextProperty(QStringLiteral("appConfig"),
+                                           &config);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), &host);
+
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY(!engine.rootObjects().isEmpty());
+  auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+  QVERIFY(window);
+  // A common narrow floating-window size must still admit Look; the old
+  // fixed 760 px gate made the enabled control appear to do nothing here.
+  window->setWidth(741);
+  window->setHeight(700);
+
+  auto *look = window->findChild<QQuickItem *>(QStringLiteral("panelLook"));
+  auto *dock = window->findChild<QQuickItem *>(QStringLiteral("panelDock"));
+  auto *toggle =
+      window->findChild<QQuickItem *>(QStringLiteral("browserLookToggle"));
+  QVERIFY(look);
+  QVERIFY(dock);
+  QVERIFY(toggle);
+  QVERIFY(toggle->property("checked").toBool());
+  QTRY_VERIFY_WITH_TIMEOUT(look->isVisible() && look->width() >= 240, 1000);
+  QVERIFY(look->parentItem() != dock);
+  QCOMPARE(host.inlinePreviewPath(), tmp.filePath(QStringLiteral("notes.txt")));
+
+  // Grid geometry is live state: resizing or moving Look must update the
+  // keyboard stride without changing which filesystem item is selected.
+  keys.setGridMode(true);
+  auto *grid = window->findChild<QQuickItem *>(QStringLiteral("fileGrid"));
+  QTRY_VERIFY_WITH_TIMEOUT(grid && grid->isVisible(), 1000);
+  QTRY_COMPARE_WITH_TIMEOUT(keys.gridStride(),
+                            grid->property("columns").toInt(), 1000);
+  const QString selectedPath = selection.selectedPaths().constFirst();
+  window->setWidth(940);
+  QTRY_COMPARE_WITH_TIMEOUT(keys.gridStride(),
+                            grid->property("columns").toInt(), 1000);
+  QCOMPARE(selection.selectedPaths(), QStringList{selectedPath});
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(!look->isVisible(), 1000);
+  QTRY_COMPARE_WITH_TIMEOUT(keys.gridStride(),
+                            grid->property("columns").toInt(), 1000);
+  QCOMPARE(selection.selectedPaths(), QStringList{selectedPath});
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(look->isVisible(), 1000);
+  QTRY_COMPARE_WITH_TIMEOUT(keys.gridStride(),
+                            grid->property("columns").toInt(), 1000);
+  QCOMPARE(selection.selectedPaths(), QStringList{selectedPath});
+  window->setWidth(741);
+  keys.setGridMode(false);
+  QTRY_VERIFY_WITH_TIMEOUT(
+      window->findChild<QQuickItem *>(QStringLiteral("fileList")) != nullptr,
+      1000);
+
+  // StrataV and MapV are browser presentations, not modal worlds: the same
+  // selected item and Look/Miller companion remain mounted beside them.
+  keys.setFsnMode(true);
+  QTRY_VERIFY_WITH_TIMEOUT(
+      window->findChild<QQuickItem *>(QStringLiteral("fileFsn")) != nullptr,
+      2000);
+  QTRY_VERIFY_WITH_TIMEOUT(look->isVisible() && look->width() >= 240, 1000);
+  QCOMPARE(host.inlinePreviewPath(), tmp.filePath(QStringLiteral("notes.txt")));
+
+  // A recursive 3D node is not a row in the root listing, but clicking it
+  // must still retarget the shared Look companion and browser selection.
+  const QString nested3d = tmp.filePath(QStringLiteral("folder/inside.txt"));
+  auto *fsnView = window->findChild<QQuickItem *>(QStringLiteral("fileFsn"));
+  QVERIFY(fsnView);
+  QVERIFY(QMetaObject::invokeMethod(
+      fsnView, "selectPath", Q_ARG(QVariant, nested3d),
+      Q_ARG(QVariant, false), Q_ARG(QVariant, 0), Q_ARG(QVariant, false),
+      Q_ARG(QVariant, QStringLiteral("inside.txt")), Q_ARG(QVariant, 7)));
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewPath(), nested3d, 2000);
+  QCOMPARE(selection.selectedPaths(), QStringList{nested3d});
+
+  QVERIFY(QDir(tmp.path()).mkpath(QStringLiteral("folder/media")));
+  const QString nestedImage =
+      tmp.filePath(QStringLiteral("folder/media/inside.png"));
+  QImage nestedPixels(12, 8, QImage::Format_RGB32);
+  nestedPixels.fill(qRgb(30, 120, 210));
+  QVERIFY(nestedPixels.save(nestedImage, "PNG"));
+  QVERIFY(QMetaObject::invokeMethod(
+      fsnView, "selectPath", Q_ARG(QVariant, nestedImage),
+      Q_ARG(QVariant, false), Q_ARG(QVariant, 0), Q_ARG(QVariant, false),
+      Q_ARG(QVariant, QStringLiteral("inside.png")),
+      Q_ARG(QVariant, QFileInfo(nestedImage).size())));
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewPath(), nestedImage, 2000);
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewMode(), QStringLiteral("image"),
+                            2000);
+  QCOMPARE(host.inlinePreviewStat().value(QStringLiteral("mime")).toString(),
+           QStringLiteral("image/png"));
+  QVERIFY(!host.inlinePreviewStat().value(QStringLiteral("uri")).toUrl()
+               .isEmpty());
+
+  const QString nestedVideo =
+      tmp.filePath(QStringLiteral("folder/media/inside.mp4"));
+  {
+    QFile nestedVideoFile(nestedVideo);
+    QVERIFY(nestedVideoFile.open(QIODevice::WriteOnly));
+    QCOMPARE(nestedVideoFile.write(QByteArrayLiteral("not-media")), 9);
+  }
+  QVERIFY(QMetaObject::invokeMethod(
+      fsnView, "selectPath", Q_ARG(QVariant, nestedVideo),
+      Q_ARG(QVariant, false), Q_ARG(QVariant, 0), Q_ARG(QVariant, false),
+      Q_ARG(QVariant, QStringLiteral("inside.mp4")),
+      Q_ARG(QVariant, QFileInfo(nestedVideo).size())));
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewPath(), nestedVideo, 2000);
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewMode(), QStringLiteral("video"),
+                            2000);
+  QCOMPARE(host.inlinePreviewStat().value(QStringLiteral("mime")).toString(),
+           QStringLiteral("video/mp4"));
+  QVERIFY(QDir(tmp.filePath(QStringLiteral("folder/media")))
+              .removeRecursively());
+
+  selection.click(noteRow);
+  QCOMPARE(selection.selectedPaths(),
+           QStringList{tmp.filePath(QStringLiteral("notes.txt"))});
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewPath(),
+                            tmp.filePath(QStringLiteral("notes.txt")), 2000);
+  keys.setFsnTreeView(false);
+  QTRY_VERIFY_WITH_TIMEOUT(look->isVisible(), 1000);
+  keys.setFsnMode(false);
+  QTRY_VERIFY_WITH_TIMEOUT(
+      window->findChild<QQuickItem *>(QStringLiteral("fileList")) != nullptr,
+      1000);
+
+  // Browser Space is a transient Look toggle. It must not rewrite the saved
+  // startup preference; Shift+Space remains the deliberate full Peek.
+  QVERIFY(keys.lookKeyMode());
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(!look->isVisible(), 1000);
+  QVERIFY(config.panelLookOpen());
+  QVERIFY(!host.isOpen());
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(look->isVisible(), 1000);
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(host.isOpen() && !look->isVisible(), 2000);
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(!host.isOpen() && look->isVisible(), 2000);
+
+  // When the browser cannot retain a usable content column, Space falls back
+  // to full Peek instead of silently doing nothing.
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(!look->isVisible(), 1000);
+  window->setWidth(500);
+  QTRY_VERIFY_WITH_TIMEOUT(!window->property("lookStandaloneHasRoom").toBool(),
+                           1000);
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(host.isOpen(), 2000);
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(!host.isOpen(), 2000);
+  window->setWidth(741);
+  QTRY_VERIFY_WITH_TIMEOUT(window->property("lookStandaloneHasRoom").toBool(),
+                           1000);
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(look->isVisible(), 1000);
+
+  selection.click(sourceRow);
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewPath(),
+                            tmp.filePath(QStringLiteral("sample.cpp")), 1000);
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewMode(), QStringLiteral("text"),
+                            1000);
+  QTRY_VERIFY_WITH_TIMEOUT(look->property("coreData")
+                               .toMap()
+                               .value(QStringLiteral("highlighted"))
+                               .toBool(),
+                           2000);
+
+  selection.click(markdownRow);
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewMode(),
+                            QStringLiteral("markdown"), 1000);
+  QTRY_VERIFY_WITH_TIMEOUT(!look->property("coreData")
+                                .toMap()
+                                .value(QStringLiteral("markdownHtml"))
+                                .toString()
+                                .isEmpty(),
+                           2000);
+  auto *markdownBody =
+      look->findChild<QQuickItem *>(QStringLiteral("inlineLookText"));
+  QVERIFY(markdownBody);
+  QCOMPARE(markdownBody->property("textFormat").toInt(), int(Qt::RichText));
+  QVERIFY(markdownBody->width() <= look->width());
+
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(host.isOpen(), 2000);
+  auto *markdownPreview = qobject_cast<QQuickItem *>(host.previewItem());
+  QVERIFY(markdownPreview);
+  QQuickItem *peekMarkdownBody = nullptr;
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        peekMarkdownBody = markdownPreview->findChild<QQuickItem *>(
+            QStringLiteral("markdownReadingBody"));
+        return peekMarkdownBody && peekMarkdownBody->isVisible() &&
+               peekMarkdownBody->property("textFormat").toInt() ==
+                   int(Qt::RichText);
+      },
+      3000));
+  QVERIFY(peekMarkdownBody->property("text").toString().contains(
+      QStringLiteral("Project guide")));
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(!host.isOpen() && look->isVisible(), 2000);
+
+  selection.click(sourceRow);
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewMode(), QStringLiteral("text"),
+                            1000);
+
+  // The Action Deck is an overlay over the current browser composition. It
+  // must not collapse Look or clear/recreate its inline preview behind the
+  // modal, which otherwise produces a visible layout and rendering thrash on
+  // both open and close.
+  const QQuickItem *lookParent = look->parentItem();
+  const qreal lookWidth = look->width();
+  const QString lookPath = host.inlinePreviewPath();
+  QSignalSpy inlinePreviewChanges(&host, &HostApi::inlinePreviewChanged);
+  QVERIFY2(host.openDoLayer(), qPrintable(host.lastError()));
+  QTRY_VERIFY_WITH_TIMEOUT(host.actionOpen(), 1000);
+  QVERIFY(look->isVisible());
+  QCOMPARE(look->parentItem(), lookParent);
+  QCOMPARE(look->width(), lookWidth);
+  QCOMPARE(host.inlinePreviewPath(), lookPath);
+  QCOMPARE(host.inlinePreviewMode(), QStringLiteral("text"));
+  QCOMPARE(inlinePreviewChanges.count(), 0);
+  host.closeAction();
+  QTRY_VERIFY_WITH_TIMEOUT(!host.actionOpen(), 1000);
+  QVERIFY(look->isVisible());
+  QCOMPARE(look->parentItem(), lookParent);
+  QCOMPARE(look->width(), lookWidth);
+  QCOMPARE(host.inlinePreviewPath(), lookPath);
+  QCOMPARE(host.inlinePreviewMode(), QStringLiteral("text"));
+  QCOMPARE(inlinePreviewChanges.count(), 0);
+
+  selection.click(imageRow);
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewMode(), QStringLiteral("image"),
+                            1000);
+  auto *imageStage =
+      look->findChild<QQuickItem *>(QStringLiteral("lookImageStage"));
+  auto *imageBloom =
+      look->findChild<QQuickItem *>(QStringLiteral("lookImageBloom"));
+  QVERIFY(imageStage);
+  QVERIFY(imageBloom);
+  QTRY_VERIFY_WITH_TIMEOUT(imageStage->isVisible(), 1000);
+  QTRY_VERIFY_WITH_TIMEOUT(imageBloom->isVisible(), 3000);
+  QVERIFY(!look->findChild<QQuickItem *>(QStringLiteral("lookImageMatte")));
+
+  selection.click(videoRow);
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewMode(), QStringLiteral("video"),
+                            1000);
+  auto *videoStage =
+      look->findChild<QQuickItem *>(QStringLiteral("lookVideoStage"));
+  auto *videoLoader =
+      look->findChild<QQuickItem *>(QStringLiteral("lookVideoLoader"));
+  QVERIFY(videoStage);
+  QVERIFY(videoLoader);
+  QTRY_VERIFY_WITH_TIMEOUT(videoStage->isVisible(), 1000);
+  QVERIFY(!videoLoader->property("active").toBool());
+  QVERIFY(QMetaObject::invokeMethod(look, "toggleVideoPlayback"));
+  QTRY_VERIFY_WITH_TIMEOUT(videoLoader->property("active").toBool(), 1000);
+  QTRY_VERIFY_WITH_TIMEOUT(
+      look->findChild<QQuickItem *>(QStringLiteral("lookVideoPlayer")), 1000);
+
+  selection.click(folderRow);
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewMode(), QStringLiteral("folder"),
+                            1000);
+  auto *folderProxy = qobject_cast<FilterProxy *>(host.inlineFolderProxy());
+  QVERIFY(folderProxy);
+  QTRY_COMPARE_WITH_TIMEOUT(folderProxy->count(), 1, 2000);
+
+  auto *folderLens =
+      look->findChild<QQuickItem *>(QStringLiteral("folderLens"));
+  QVERIFY(folderLens);
+  QVERIFY(
+      QMetaObject::invokeMethod(folderLens, "selectRow", Q_ARG(QVariant, 0)));
+  folderLens->forceActiveFocus();
+  QTest::keyClick(window, Qt::Key_Space);
+  QTRY_VERIFY_WITH_TIMEOUT(host.isOpen(), 2000);
+  QCOMPARE(host.file().toLocalFile(),
+           tmp.filePath(QStringLiteral("folder/inside.txt")));
+  QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
+           QFileInfo(tmp.path()).canonicalFilePath());
+  keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString());
+  QTRY_VERIFY_WITH_TIMEOUT(!host.isOpen(), 1000);
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewMode(), QStringLiteral("folder"),
+                            1000);
+
+  selection.click(noteRow);
+  selection.ctrlClick(folderRow);
+  QCOMPARE(selection.selectedCount(), 2);
+  QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewMode(), QStringLiteral("multi"),
+                            1000);
+  auto *multiCard =
+      look->findChild<QQuickItem *>(QStringLiteral("lookMultiCard"));
+  QVERIFY(multiCard);
+  QTRY_VERIFY_WITH_TIMEOUT(multiCard->isVisible(), 1000);
+  QTRY_COMPARE_WITH_TIMEOUT(look->property("multiSummary")
+                                .toMap()
+                                .value(QStringLiteral("count"))
+                                .toInt(),
+                            2, 1000);
+
+  selection.ctrlClick(noteRow);
+  selection.ctrlClick(folderRow);
+  QCOMPARE(selection.selectedCount(), 0);
+  QTRY_VERIFY_WITH_TIMEOUT(!look->isVisible(), 1000);
+  QVERIFY(host.inlinePreviewMode().isEmpty());
+
+  selection.click(noteRow);
+  QTRY_VERIFY_WITH_TIMEOUT(look->isVisible(), 1000);
+  keys.setPanelSide(QStringLiteral("bottom"));
+  keys.setPanelId(QStringLiteral("synchro.panel.sql"));
+  QTRY_VERIFY_WITH_TIMEOUT(dock->isVisible(), 1000);
+  QTRY_COMPARE_WITH_TIMEOUT(look->parentItem(), dock, 1000);
+
+  keys.setPanelId(QString());
+  QTRY_VERIFY_WITH_TIMEOUT(look->parentItem() != dock, 1000);
+  QVERIFY(QMetaObject::invokeMethod(toggle, "triggered"));
+  QVERIFY(!config.panelLookOpen());
+  QTRY_VERIFY_WITH_TIMEOUT(!look->isVisible(), 1000);
 }
 
 void PeekOverlayTest::videoHandlerAndWebpRaster() {
@@ -674,9 +1781,8 @@ void PeekOverlayTest::videoHandlerAndWebpRaster() {
                &engine);
   HandlerRegistry::Record rec =
       registry.handler(QStringLiteral("synchro.preview.video"));
-  QQuickItem *preview = loader.create(
-      &engine, rec, QStringLiteral("preview"), &host,
-      QUrl::fromLocalFile(vid.path), {});
+  QQuickItem *preview = loader.create(&engine, rec, QStringLiteral("preview"),
+                                      &host, QUrl::fromLocalFile(vid.path), {});
   QVERIFY2(preview, qPrintable(loader.lastError()));
   preview->deleteLater();
 
@@ -694,7 +1800,8 @@ void PeekOverlayTest::spaceOnFolderDrillsAndEscReturns() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("photos")));
-  QVERIFY(QDir(tmp.filePath(QStringLiteral("photos"))).mkdir(QStringLiteral("trip")));
+  QVERIFY(QDir(tmp.filePath(QStringLiteral("photos")))
+              .mkdir(QStringLiteral("trip")));
   QVERIFY(writePng(tmp.filePath(QStringLiteral("photos/a.png"))));
 
   DirectoryModel model;
@@ -736,11 +1843,12 @@ void PeekOverlayTest::spaceOnFolderDrillsAndEscReturns() {
                   &engine);
   keys.setPeekHost(&hostApi);
 
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(hostApi.isOpen());
   QVERIFY(hostApi.folderPeek());
-  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
-                          3000));
+  QVERIFY(
+      QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; }, 3000));
   QCOMPARE(QFileInfo(model.path()).canonicalFilePath(), rootPath);
   QVERIFY(QTest::qWaitFor(
       [&] {
@@ -748,7 +1856,8 @@ void PeekOverlayTest::spaceOnFolderDrillsAndEscReturns() {
         return pm && !pm->listing() && pm->count() > 0;
       },
       3000));
-  QCOMPARE(QFileInfo(hostApi.folderPath()).fileName(), QStringLiteral("photos"));
+  QCOMPARE(QFileInfo(hostApi.folderPath()).fileName(),
+           QStringLiteral("photos"));
 
   auto *peekProxy = qobject_cast<FilterProxy *>(hostApi.peekProxy());
   QVERIFY(peekProxy);
@@ -758,11 +1867,13 @@ void PeekOverlayTest::spaceOnFolderDrillsAndEscReturns() {
   keys.setGridMode(true);
   keys.setGridStride(4);
   QVERIFY(keys.handleListKey(Qt::Key_D, Qt::NoModifier, QStringLiteral("d")));
-  QCOMPARE(QFileInfo(hostApi.folderPath()).fileName(), QStringLiteral("photos"));
+  QCOMPARE(QFileInfo(hostApi.folderPath()).fileName(),
+           QStringLiteral("photos"));
   QVERIFY(keys.handleListKey(Qt::Key_A, Qt::NoModifier, QStringLiteral("a")));
   QVERIFY(hostApi.folderPeek());
   peekProxy->setCurrentIndex(tripRow);
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(hostApi.isOpen());
   QVERIFY(QTest::qWaitFor(
       [&] {
@@ -773,7 +1884,8 @@ void PeekOverlayTest::spaceOnFolderDrillsAndEscReturns() {
   QCOMPARE(QFileInfo(model.path()).canonicalFilePath(), rootPath);
 
   hostApi.peekBack();
-  QCOMPARE(QFileInfo(hostApi.folderPath()).fileName(), QStringLiteral("photos"));
+  QCOMPARE(QFileInfo(hostApi.folderPath()).fileName(),
+           QStringLiteral("photos"));
   QCOMPARE(QFileInfo(model.path()).canonicalFilePath(), rootPath);
 
   QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
@@ -787,8 +1899,8 @@ void PeekOverlayTest::folderPeekWasdUsesOwnStride() {
   QVERIFY(tmp.isValid());
   QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("grid")));
   for (int i = 0; i < 16; ++i) {
-    QFile f(tmp.filePath(QStringLiteral("grid/f%1.txt").arg(i, 2, 10,
-                                                           QLatin1Char('0'))));
+    QFile f(tmp.filePath(
+        QStringLiteral("grid/f%1.txt").arg(i, 2, 10, QLatin1Char('0'))));
     QVERIFY(f.open(QIODevice::WriteOnly));
     f.write("x\n");
   }
@@ -812,16 +1924,16 @@ void PeekOverlayTest::folderPeekWasdUsesOwnStride() {
                   &engine);
   keys.setPeekHost(&hostApi);
   hostApi.setGridMode(keys.gridMode());
-  QObject::connect(&keys, &KeyMachine::gridModeChanged, &hostApi, [&] {
-    hostApi.setGridMode(keys.gridMode());
-  });
+  QObject::connect(&keys, &KeyMachine::gridModeChanged, &hostApi,
+                   [&] { hostApi.setGridMode(keys.gridMode()); });
 
   model.setPath(tmp.path());
   QVERIFY(waitListingDone(model));
   const int row = findProxy(proxy, QStringLiteral("grid"));
   QVERIFY(row >= 0);
   proxy.setCurrentIndex(row);
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(hostApi.folderListing());
   QVERIFY(QTest::qWaitFor(
       [&] {
@@ -850,8 +1962,8 @@ void PeekOverlayTest::folderPeekFileBackKeepsListingAndScroll() {
   QVERIFY(tmp.isValid());
   QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("docs")));
   for (int i = 0; i < 40; ++i) {
-    QFile f(tmp.filePath(QStringLiteral("docs/n%1.txt").arg(i, 2, 10,
-                                                           QLatin1Char('0'))));
+    QFile f(tmp.filePath(
+        QStringLiteral("docs/n%1.txt").arg(i, 2, 10, QLatin1Char('0'))));
     QVERIFY(f.open(QIODevice::WriteOnly));
     f.write("note\n");
   }
@@ -885,9 +1997,8 @@ void PeekOverlayTest::folderPeekFileBackKeepsListingAndScroll() {
                   &engine);
   keys.setPeekHost(&hostApi);
   hostApi.setGridMode(keys.gridMode());
-  QObject::connect(&keys, &KeyMachine::gridModeChanged, &hostApi, [&] {
-    hostApi.setGridMode(keys.gridMode());
-  });
+  QObject::connect(&keys, &KeyMachine::gridModeChanged, &hostApi,
+                   [&] { hostApi.setGridMode(keys.gridMode()); });
   engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
                                            &model);
   engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
@@ -918,7 +2029,9 @@ void PeekOverlayTest::folderPeekFileBackKeepsListingAndScroll() {
   list->forceActiveFocus();
   QVERIFY(QTest::qWaitFor([&] { return list->hasActiveFocus(); }, 1000));
 
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier,
+                         QStringLiteral(" ")));
   QVERIFY(hostApi.folderPeek());
   QVERIFY(QTest::qWaitFor(
       [&] {
@@ -934,18 +2047,20 @@ void PeekOverlayTest::folderPeekFileBackKeepsListingAndScroll() {
 
   QObject *listing = hostApi.folderListingItem();
   QVERIFY(listing);
-  auto *overlay = window->findChild<QQuickItem *>(QStringLiteral("peekOverlay"));
+  auto *overlay =
+      window->findChild<QQuickItem *>(QStringLiteral("peekOverlay"));
   QVERIFY(overlay);
   QMetaObject::invokeMethod(overlay, "reparentPreview");
 
   QQuickItem *folderList = nullptr;
   QVERIFY(QTest::qWaitFor(
       [&] {
-        folderList = qobject_cast<QQuickItem *>(listing)->findChild<QQuickItem *>(
-            QStringLiteral("peekFolderList"));
+        folderList =
+            qobject_cast<QQuickItem *>(listing)->findChild<QQuickItem *>(
+                QStringLiteral("peekFolderList"));
         if (!folderList)
-          folderList = window->findChild<QQuickItem *>(
-              QStringLiteral("peekFolderList"));
+          folderList =
+              window->findChild<QQuickItem *>(QStringLiteral("peekFolderList"));
         return folderList && folderList->height() > 40 &&
                folderList->property("contentHeight").toReal() > 200;
       },
@@ -958,7 +2073,8 @@ void PeekOverlayTest::folderPeekFileBackKeepsListingAndScroll() {
       1000));
   const qreal yBefore = folderList->property("contentY").toReal();
 
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(QTest::qWaitFor(
       [&] { return hostApi.isOpen() && !hostApi.folderListing(); }, 2000));
   QCOMPARE(hostApi.folderListingItem(), listing);
@@ -966,16 +2082,17 @@ void PeekOverlayTest::folderPeekFileBackKeepsListingAndScroll() {
   QVERIFY(hostApi.peekFileName().endsWith(QStringLiteral(".txt")));
   QVERIFY(QTest::qWaitFor(
       [&] {
-        auto *name = window->findChild<QQuickItem *>(
-            QStringLiteral("peekFileName"));
-        auto *idx = window->findChild<QQuickItem *>(
-            QStringLiteral("peekFileIndex"));
+        auto *name =
+            window->findChild<QQuickItem *>(QStringLiteral("peekFileName"));
+        auto *idx =
+            window->findChild<QQuickItem *>(QStringLiteral("peekFileIndex"));
         return name && name->isVisible() && idx && idx->isVisible() &&
                idx->width() > 8;
       },
       2000));
 
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(QTest::qWaitFor([&] { return hostApi.folderListing(); }, 2000));
   QCOMPARE(hostApi.folderListingItem(), listing);
   QCOMPARE(hostApi.previewItem(), listing);
@@ -983,10 +2100,10 @@ void PeekOverlayTest::folderPeekFileBackKeepsListingAndScroll() {
       QStringLiteral("peekFolderList"));
   QVERIFY(folderList);
   const qreal yAfter = folderList->property("contentY").toReal();
-  QVERIFY2(qAbs(yAfter - yBefore) < 2.0,
-           qPrintable(QStringLiteral("contentY jumped %1 -> %2")
-                          .arg(yBefore)
-                          .arg(yAfter)));
+  QVERIFY2(
+      qAbs(yAfter - yBefore) < 2.0,
+      qPrintable(
+          QStringLiteral("contentY jumped %1 -> %2").arg(yBefore).arg(yAfter)));
   auto *nameAfter =
       window->findChild<QQuickItem *>(QStringLiteral("peekFileName"));
   QVERIFY(!nameAfter || !nameAfter->isVisible());
@@ -1029,7 +2146,8 @@ void PeekOverlayTest::folderPeekSpaceOnFileReturnsListing() {
   const int row = findProxy(proxy, QStringLiteral("docs"));
   QVERIFY(row >= 0);
   proxy.setCurrentIndex(row);
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(hostApi.folderListing());
   QVERIFY(QTest::qWaitFor(
       [&] {
@@ -1044,12 +2162,14 @@ void PeekOverlayTest::folderPeekSpaceOnFileReturnsListing() {
   QVERIFY(fileRow >= 0);
   peekProxy->setCurrentIndex(fileRow);
 
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(QTest::qWaitFor([&] { return !hostApi.folderListing(); }, 2000));
   QCOMPARE(hostApi.peekFileName(), QStringLiteral("beta.txt"));
 
   QSignalSpy listingSpy(&hostApi, &HostApi::folderPeekChanged);
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(hostApi.folderListing());
   QVERIFY(hostApi.folderPeek());
   QVERIFY(listingSpy.count() >= 1);
@@ -1063,7 +2183,8 @@ void PeekOverlayTest::folderPeekStepsPastUnpreviewableFile() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("mix")));
-  QVERIFY(QDir(tmp.filePath(QStringLiteral("mix"))).mkdir(QStringLiteral("subdir")));
+  QVERIFY(QDir(tmp.filePath(QStringLiteral("mix")))
+              .mkdir(QStringLiteral("subdir")));
   {
     QFile a(tmp.filePath(QStringLiteral("mix/aa.txt")));
     QVERIFY(a.open(QIODevice::WriteOnly));
@@ -1100,7 +2221,8 @@ void PeekOverlayTest::folderPeekStepsPastUnpreviewableFile() {
   const int row = findProxy(proxy, QStringLiteral("mix"));
   QVERIFY(row >= 0);
   proxy.setCurrentIndex(row);
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(QTest::qWaitFor(
       [&] {
         auto *pm = qobject_cast<DirectoryModel *>(hostApi.peekModel());
@@ -1116,7 +2238,8 @@ void PeekOverlayTest::folderPeekStepsPastUnpreviewableFile() {
   const int zRow = findProxy(*peekProxy, QStringLiteral("zz.txt"));
   QVERIFY(aRow >= 0 && zipRow >= 0 && zRow >= 0);
   peekProxy->setCurrentIndex(aRow);
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(QTest::qWaitFor([&] { return !hostApi.folderListing(); }, 2000));
   QCOMPARE(hostApi.peekFileName(), QStringLiteral("aa.txt"));
   QVERIFY(hostApi.previewItem() != nullptr);
@@ -1179,10 +2302,11 @@ void PeekOverlayTest::filePeekAdHopsAndPreviewScrolls() {
                   &engine);
   keys.setPeekHost(&hostApi);
 
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(hostApi.isOpen());
-  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
-                          3000));
+  QVERIFY(
+      QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; }, 3000));
   QVERIFY(!hostApi.peekPreviewFocused());
 
   QVERIFY(keys.handleListKey(Qt::Key_D, Qt::NoModifier, QStringLiteral("d")));
@@ -1259,12 +2383,11 @@ void PeekOverlayTest::sqliteAndDuckdbHandlersResolve() {
   QQmlApplicationEngine engine;
   HostApi host(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
                &engine);
-  const QVariantMap info = host.readDatabase(
-      QUrl::fromLocalFile(db.path), QStringLiteral("sqlite"));
+  const QVariantMap info =
+      host.readDatabase(QUrl::fromLocalFile(db.path), QStringLiteral("sqlite"));
   QVERIFY2(info.value(QStringLiteral("ok")).toBool(),
            qPrintable(info.value(QStringLiteral("error")).toString()));
-  QCOMPARE(info.value(QStringLiteral("table")).toString(),
-           QStringLiteral("t"));
+  QCOMPARE(info.value(QStringLiteral("table")).toString(), QStringLiteral("t"));
 }
 
 void PeekOverlayTest::rootFilePeekShowsIndexAndQCloses() {
@@ -1325,12 +2448,14 @@ void PeekOverlayTest::rootFilePeekShowsIndexAndQCloses() {
   window->show();
   QVERIFY(QTest::qWaitForWindowExposed(window));
 
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier,
+                         QStringLiteral(" ")));
   QVERIFY(hostApi.isOpen());
   QVERIFY(!hostApi.folderPeek());
   QCOMPARE(hostApi.peekProxy(), static_cast<QObject *>(&proxy));
-  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
-                          3000));
+  QVERIFY(
+      QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; }, 3000));
 
   auto *idx = window->findChild<QQuickItem *>(QStringLiteral("peekFileIndex"));
   QVERIFY(idx);
@@ -1399,17 +2524,19 @@ void PeekOverlayTest::gridPeekIndexUsesThumbs() {
   window->show();
   QVERIFY(QTest::qWaitForWindowExposed(window));
 
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier,
+                         QStringLiteral(" ")));
   QVERIFY(hostApi.isOpen());
   QVERIFY(hostApi.gridMode());
 
-  auto *grid = window->findChild<QQuickItem *>(
-      QStringLiteral("peekFileIndexGrid"));
-  auto *list = window->findChild<QQuickItem *>(
-      QStringLiteral("peekFileIndexList"));
+  auto *grid =
+      window->findChild<QQuickItem *>(QStringLiteral("peekFileIndexGrid"));
+  auto *list =
+      window->findChild<QQuickItem *>(QStringLiteral("peekFileIndexList"));
   QVERIFY(grid);
-  QVERIFY(QTest::qWaitFor([&] { return grid->isVisible() && grid->width() > 0; },
-                          2000));
+  QVERIFY(QTest::qWaitFor(
+      [&] { return grid->isVisible() && grid->width() > 0; }, 2000));
   QVERIFY(!list || !list->isVisible());
 }
 
@@ -1485,7 +2612,9 @@ void PeekOverlayTest::emptyFolderShowsHintInRootAndPeek() {
   const int row = findProxy(proxy, QStringLiteral("hollow"));
   QVERIFY(row >= 0);
   proxy.setCurrentIndex(row);
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier,
+                         QStringLiteral(" ")));
   QVERIFY(hostApi.isOpen());
   QVERIFY(hostApi.folderPeek());
   QVERIFY(QTest::qWaitFor(
@@ -1495,15 +2624,15 @@ void PeekOverlayTest::emptyFolderShowsHintInRootAndPeek() {
       },
       3000));
 
-  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
-                          3000));
+  QVERIFY(
+      QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; }, 3000));
   auto *preview = qobject_cast<QQuickItem *>(hostApi.previewItem());
   QVERIFY(preview);
-  auto *peekHint = preview->findChild<QQuickItem *>(
-      QStringLiteral("peekEmptyListing"));
+  auto *peekHint =
+      preview->findChild<QQuickItem *>(QStringLiteral("peekEmptyListing"));
   if (!peekHint)
-    peekHint = window->findChild<QQuickItem *>(
-        QStringLiteral("peekEmptyListing"));
+    peekHint =
+        window->findChild<QQuickItem *>(QStringLiteral("peekEmptyListing"));
   QVERIFY2(peekHint, "folder peek surface should include EmptyListing");
   QVERIFY(QTest::qWaitFor(
       [&] {
@@ -1548,7 +2677,8 @@ void PeekOverlayTest::gridPeekIndexHidesFolders() {
   keys.setPeekHost(&hostApi);
   hostApi.setGridMode(true);
 
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(hostApi.isOpen());
   auto *all = qobject_cast<QAbstractItemModel *>(hostApi.peekProxy());
   auto *files = qobject_cast<QAbstractItemModel *>(hostApi.peekFileProxy());
@@ -1587,14 +2717,16 @@ void PeekOverlayTest::peekEnterCommitsFileAndFolder() {
                   &engine);
   keys.setPeekHost(&hostApi);
 
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(hostApi.isOpen());
   QCOMPARE(keys.mode(), QStringLiteral("peek-open"));
   QVERIFY(keys.handleListKey(Qt::Key_Return, Qt::NoModifier, QString()));
   QVERIFY(!hostApi.isOpen());
 
   proxy.setCurrentIndex(findProxy(proxy, QStringLiteral("docs")));
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(hostApi.folderPeek());
   QVERIFY(keys.handleListKey(Qt::Key_Return, Qt::NoModifier, QString()));
   QVERIFY(!hostApi.isOpen());
@@ -1645,6 +2777,9 @@ void PeekOverlayTest::doLayerVerbsKeysAndCopyAs() {
   QVERIFY2(hostApi.actionOpen(), qPrintable(hostApi.lastError()));
   QCOMPARE(hostApi.listHint(), QStringLiteral("Enter open · Ctrl+Enter do"));
   QVERIFY(hostApi.doCaption().contains(QStringLiteral("notes.md")));
+  QCOMPARE(hostApi.doMetadata().value(QStringLiteral("path")).toString(), file);
+  QCOMPARE(hostApi.doMetadata().value(QStringLiteral("count")).toInt(), 1);
+  QCOMPARE(hostApi.doMetadata().value(QStringLiteral("size")).toLongLong(), 3);
 
   QStringList ids;
   for (const QVariant &rowVar : hostApi.doVerbs()) {
@@ -1681,15 +2816,127 @@ void PeekOverlayTest::doLayerVerbsKeysAndCopyAs() {
   QVERIFY(!hostApi.actionOpen());
   QCOMPARE(QGuiApplication::clipboard()->text(), file);
 
+  QVERIFY(hostApi.openDoContext(88.5, 144.25));
+  QVERIFY(hostApi.doContextual());
+  QCOMPARE(hostApi.doAnchorX(), 88.5);
+  QCOMPARE(hostApi.doAnchorY(), 144.25);
+  hostApi.closeAction();
+
   QVERIFY(hostApi.openDoLayer());
   QVERIFY(keys.handleListKey(Qt::Key_Q, Qt::NoModifier, QStringLiteral("q")));
   QVERIFY(!hostApi.actionOpen());
   QCOMPARE(proxy.currentIndex(), listing);
 }
 
-void PeekOverlayTest::doLayerOverlaySplitChrome() {
+void PeekOverlayTest::doLayerOffersOnlyMatchingOmaflows() {
+  ScopedEnvironment binGuard("SYNCHRO_OMAFLOW_BIN");
+  ScopedEnvironment configGuard("SYNCHRO_OMAFLOW_CONFIG_DIR");
+  ScopedEnvironment stateGuard("SYNCHRO_OMAFLOW_STATE_DIR");
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
+  const auto write = [](const QString &path, const QByteArray &body) {
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+           file.write(body) == body.size();
+  };
+  const QString binary = tmp.filePath(QStringLiteral("omaflow"));
+  const QString config = tmp.filePath(QStringLiteral("config"));
+  const QString state = tmp.filePath(QStringLiteral("state"));
+  QVERIFY(write(binary, QByteArrayLiteral("#!/bin/sh\nexit 0\n")));
+  QVERIFY(QFile::setPermissions(binary, QFileDevice::ReadOwner |
+                                            QFileDevice::WriteOwner |
+                                            QFileDevice::ExeOwner));
+  QVERIFY(write(
+      QDir(state).filePath(QStringLiteral("index.json")),
+      QByteArrayLiteral("{\"rules\":[{\"id\":\"markdown-flow\","
+                        "\"name\":\"Publish notes\",\"enabled\":true}]}")));
+  QVERIFY(
+      write(QDir(config).filePath(QStringLiteral("rules/markdown-flow.json")),
+            QByteArrayLiteral(
+                "{\"schemaVersion\":1,\"id\":\"markdown-flow\","
+                "\"name\":\"Publish notes\",\"enabled\":true,"
+                "\"effect\":\"create\","
+                "\"trigger\":{\"type\":\"manual\"},"
+                "\"accepts\":{\"mime\":[\"text/markdown\"],"
+                "\"suffix\":[\".md\"],\"kind\":\"files\"},"
+                "\"actions\":[{\"type\":\"notify\",\"message\":\"done\"}]}")));
+  const QString selectedPath = tmp.filePath(QStringLiteral("notes.md"));
+  QVERIFY(write(selectedPath, QByteArrayLiteral("# notes\n")));
+
+  qputenv("SYNCHRO_OMAFLOW_BIN", binary.toUtf8());
+  qputenv("SYNCHRO_OMAFLOW_CONFIG_DIR", config.toUtf8());
+  qputenv("SYNCHRO_OMAFLOW_STATE_DIR", state.toUtf8());
+  OmaflowBridge omaflow;
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  MimeMap mimeMap;
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user-handlers")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+  QVERIFY(registry.contains(QStringLiteral("synchro.action.omaflow")));
+  HandlerLoader loader;
+  XdgOpen xdg;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const int row = findProxy(proxy, QStringLiteral("notes.md"));
+  QVERIFY(row >= 0);
+  proxy.setCurrentIndex(row);
+  SelectionModel selection(&proxy, &model);
+  selection.click(row);
+
+  QQmlEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  HostApi host(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+               &engine);
+  host.setSelection(&selection);
+  host.setOmaflowBridge(&omaflow);
+  QVERIFY2(host.openDoLayer(QStringLiteral("synchro.action.omaflow")),
+           qPrintable(host.lastError()));
+  QStringList ids;
+  for (const QVariant &value : host.doVerbs())
+    ids.append(value.toMap().value(QStringLiteral("id")).toString());
+  QVERIFY(ids.contains(QStringLiteral("synchro.flow.markdown-flow")));
+  QCOMPARE(host.doBriefTitle(), QStringLiteral("Publish notes"));
+  QCOMPARE(host.doProvider(), QStringLiteral("FLOW"));
+  QCOMPARE(host.doEffect(), QStringLiteral("create"));
+  QVERIFY(!host.doHasParams());
+  QVERIFY(host.actionItem() == nullptr);
+  QCOMPARE(host.omaflowMatches().size(), 1);
+  QVERIFY(host.runDoVerb());
+  QTRY_COMPARE_WITH_TIMEOUT(host.doOperationState(),
+                            QStringLiteral("succeeded"), 3000);
+  QVERIFY(host.actionOpen());
+  host.closeAction();
+  QVERIFY(host.openDoLayer(QStringLiteral("synchro.flow.markdown-flow")));
+  QCOMPARE(host.doOperationState(), QStringLiteral("succeeded"));
+  QVERIFY(host.runDoVerb());
+  QVERIFY(!host.actionOpen());
+  QVERIFY(host.doOperationState().isEmpty());
+
+  selection.ctrlClick(row);
+  QCOMPARE(selection.selectedCount(), 0);
+  QVERIFY(host.openDoLayer());
+  ids.clear();
+  for (const QVariant &value : host.doVerbs())
+    ids.append(value.toMap().value(QStringLiteral("id")).toString());
+  QVERIFY(!ids.contains(QStringLiteral("synchro.flow.markdown-flow")));
+}
+
+void PeekOverlayTest::doLayerOverlaySplitChrome() {
+  ScopedEnvironment homeGuard("SYNCHRO_HOME");
+  QTemporaryDir home;
+  QTemporaryDir tmp;
+  QVERIFY(home.isValid());
+  QVERIFY(tmp.isValid());
+  qputenv("SYNCHRO_HOME", QFile::encodeName(home.path()));
   QVERIFY(writePng(tmp.filePath(QStringLiteral("a.png"))));
 
   DirectoryModel model;
@@ -1709,6 +2956,12 @@ void PeekOverlayTest::doLayerOverlaySplitChrome() {
   model.setPath(tmp.path());
   QVERIFY(waitListingDone(model));
   proxy.setCurrentIndex(findProxy(proxy, QStringLiteral("a.png")));
+  FileCatalog catalog(&model);
+  catalog.scanTree(tmp.path(), 100);
+  QTRY_VERIFY_WITH_TIMEOUT(!catalog.indexing() && catalog.indexedCount() == 1,
+                           10000);
+  catalog.analyzeImages(tmp.path(), 10);
+  QTRY_VERIFY_WITH_TIMEOUT(!catalog.analyzing(), 10000);
 
   QQmlApplicationEngine engine;
   engine.addImportPath(QCoreApplication::applicationDirPath() +
@@ -1716,6 +2969,7 @@ void PeekOverlayTest::doLayerOverlaySplitChrome() {
   ThumbImageProvider::install(&engine);
   HostApi hostApi(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
                   &engine);
+  hostApi.setFileCatalog(&catalog);
   keys.setPeekHost(&hostApi);
   QObject::connect(&keys, &KeyMachine::openWithRequested, &hostApi,
                    &HostApi::openWithPalette);
@@ -1747,14 +3001,14 @@ void PeekOverlayTest::doLayerOverlaySplitChrome() {
   QVERIFY2(hostApi.doHasParams(), qPrintable(hostApi.lastError()));
   auto *params = hostApi.actionItem();
   QVERIFY2(params, qPrintable(hostApi.lastError().isEmpty()
-                                 ? QStringLiteral("no mounted params QML")
-                                 : hostApi.lastError()));
+                                  ? QStringLiteral("no mounted params QML")
+                                  : hostApi.lastError()));
   QVERIFY(params->findChild<QQuickItem *>(QStringLiteral("openWithList")));
   auto *surface =
       window->findChild<QQuickItem *>(QStringLiteral("doParamSurface"));
   QVERIFY(surface);
-  QVERIFY(QTest::qWaitFor([&] { return params->parentItem() == surface; },
-                          2000));
+  QVERIFY(
+      QTest::qWaitFor([&] { return params->parentItem() == surface; }, 2000));
   QVERIFY2(hostApi.doPreviewItem(),
            "png should keep a file preview above the params strip");
   auto *content =
@@ -1762,6 +3016,21 @@ void PeekOverlayTest::doLayerOverlaySplitChrome() {
   QVERIFY(content);
   QVERIFY(QTest::qWaitFor(
       [&] { return hostApi.doPreviewItem()->parentItem() == content; }, 2000));
+  auto *metadata =
+      window->findChild<QQuickItem *>(QStringLiteral("doMetadata"));
+  QVERIFY(metadata);
+  QCOMPARE(hostApi.doMetadata().value(QStringLiteral("path")).toString(),
+           tmp.filePath(QStringLiteral("a.png")));
+  QTRY_COMPARE_WITH_TIMEOUT(
+      hostApi.doMetadata().value(QStringLiteral("width")).toInt(), 1, 3000);
+  QCOMPARE(hostApi.doMetadata().value(QStringLiteral("height")).toInt(), 1);
+  QTRY_VERIFY_WITH_TIMEOUT(
+      hostApi.doMetadata().value(QStringLiteral("cataloged")).toBool(), 3000);
+  QVERIFY(!hostApi.doMetadata().value(QStringLiteral("loading")).toBool());
+  QVERIFY(!hostApi.doMetadata()
+               .value(QStringLiteral("palette"))
+               .toList()
+               .isEmpty());
 }
 
 void PeekOverlayTest::doLayerShowsFilePreviewAndFolderGrid() {
@@ -1815,8 +3084,9 @@ void PeekOverlayTest::doLayerShowsFilePreviewAndFolderGrid() {
       sawFolderProxy = true;
   });
   QVERIFY2(hostApi.openDoLayer(), qPrintable(hostApi.lastError()));
-  QVERIFY2(sawFolderProxy,
-           "doFolderProxy must be visible on doPreviewChanged so QML is not stuck");
+  QVERIFY2(
+      sawFolderProxy,
+      "doFolderProxy must be visible on doPreviewChanged so QML is not stuck");
   QVERIFY(hostApi.doTargetIsDir());
   QVERIFY(hostApi.doPreviewItem() == nullptr);
   auto *folder = qobject_cast<FilterProxy *>(hostApi.doFolderProxy());
@@ -1923,9 +3193,8 @@ void PeekOverlayTest::volumesListingChromeVisible() {
                  for (QQuickItem *chrome : chromes) {
                    if (chrome->isVisible() &&
                        chrome->property("percent").toInt() >= 0 &&
-                       chrome->property("detail")
-                           .toString()
-                           .contains(QStringLiteral("free")))
+                       chrome->property("detail").toString().contains(
+                           QStringLiteral("free")))
                      return true;
                  }
                  return false;
@@ -2013,8 +3282,8 @@ void PeekOverlayTest::fileGridCellsFillWidth() {
 
   auto *grid = window->findChild<QQuickItem *>(QStringLiteral("fileGrid"));
   QVERIFY(grid);
-  QVERIFY(QTest::qWaitFor([&] { return grid->isVisible() && grid->width() > 0; },
-                          1000));
+  QVERIFY(QTest::qWaitFor(
+      [&] { return grid->isVisible() && grid->width() > 0; }, 1000));
   const int cols = grid->property("columns").toInt();
   const qreal cell = grid->property("cellWidth").toReal();
   QVERIFY(cols >= 1);
@@ -2038,6 +3307,198 @@ void PeekOverlayTest::fileGridCellsFillWidth() {
   QVERIFY(qAbs(grid->property("cellWidth").toReal() *
                    grid->property("columns").toInt() -
                layout) < 1.0);
+}
+
+void PeekOverlayTest::gridWasdTracksRenderedGeometryAcrossRelayout() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  for (int i = 0; i < 30; ++i) {
+    QFile f(tmp.filePath(
+        QStringLiteral("tile-%1.txt").arg(i, 2, 10, QLatin1Char('0'))));
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("tile\n");
+  }
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  keys.setGridMode(true);
+  SelectionModel selection(&proxy, &model);
+  keys.setSelection(&selection);
+  Config config(tmp.filePath(QStringLiteral("config.json")));
+
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user-handlers")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+  HandlerLoader loader;
+  XdgOpen xdg;
+  MimeMap mimeMap;
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  selection.click(5);
+
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  HostApi host(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
+               &engine);
+  host.setSelection(&selection);
+  keys.setPeekHost(&host);
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"),
+                                           &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("selectionModel"),
+                                           &selection);
+  engine.rootContext()->setContextProperty(QStringLiteral("appConfig"),
+                                           &config);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), &host);
+
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY(!engine.rootObjects().isEmpty());
+  auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+  QVERIFY(window);
+  window->resize(920, 620);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+  auto *grid = window->findChild<QQuickItem *>(QStringLiteral("fileGrid"));
+  auto *look = window->findChild<QQuickItem *>(QStringLiteral("panelLook"));
+  QVERIFY(grid);
+  QVERIFY(look);
+  QTRY_VERIFY_WITH_TIMEOUT(grid->isVisible(), 1000);
+
+  auto renderedTarget = [&](int row, int dx, int dy) {
+    QVariant target;
+    const bool invoked = QMetaObject::invokeMethod(
+        grid, "geometryTarget", Qt::DirectConnection,
+        Q_RETURN_ARG(QVariant, target), Q_ARG(QVariant, row),
+        Q_ARG(QVariant, dx), Q_ARG(QVariant, dy), Q_ARG(QVariant, 1));
+    return invoked ? target.toInt() : -1;
+  };
+  auto moveDownFrom = [&](int row) {
+    keys.moveGridCursorTo(row);
+    int expected = -1;
+    QTRY_VERIFY_WITH_TIMEOUT((expected = renderedTarget(row, 0, 1)) >= 0,
+                             1000);
+    grid->forceActiveFocus();
+    QVERIFY(QTest::qWaitFor([&] { return grid->hasActiveFocus(); }, 1000));
+    QTest::keyClick(window, Qt::Key_S);
+    QCOMPARE(proxy.currentIndex(), expected);
+  };
+
+  QTRY_VERIFY_WITH_TIMEOUT(look->isVisible(), 1000);
+  moveDownFrom(5);
+
+  // Look animates the grid width. The expected target is recalculated from
+  // delegate centers after each composition change, not from stale columns.
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(!look->isVisible(), 1000);
+  moveDownFrom(5);
+  const qreal wideGridWidth = grid->width();
+  window->setWidth(660);
+  QTRY_VERIFY_WITH_TIMEOUT(grid->width() < wideGridWidth, 1000);
+  moveDownFrom(5);
+  window->setWidth(920);
+  QTRY_VERIFY_WITH_TIMEOUT(grid->width() > 660, 1000);
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QString()));
+  QTRY_VERIFY_WITH_TIMEOUT(look->isVisible(), 1000);
+  moveDownFrom(5);
+}
+
+void PeekOverlayTest::locationCloseConsumesClick() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("Pinned")));
+  const QString pinned = tmp.filePath(QStringLiteral("Pinned"));
+
+  Config config(tmp.filePath(QStringLiteral("config.json")));
+  HandlerRegistry registry;
+  registry.setFirstPartyDir(QStringLiteral(SYNCHRO_FIRST_PARTY_HANDLER_DIR));
+  registry.setUserDir(tmp.filePath(QStringLiteral("no-user-handlers")));
+  registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
+  registry.setScanEnv(false);
+  registry.scan();
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  LocationChips chips;
+  chips.setRegistry(&registry);
+  chips.setConfig(&config);
+  chips.setNav(&nav);
+  chips.setDirectoryModel(&model);
+  keys.setLocationChips(&chips);
+  QVERIFY(chips.pin(pinned));
+  const QString bookmarkId = config.saveSqlBookmark(
+      QStringLiteral("large files"),
+      QStringLiteral("select path from tree order by size desc"), tmp.path());
+  QVERIFY(!bookmarkId.isEmpty());
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  QQmlApplicationEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  engine.rootContext()->setContextProperty(QStringLiteral("directoryModel"),
+                                           &model);
+  engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
+                                           &proxy);
+  engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"),
+                                           &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("locationChips"),
+                                           &chips);
+  engine.rootContext()->setContextProperty(QStringLiteral("appConfig"),
+                                           &config);
+  engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
+  engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
+  QVERIFY(!engine.rootObjects().isEmpty());
+  auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+  QVERIFY(window);
+  window->resize(960, 640);
+  window->show();
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  const QString originalPath = QFileInfo(model.path()).canonicalFilePath();
+  QQuickItem *pinRemove = nullptr;
+  QTRY_VERIFY_WITH_TIMEOUT([&] {
+    const auto hits = visualNamed(
+        window->contentItem(),
+        QStringLiteral("remove:") + LocationChips::pinId(pinned));
+    pinRemove = hits.isEmpty() ? nullptr : hits.first();
+    return pinRemove != nullptr;
+  }(), 1000);
+  QPointF scene = pinRemove->mapToScene(
+      QPointF(pinRemove->width() / 2, pinRemove->height() / 2));
+  QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, scene.toPoint());
+  QTRY_VERIFY_WITH_TIMEOUT(!chips.isPinned(pinned), 1000);
+  QCOMPARE(QFileInfo(model.path()).canonicalFilePath(), originalPath);
+
+  QSignalSpy bookmarkActivated(&chips, &LocationChips::sqlBookmarkActivated);
+  QQuickItem *bookmarkRemove = nullptr;
+  QTRY_VERIFY_WITH_TIMEOUT([&] {
+    const auto hits = visualNamed(
+        window->contentItem(), QStringLiteral("remove:") +
+                                   LocationChips::sqlBookmarkId(bookmarkId));
+    bookmarkRemove = hits.isEmpty() ? nullptr : hits.first();
+    return bookmarkRemove != nullptr;
+  }(), 1000);
+  scene = bookmarkRemove->mapToScene(
+      QPointF(bookmarkRemove->width() / 2, bookmarkRemove->height() / 2));
+  QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, scene.toPoint());
+  QTRY_VERIFY_WITH_TIMEOUT(config.sqlBookmarks().isEmpty(), 1000);
+  QCOMPARE(bookmarkActivated.count(), 0);
+  QCOMPARE(QFileInfo(model.path()).canonicalFilePath(), originalPath);
 }
 
 void PeekOverlayTest::searchGridCellsMatchRows() {
@@ -2086,7 +3547,8 @@ void PeekOverlayTest::searchGridCellsMatchRows() {
   QVERIFY(grid);
   QVERIFY(QTest::qWaitFor(
       [&] {
-        return window->findChild<QQuickItem *>(QStringLiteral("fileGridTiles")) &&
+        return window->findChild<QQuickItem *>(
+                   QStringLiteral("fileGridTiles")) &&
                visualNamed(grid, QStringLiteral("gridCell")).size() >= 3;
       },
       2000));
@@ -2098,8 +3560,8 @@ void PeekOverlayTest::searchGridCellsMatchRows() {
 
   QVERIFY(QTest::qWaitFor(
       [&] {
-        auto *groups = window->findChild<QQuickItem *>(
-            QStringLiteral("searchGridGroups"));
+        auto *groups =
+            window->findChild<QQuickItem *>(QStringLiteral("searchGridGroups"));
         return !search.listing() && groups && groups->isVisible() &&
                !window->findChild<QQuickItem *>(
                    QStringLiteral("fileGridTiles")) &&
@@ -2119,18 +3581,17 @@ void PeekOverlayTest::searchGridCellsMatchRows() {
     QVERIFY(row >= 0 && row < model.count());
     QVERIFY(!seen.contains(row));
     seen.append(row);
-    QCOMPARE(cell->property("name").toString(),
-             model.data(model.index(row, 0), DirectoryModel::NameRole)
-                 .toString());
-    QCOMPARE(cell->property("path").toString(),
-             model.data(model.index(row, 0), DirectoryModel::PathRole)
-                 .toString());
+    QCOMPARE(
+        cell->property("name").toString(),
+        model.data(model.index(row, 0), DirectoryModel::NameRole).toString());
+    QCOMPARE(
+        cell->property("path").toString(),
+        model.data(model.index(row, 0), DirectoryModel::PathRole).toString());
   }
   std::sort(seen.begin(), seen.end());
   QCOMPARE(seen, (QVector<int>{0, 1, 2, 3}));
 
-  const QString thumb =
-      QStringLiteral("image://synchrothumb/search-grid-test");
+  const QString thumb = QStringLiteral("image://synchrothumb/search-grid-test");
   const QString path0 =
       model.data(model.index(0, 0), DirectoryModel::PathRole).toString();
   search.setThumbnail(path0, thumb);
@@ -2402,8 +3863,7 @@ void PeekOverlayTest::fileGridFollowsProxySort() {
   engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
                                            &proxy);
   engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
-  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"),
-                                           &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
   engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
 
   engine.load(QUrl::fromLocalFile(QStringLiteral(SYNCHRO_MAIN_QML)));
@@ -2464,7 +3924,8 @@ void PeekOverlayTest::findInFilePastDefaultWindow() {
                &engine);
 
   const QUrl url = QUrl::fromLocalFile(path);
-  const QVariantList hits = host.findInFile(url, QStringLiteral("FINDME_TOKEN"));
+  const QVariantList hits =
+      host.findInFile(url, QStringLiteral("FINDME_TOKEN"));
   QCOMPARE(hits.size(), 1);
   const QVariantMap hit = hits.at(0).toMap();
   QVERIFY(hit.value(QStringLiteral("offset")).toLongLong() > 65536);
@@ -2472,14 +3933,16 @@ void PeekOverlayTest::findInFilePastDefaultWindow() {
 
   const QVariantMap head = host.readPreview(url, 65536, 0);
   QVERIFY(head.value(QStringLiteral("ok")).toBool());
-  QVERIFY(!head.value(QStringLiteral("text")).toString().contains(
-      QStringLiteral("FINDME_TOKEN")));
+  QVERIFY(!head.value(QStringLiteral("text"))
+               .toString()
+               .contains(QStringLiteral("FINDME_TOKEN")));
 
   const QVariantMap mid = host.readPreview(
       url, 65536, hit.value(QStringLiteral("offset")).toLongLong() - 64);
   QVERIFY(mid.value(QStringLiteral("ok")).toBool());
-  QVERIFY(mid.value(QStringLiteral("text")).toString().contains(
-      QStringLiteral("FINDME_TOKEN")));
+  QVERIFY(mid.value(QStringLiteral("text"))
+              .toString()
+              .contains(QStringLiteral("FINDME_TOKEN")));
   QVERIFY(mid.value(QStringLiteral("startByte")).toLongLong() > 0);
 
   const QVariantList both = host.findInFile(url, QStringLiteral("token"));
@@ -2524,10 +3987,11 @@ void PeekOverlayTest::textPeekFindCyclesHits() {
                   &engine);
   keys.setPeekHost(&hostApi);
 
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
   QVERIFY(hostApi.isOpen());
-  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
-                          3000));
+  QVERIFY(
+      QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; }, 3000));
   QVERIFY(keys.handleListKey(Qt::Key_D, Qt::NoModifier, QStringLiteral("d")));
   QVERIFY(hostApi.peekPreviewFocused());
 
@@ -2544,16 +4008,17 @@ void PeekOverlayTest::textPeekFindCyclesHits() {
   QCOMPARE(preview->property("findIndex").toInt(), 0);
 
   QVariant consumed;
-  QVERIFY(QMetaObject::invokeMethod(
-      preview, "peekKey", Qt::DirectConnection, Q_RETURN_ARG(QVariant, consumed),
-      Q_ARG(QVariant, int(Qt::Key_N)), Q_ARG(QVariant, int(Qt::NoModifier))));
+  QVERIFY(QMetaObject::invokeMethod(preview, "peekKey", Qt::DirectConnection,
+                                    Q_RETURN_ARG(QVariant, consumed),
+                                    Q_ARG(QVariant, int(Qt::Key_N)),
+                                    Q_ARG(QVariant, int(Qt::NoModifier))));
   QVERIFY(consumed.toBool());
   QCOMPARE(preview->property("findIndex").toInt(), 1);
 
-  QVERIFY(QMetaObject::invokeMethod(
-      preview, "peekKey", Qt::DirectConnection, Q_RETURN_ARG(QVariant, consumed),
-      Q_ARG(QVariant, int(Qt::Key_N)),
-      Q_ARG(QVariant, int(Qt::ShiftModifier))));
+  QVERIFY(QMetaObject::invokeMethod(preview, "peekKey", Qt::DirectConnection,
+                                    Q_RETURN_ARG(QVariant, consumed),
+                                    Q_ARG(QVariant, int(Qt::Key_N)),
+                                    Q_ARG(QVariant, int(Qt::ShiftModifier))));
   QVERIFY(consumed.toBool());
   QCOMPARE(preview->property("findIndex").toInt(), 0);
 
@@ -2602,14 +4067,16 @@ void PeekOverlayTest::textPeekFindJumpsPastWindow() {
   HostApi hostApi(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
                   &engine);
   keys.setPeekHost(&hostApi);
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
-  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
-                          3000));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; }, 3000));
   auto *preview = qobject_cast<QQuickItem *>(hostApi.previewItem());
   QVERIFY(preview);
   const QVariantMap head = preview->property("preview").toMap();
-  QVERIFY(!head.value(QStringLiteral("text")).toString().contains(
-      QStringLiteral("TAIL_UNIQUE_HIT")));
+  QVERIFY(!head.value(QStringLiteral("text"))
+               .toString()
+               .contains(QStringLiteral("TAIL_UNIQUE_HIT")));
 
   preview->setProperty("findQuery", QStringLiteral("TAIL_UNIQUE_HIT"));
   QVERIFY(QMetaObject::invokeMethod(preview, "runFind"));
@@ -2618,8 +4085,9 @@ void PeekOverlayTest::textPeekFindJumpsPastWindow() {
   QCOMPARE(preview->property("findIndex").toInt(), 0);
   QVERIFY(preview->property("viewStart").toInt() > 0);
   const QVariantMap mid = preview->property("preview").toMap();
-  QVERIFY(mid.value(QStringLiteral("text")).toString().contains(
-      QStringLiteral("TAIL_UNIQUE_HIT")));
+  QVERIFY(mid.value(QStringLiteral("text"))
+              .toString()
+              .contains(QStringLiteral("TAIL_UNIQUE_HIT")));
 }
 
 void PeekOverlayTest::textPeekFindKeepsNewlines() {
@@ -2656,9 +4124,10 @@ void PeekOverlayTest::textPeekFindKeepsNewlines() {
   HostApi hostApi(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
                   &engine);
   keys.setPeekHost(&hostApi);
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
-  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
-                          3000));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; }, 3000));
   auto *preview = qobject_cast<QQuickItem *>(hostApi.previewItem());
   QVERIFY(preview);
   QVERIFY(QMetaObject::invokeMethod(preview, "openFind"));
@@ -2668,8 +4137,7 @@ void PeekOverlayTest::textPeekFindKeepsNewlines() {
       [&] { return preview->property("findCount").toInt() == 1; }, 1000));
   auto *body = preview->findChild<QQuickItem *>(QStringLiteral("textPeekBody"));
   QVERIFY(body);
-  QVERIFY(QTest::qWaitFor(
-      [&] { return body->implicitHeight() > 48; }, 1000));
+  QVERIFY(QTest::qWaitFor([&] { return body->implicitHeight() > 48; }, 1000));
   QVERIFY2(body->implicitHeight() > 48,
            qPrintable(QString::number(body->implicitHeight())));
 }
@@ -2708,9 +4176,10 @@ void PeekOverlayTest::textPeekFindKeepsSyntaxColors() {
   HostApi hostApi(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
                   &engine);
   keys.setPeekHost(&hostApi);
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
-  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
-                          3000));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; }, 3000));
   auto *preview = qobject_cast<QQuickItem *>(hostApi.previewItem());
   QVERIFY(preview);
   const QVariantMap head = preview->property("preview").toMap();
@@ -2795,9 +4264,10 @@ void PeekOverlayTest::contentSearchPeekOpensFind() {
   keys.setPeekHost(&hostApi);
   QCOMPARE(hostApi.peekFindQuery(), QStringLiteral("synchro_deeplink_token"));
 
-  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
-  QVERIFY(QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; },
-                          3000));
+  QVERIFY(
+      keys.handleListKey(Qt::Key_Space, Qt::NoModifier, QStringLiteral(" ")));
+  QVERIFY(
+      QTest::qWaitFor([&] { return hostApi.previewItem() != nullptr; }, 3000));
   auto *preview = qobject_cast<QQuickItem *>(hostApi.previewItem());
   QVERIFY(preview);
   QVERIFY(QTest::qWaitFor(

@@ -3,3 +3,5 @@
 int runHandlerCli(int argc, char **argv);
 int runQueryCli(int argc, char **argv);
 int runMcpCli(int argc, char **argv);
+int runAgentCli(int argc, char **argv);
+int runCatalogCli(int argc, char **argv);

@@ -55,20 +55,17 @@ bool containsCenter(const FsnLayout::Prim &parent,
          cb.cz() <= pb.maxZ && child.y0 >= parent.y0 + parent.h * 0.5f;
 }
 
-double centerRadius(const FsnLayout::Prim &p) {
-  const Bounds b = boundsOf(p);
-  return std::hypot(b.cx(), b.cz());
-}
-
 QTemporaryDir *makeTree() {
   auto *tmp = new QTemporaryDir;
   if (!tmp->isValid())
     return tmp;
   QDir(tmp->path()).mkdir(QStringLiteral("nested"));
+  QDir(tmp->path()).mkdir(QStringLiteral("other"));
   writeBytes(tmp->filePath(QStringLiteral("big.bin")), 40000);
   writeBytes(tmp->filePath(QStringLiteral("small.txt")), 20);
   writeBytes(tmp->filePath(QStringLiteral("nested/inner.bin")), 8000);
   writeBytes(tmp->filePath(QStringLiteral("nested/tiny.txt")), 20);
+  writeBytes(tmp->filePath(QStringLiteral("other/note.md")), 400);
   return tmp;
 }
 
@@ -79,7 +76,9 @@ class FsnLayoutTest : public QObject {
 
 private slots:
   void mapvAreasAndNesting();
-  void treevRingsRoadsAndHeights();
+  void stratavNeighborhoodMapBuildings();
+  void catalogItemsRetainHierarchyAndMetadata();
+  void widePartialCatalogTreeIsRepresentedHonestly();
 };
 
 // MapV, after fsv: footprint area tracks size, heights are constant
@@ -89,7 +88,8 @@ void FsnLayoutTest::mapvAreasAndNesting() {
   QVERIFY(tmp->isValid());
 
   const QVector<FsnLayout::Prim> prims =
-      FsnLayout::build(tmp->path(), false, FsnLayout::MapView);
+      FsnLayout::build(tmp->path(), false, FsnLayout::MapView,
+                       {tmp->filePath(QStringLiteral("nested"))});
   QVERIFY(prims.size() >= 5);
   const FsnLayout::Prim *root = &prims.constFirst();
   QVERIFY(root->root);
@@ -138,14 +138,15 @@ void FsnLayoutTest::mapvAreasAndNesting() {
   }
 }
 
-// TreeV, after fsv/fsn: the root is a labeled platform, expanded dirs move
-// out to the next ring joined by roads, leaves rise as sqrt(size) towers.
-void FsnLayoutTest::treevRingsRoadsAndHeights() {
+// StrataV: the root itself disappears. Its folders become road-connected MapV
+// buildings while current-folder files occupy bounded-height loose lots.
+void FsnLayoutTest::stratavNeighborhoodMapBuildings() {
   QScopedPointer<QTemporaryDir> tmp(makeTree());
   QVERIFY(tmp->isValid());
 
   const QVector<FsnLayout::Prim> prims =
-      FsnLayout::build(tmp->path(), false, FsnLayout::TreeVView);
+      FsnLayout::build(tmp->path(), false, FsnLayout::StrataVView,
+                       {tmp->filePath(QStringLiteral("nested"))});
   QVERIFY(prims.size() >= 5);
 
   const FsnLayout::Prim *root = nullptr;
@@ -162,41 +163,203 @@ void FsnLayoutTest::treevRingsRoadsAndHeights() {
       ++roads;
     }
   }
-  QVERIFY(root);
-  QVERIFY(platforms >= 2); // root + nested
-  QVERIFY(roads >= 2);     // root's inward trunk + branch to nested
+  QVERIFY(!root);
+  QVERIFY(platforms >= 2); // nested + other neighborhood buildings
+  QVERIFY(roads >= 10);    // one bent street, emitted in stepped segments
 
   const FsnLayout::Prim *nested = byName(prims, QStringLiteral("nested"));
   const FsnLayout::Prim *big = byName(prims, QStringLiteral("big.bin"));
   const FsnLayout::Prim *small = byName(prims, QStringLiteral("small.txt"));
   const FsnLayout::Prim *inner = byName(prims, QStringLiteral("inner.bin"));
+  const FsnLayout::Prim *other = byName(prims, QStringLiteral("other"));
   QVERIFY(nested);
+  QVERIFY(other);
   QVERIFY(big);
   QVERIFY(small);
   QVERIFY(inner);
 
-  // nested is an expanded platform one ring out from the root.
+  // Root folders are stable neighborhood buildings, not children of a root
+  // plaza. The street graph is available for camera routing.
   QCOMPARE(nested->kind, int(FsnLayout::KindPlatform));
-  QVERIFY(centerRadius(*nested) > centerRadius(*root) + 1.0);
-
-  // Road topology for camera flights: platforms know their gate (inner
-  // edge), exit (outer edge), and parent platform.
-  QVERIFY(root->hasRoads);
-  QVERIFY(root->parentPath.isEmpty());
   QVERIFY(nested->hasRoads);
-  QCOMPARE(nested->parentPath, root->path);
-  const double nestedGateR = std::hypot(nested->gateX, nested->gateZ);
-  const double nestedExitR = std::hypot(nested->exitX, nested->exitZ);
-  const double rootExitR = std::hypot(root->exitX, root->exitZ);
-  QVERIFY(nestedGateR < nestedExitR);
-  QVERIFY(nestedGateR > rootExitR); // child ring sits beyond the parent
+  QVERIFY(nested->parentPath.isEmpty());
+  QVERIFY(nested->neighbors.contains(other->path));
+  QVERIFY(other->neighbors.contains(nested->path));
 
-  // Files stand on their platform; height tracks sqrt(size).
+  // Loose root files retain size ordering, but logarithmic bounded height
+  // prevents one giant file from dwarfing the entire neighborhood.
   QCOMPARE(big->kind, int(FsnLayout::KindLeaf));
   QVERIFY(big->h > small->h);
-  QVERIFY(std::abs(double(big->y0) - 0.62) < 0.05);
-  QVERIFY(big->h > 0.5); // sqrt(40000)/256 ~ 0.78
-  QVERIFY(inner->y0 > 0.5f);
+  QVERIFY(big->h < 6.3f);
+
+  // Expanding nested reuses MapV packing on that building's roof.
+  QVERIFY(inner->y0 >= nested->y0 + nested->h - 0.01f);
+  QCOMPARE(inner->h, 0.5f);
+}
+
+void FsnLayoutTest::catalogItemsRetainHierarchyAndMetadata() {
+  const QString root = QStringLiteral("/indexed");
+  QVector<FsnLayout::Item> items;
+  FsnLayout::Item project;
+  project.name = QStringLiteral("project");
+  project.path = root + QStringLiteral("/project");
+  project.parentPath = root;
+  project.isDir = true;
+  project.bytes = 50000;
+  project.childCount = 1;
+  project.dirCount = 1;
+  project.aggregate = true;
+  project.previewChildren = true;
+  items.append(project);
+
+  FsnLayout::Item notes;
+  notes.name = QStringLiteral("notes");
+  notes.path = root + QStringLiteral("/notes");
+  notes.parentPath = root;
+  notes.isDir = true;
+  notes.bytes = 5000;
+  notes.childCount = 1;
+  notes.fileCount = 1;
+  notes.aggregate = true;
+  items.append(notes);
+
+  FsnLayout::Item src;
+  src.name = QStringLiteral("src");
+  src.path = project.path + QStringLiteral("/src");
+  src.parentPath = project.path;
+  src.isDir = true;
+  src.bytes = 30000;
+  src.childCount = 1;
+  src.fileCount = 1;
+  src.aggregate = true;
+  items.append(src);
+
+  FsnLayout::Item code;
+  code.name = QStringLiteral("main.cpp");
+  code.path = src.path + QStringLiteral("/main.cpp");
+  code.parentPath = src.path;
+  code.extension = QStringLiteral("cpp");
+  code.category = QStringLiteral("code");
+  code.ageBucket = QStringLiteral("week");
+  code.bytes = 30000;
+  code.mtime = 1234;
+  items.append(code);
+
+  const QVector<FsnLayout::Prim> prims = FsnLayout::buildFromItems(
+      QStringLiteral("indexed"), root, items, FsnLayout::StrataVView,
+      {project.path, src.path});
+  const FsnLayout::Prim *projectPrim = byName(prims, project.name);
+  const FsnLayout::Prim *notesPrim = byName(prims, notes.name);
+  const FsnLayout::Prim *srcPrim = byName(prims, src.name);
+  const FsnLayout::Prim *codePrim = byName(prims, code.name);
+  QVERIFY(projectPrim);
+  QVERIFY(notesPrim);
+  QVERIFY(srcPrim);
+  QVERIFY(codePrim);
+  QCOMPARE(projectPrim->kind, int(FsnLayout::KindPlatform));
+  QVERIFY(projectPrim->sizeScore > notesPrim->sizeScore);
+  QVERIFY(projectPrim->h > notesPrim->h);
+  QVERIFY(boundsOf(*projectPrim).area() > boundsOf(*notesPrim).area());
+  QCOMPARE(srcPrim->kind, int(FsnLayout::KindPlatform));
+  QCOMPARE(srcPrim->parentPath, project.path);
+  QCOMPARE(srcPrim->ownerPath, project.path);
+  QCOMPARE(codePrim->ownerPath, project.path);
+  QCOMPARE(codePrim->sourceParent, src.path);
+  QCOMPARE(codePrim->category, QStringLiteral("code"));
+  QCOMPARE(codePrim->ageBucket, QStringLiteral("week"));
+  QCOMPARE(codePrim->mtime, qint64(1234));
+  QCOMPARE(srcPrim->childCount, 1);
+  QVERIFY(srcPrim->aggregate);
+
+  // A collapsed district still gets one MapV preview level, but that geometry
+  // is owned by the district and does not recursively expose grandchildren.
+  const QVector<FsnLayout::Prim> collapsedPreview =
+      FsnLayout::buildFromItems(QStringLiteral("indexed"), root, items,
+                                FsnLayout::StrataVView);
+  const FsnLayout::Prim *previewSrc = byName(collapsedPreview, src.name);
+  QVERIFY(previewSrc);
+  QCOMPARE(previewSrc->ownerPath, project.path);
+  QVERIFY(!byName(collapsedPreview, code.name));
+}
+
+void FsnLayoutTest::widePartialCatalogTreeIsRepresentedHonestly() {
+  const QString root = QStringLiteral("/wide");
+  QVector<FsnLayout::Item> items;
+  FsnLayout::Item partial;
+  partial.name = QStringLiteral("large-folder");
+  partial.path = root + QStringLiteral("/large-folder");
+  partial.parentPath = root;
+  partial.isDir = true;
+  partial.bytes = 1024 * 1024 * 1024LL;
+  partial.childCount = 900;
+  partial.fileCount = 899;
+  partial.dirCount = 1;
+  partial.aggregate = true;
+  items.append(partial);
+
+  FsnLayout::Item visibleChild;
+  visibleChild.name = QStringLiteral("visible-child.txt");
+  visibleChild.path = partial.path + QStringLiteral("/visible-child.txt");
+  visibleChild.parentPath = partial.path;
+  visibleChild.bytes = 2048;
+  items.append(visibleChild);
+
+  // This is deliberately wider than the old 36-child cap.
+  for (int i = 0; i < 96; ++i) {
+    FsnLayout::Item file;
+    file.name = QStringLiteral("file-%1.bin").arg(i);
+    file.path = root + QLatin1Char('/') + file.name;
+    file.parentPath = root;
+    file.bytes = (i + 1) * 1024;
+    items.append(file);
+  }
+
+  FsnLayout::Item tenMiB;
+  tenMiB.name = QStringLiteral("ten-mib.bin");
+  tenMiB.path = root + QLatin1Char('/') + tenMiB.name;
+  tenMiB.parentPath = root;
+  tenMiB.bytes = 10 * 1024 * 1024;
+  items.append(tenMiB);
+  FsnLayout::Item oneGiB = tenMiB;
+  oneGiB.name = QStringLiteral("one-gib.bin");
+  oneGiB.path = root + QLatin1Char('/') + oneGiB.name;
+  oneGiB.bytes = 1024 * 1024 * 1024LL;
+  items.append(oneGiB);
+
+  const QVector<FsnLayout::Prim> collapsed = FsnLayout::buildFromItems(
+      QStringLiteral("wide"), root, items, FsnLayout::StrataVView);
+  const FsnLayout::Prim *folder = byName(collapsed, partial.name);
+  const FsnLayout::Prim *child = byName(collapsed, visibleChild.name);
+  const FsnLayout::Prim *smallTower = byName(collapsed, tenMiB.name);
+  const FsnLayout::Prim *largeTower = byName(collapsed, oneGiB.name);
+  QVERIFY(folder);
+  QVERIFY(!child);
+  QVERIFY(smallTower);
+  QVERIFY(largeTower);
+  // A collapsed directory remains a branch platform. Expansion controls its
+  // visible contents, not whether it participates in StrataV topology.
+  QCOMPARE(folder->kind, int(FsnLayout::KindPlatform));
+  QVERIFY(folder->hasRoads);
+  QCOMPARE(folder->childCount, 900);
+  QVERIFY(largeTower->h > smallTower->h + 0.5f);
+  QVERIFY(largeTower->h <= 4.4f);
+  for (int i = 0; i < 96; ++i)
+    QVERIFY(byName(collapsed, QStringLiteral("file-%1.bin").arg(i)));
+
+  // Opening one folder keeps that branch platform in place and reveals its
+  // complete immediate level without disturbing root siblings.
+  const QVector<FsnLayout::Prim> expanded = FsnLayout::buildFromItems(
+      QStringLiteral("wide"), root, items, FsnLayout::StrataVView,
+      {partial.path});
+  folder = byName(expanded, partial.name);
+  child = byName(expanded, visibleChild.name);
+  QVERIFY(folder);
+  QVERIFY(child);
+  QCOMPARE(folder->kind, int(FsnLayout::KindPlatform));
+  QVERIFY(folder->expanded);
+  QCOMPARE(child->sourceParent, partial.path);
+  for (int i = 0; i < 96; ++i)
+    QVERIFY(byName(expanded, QStringLiteral("file-%1.bin").arg(i)));
 }
 
 int main(int argc, char **argv) {

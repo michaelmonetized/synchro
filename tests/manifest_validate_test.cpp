@@ -218,6 +218,18 @@ void ManifestValidateTest::firstPartyPanelTerminalValid() {
   QCOMPARE(sql.manifest.panel.value(QStringLiteral("group")).toString(),
            QStringLiteral("workspace"));
   QCOMPARE(sql.manifest.panel.value(QStringLiteral("order")).toInt(), 20);
+
+  const auto flow = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.panel.omaflow")), true);
+  QVERIFY2(flow.ok, qPrintable(flow.errors.join(QLatin1Char(';'))));
+  QVERIFY(flow.manifest.kinds.contains(QStringLiteral("panel")));
+  QCOMPARE(flow.manifest.entryPoints.value(QStringLiteral("panel")),
+           QStringLiteral("Panel.qml"));
+  QCOMPARE(flow.manifest.panel.value(QStringLiteral("relevance")).toString(),
+           QStringLiteral("manual"));
+  QCOMPARE(flow.manifest.panel.value(QStringLiteral("group")).toString(),
+           QStringLiteral("workspace"));
+  QCOMPARE(flow.manifest.panel.value(QStringLiteral("order")).toInt(), 30);
 }
 
 void ManifestValidateTest::actionCoreRequiresVerb() {

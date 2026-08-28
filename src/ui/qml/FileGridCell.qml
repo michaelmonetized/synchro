@@ -299,7 +299,8 @@ Item {
                 } else {
                     listing.fileModel.currentIndex = cell.rowIndex
                 }
-                listing.doRequested()
+                var point = dragArea.mapToItem(null, mouse.x, mouse.y)
+                listing.doRequested(point.x, point.y)
                 return
             }
             if (listing.keyMachine && listing.keyMachine.mode === "field-search")

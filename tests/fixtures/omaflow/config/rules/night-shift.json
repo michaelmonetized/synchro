@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "night-shift",
+  "name": "Night shift",
+  "enabled": false,
+  "trigger": {
+    "type": "time",
+    "at": "21:30"
+  },
+  "conditions": [],
+  "actions": [
+    {
+      "type": "theme",
+      "name": "Tokyo Night"
+    },
+    {
+      "type": "nightlight",
+      "state": "on"
+    }
+  ],
+  "cooldownSeconds": 60,
+  "source": "At night, switch to a calmer theme and warm the display."
+}

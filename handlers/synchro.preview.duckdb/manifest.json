@@ -23,7 +23,8 @@
     "preview": "duckdb.qml"
   },
   "preview": {
-    "runtime": "inprocess"
+    "runtime": "inprocess",
+    "inline": "quick-app"
   },
   "permissions": ["fs-read"]
 }

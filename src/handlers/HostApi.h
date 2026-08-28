@@ -23,6 +23,7 @@ class HandlerLoader;
 class HandlerRegistry;
 class MimeMap;
 class NavStack;
+class OmaflowBridge;
 class QQmlEngine;
 class SelectionModel;
 class XdgOpen;
@@ -47,15 +48,31 @@ class HostApi : public PeekHost {
   Q_PROPERTY(QString doBriefTitle READ doBriefTitle NOTIFY doIndexChanged)
   Q_PROPERTY(QString doBriefBody READ doBriefBody NOTIFY doIndexChanged)
   Q_PROPERTY(bool doHasParams READ doHasParams NOTIFY doIndexChanged)
-  Q_PROPERTY(bool doParamsFocused READ doParamsFocused WRITE
-                 setDoParamsFocused NOTIFY doFocusChanged)
+  Q_PROPERTY(bool doParamsFocused READ doParamsFocused WRITE setDoParamsFocused
+                 NOTIFY doFocusChanged)
   Q_PROPERTY(QString doHint READ doHint NOTIFY doHintChanged)
+  Q_PROPERTY(bool doContextual READ doContextual NOTIFY doPresentationChanged)
+  Q_PROPERTY(qreal doAnchorX READ doAnchorX NOTIFY doPresentationChanged)
+  Q_PROPERTY(qreal doAnchorY READ doAnchorY NOTIFY doPresentationChanged)
+  Q_PROPERTY(QString doProvider READ doProvider NOTIFY doIndexChanged)
+  Q_PROPERTY(QString doEffect READ doEffect NOTIFY doIndexChanged)
+  Q_PROPERTY(bool doArmed READ doArmed NOTIFY doOperationChanged)
+  Q_PROPERTY(
+      QString doOperationState READ doOperationState NOTIFY doOperationChanged)
+  Q_PROPERTY(
+      QString doOperationTitle READ doOperationTitle NOTIFY doOperationChanged)
+  Q_PROPERTY(QString doOperationSummary READ doOperationSummary NOTIFY
+                 doOperationChanged)
+  Q_PROPERTY(QVariantList doOperationArtifacts READ doOperationArtifacts NOTIFY
+                 doOperationChanged)
   Q_PROPERTY(QString listHint READ listHint CONSTANT)
-  Q_PROPERTY(QQuickItem *doPreviewItem READ doPreviewItem NOTIFY doPreviewChanged)
+  Q_PROPERTY(
+      QQuickItem *doPreviewItem READ doPreviewItem NOTIFY doPreviewChanged)
   Q_PROPERTY(QObject *doFolderModel READ doFolderModel NOTIFY doPreviewChanged)
   Q_PROPERTY(QObject *doFolderProxy READ doFolderProxy NOTIFY doPreviewChanged)
   Q_PROPERTY(bool doTargetIsDir READ doTargetIsDir NOTIFY doPreviewChanged)
   Q_PROPERTY(QString doTargetName READ doTargetName NOTIFY doPreviewChanged)
+  Q_PROPERTY(QVariantMap doMetadata READ doMetadata NOTIFY doMetadataChanged)
   Q_PROPERTY(QVariantList openCandidates READ openCandidates NOTIFY
                  openCandidatesChanged)
   Q_PROPERTY(bool folderPeek READ folderPeek NOTIFY folderPeekChanged)
@@ -65,14 +82,15 @@ class HostApi : public PeekHost {
   Q_PROPERTY(QObject *peekModel READ peekModel NOTIFY folderPeekChanged)
   Q_PROPERTY(QObject *peekProxy READ peekProxy NOTIFY folderPeekChanged)
   Q_PROPERTY(QObject *peekFileProxy READ peekFileProxy NOTIFY folderPeekChanged)
-  Q_PROPERTY(bool gridMode READ gridMode WRITE setGridMode NOTIFY gridModeChanged)
+  Q_PROPERTY(
+      bool gridMode READ gridMode WRITE setGridMode NOTIFY gridModeChanged)
   Q_PROPERTY(bool peekPreviewFocused READ peekPreviewFocused WRITE
                  setPeekPreviewFocused NOTIFY peekFocusChanged)
   Q_PROPERTY(QUrl listingRowUrl READ listingRowUrl NOTIFY listingChromeChanged)
-  Q_PROPERTY(QUrl listingThumbUrl READ listingThumbUrl NOTIFY
-                 listingChromeChanged)
-  Q_PROPERTY(QString peekFindQuery READ peekFindQuery NOTIFY
-                 peekFindQueryChanged)
+  Q_PROPERTY(
+      QUrl listingThumbUrl READ listingThumbUrl NOTIFY listingChromeChanged)
+  Q_PROPERTY(
+      QString peekFindQuery READ peekFindQuery NOTIFY peekFindQueryChanged)
   Q_PROPERTY(QQuickItem *inlinePreviewItem READ inlinePreviewItem NOTIFY
                  inlinePreviewChanged)
   Q_PROPERTY(QString inlinePreviewMode READ inlinePreviewMode NOTIFY
@@ -117,12 +135,23 @@ public:
   bool doHasParams() const;
   bool doParamsFocused() const override { return m_doParamsFocused; }
   QString doHint() const;
+  bool doContextual() const { return m_doContextual; }
+  qreal doAnchorX() const { return m_doAnchorX; }
+  qreal doAnchorY() const { return m_doAnchorY; }
+  QString doProvider() const;
+  QString doEffect() const;
+  bool doArmed() const { return m_doArmed; }
+  QString doOperationState() const { return m_doOperationState; }
+  QString doOperationTitle() const { return m_doOperationTitle; }
+  QString doOperationSummary() const { return m_doOperationSummary; }
+  QVariantList doOperationArtifacts() const { return m_doOperationArtifacts; }
   QString listHint() const;
   QQuickItem *doPreviewItem() const { return m_doPreviewItem; }
   QObject *doFolderModel() const;
   QObject *doFolderProxy() const;
   bool doTargetIsDir() const { return m_doTargetIsDir; }
   QString doTargetName() const { return m_doTargetName; }
+  QVariantMap doMetadata() const { return m_doMetadata; }
   QUrl listingRowUrl() const { return m_listingRowUrl; }
   QUrl listingThumbUrl() const { return m_listingThumbUrl; }
   QQuickItem *inlinePreviewItem() const { return m_inlinePreviewItem; }
@@ -142,6 +171,7 @@ public:
   void setSelection(SelectionModel *sel) { m_sel = sel; }
   void setFileOps(FileOpEngine *ops) { m_ops = ops; }
   void setFileCatalog(FileCatalog *catalog);
+  void setOmaflowBridge(OmaflowBridge *bridge);
 
 public slots:
   void close() override;
@@ -163,27 +193,34 @@ public:
   Q_INVOKABLE bool panelSupportsCompanion(const QString &id,
                                           const QString &companion) const;
   Q_INVOKABLE QVariantList relevantPanels() const;
-  Q_INVOKABLE bool attachSqlHighlighter(QObject *quickDocument,
-                                        const QColor &keyword,
-                                        const QColor &stringColor,
-                                        const QColor &number,
-                                        const QColor &comment,
-                                        const QColor &normal) const;
+  Q_INVOKABLE bool
+  attachSqlHighlighter(QObject *quickDocument, const QColor &keyword,
+                       const QColor &stringColor, const QColor &number,
+                       const QColor &comment, const QColor &normal) const;
   Q_INVOKABLE QString processCwd(int pid) const;
   Q_INVOKABLE QString defaultShell() const;
   Q_INVOKABLE QString terminalColorScheme() const;
   Q_INVOKABLE QString terminalBackground() const;
   Q_INVOKABLE bool setTerminalBackgroundOpacity(QObject *terminal,
-                                                 double opacity) const;
+                                                double opacity) const;
   Q_INVOKABLE void registerSurface(QObject *surface);
   Q_INVOKABLE void setInlinePreviewActive(bool active);
   Q_INVOKABLE void refreshInlinePreview();
+  Q_INVOKABLE void refreshThemedPreviews();
   Q_INVOKABLE void clearInlinePreview();
   Q_INVOKABLE bool promoteInlinePreview();
+  Q_INVOKABLE bool promoteInlineFolderRow(int row);
   Q_INVOKABLE bool commitInlineFolderRow(int row);
   // Non-blocking initial text/markdown reads for the ambient Look surface.
   Q_INVOKABLE quint64 requestPreview(const QUrl &url, int maxBytes = 65536,
-                                     qint64 startByte = 0);
+                                     qint64 startByte = 0,
+                                     const QVariantMap &presentation = {});
+  // Background data-preview reads for inline quick apps. Results are tagged
+  // so a handler can discard an obsolete request after selection changes.
+  Q_INVOKABLE quint64 requestParquet(const QUrl &url, int maxRows = 12);
+  Q_INVOKABLE quint64 requestDatabase(const QUrl &url, const QString &engine,
+                                      const QString &table = QString(),
+                                      int offset = 0, int limit = 40);
   Q_INVOKABLE bool openFile(const QString &path, const QString &mime);
   Q_INVOKABLE bool runOpen(const QString &handlerId);
   Q_INVOKABLE bool runTerminal();
@@ -191,12 +228,19 @@ public:
   Q_INVOKABLE bool restoreTrash();
   Q_INVOKABLE bool emptyTrash();
   Q_INVOKABLE bool runAction(const QString &handlerId);
+  Q_INVOKABLE QVariantList omaflowMatches() const;
+  Q_INVOKABLE bool runOmaflow(const QString &ruleId, bool dryRun = true);
   Q_INVOKABLE bool openWithPalette();
   Q_INVOKABLE bool openDoLayer(const QString &focusId = QString());
+  Q_INVOKABLE bool openDoContext(qreal sceneX, qreal sceneY);
   Q_INVOKABLE void closeAction() override;
   Q_INVOKABLE void setDoIndex(int index);
   Q_INVOKABLE void doMove(int delta) override;
   Q_INVOKABLE bool runDoVerb() override;
+  Q_INVOKABLE bool inspectDoVerb();
+  Q_INVOKABLE void cancelDoOperation();
+  Q_INVOKABLE void clearDoOperation();
+  Q_INVOKABLE void revealDoArtifact(int index);
   Q_INVOKABLE void setDoParamsFocused(bool on) override;
   Q_INVOKABLE bool copyText(const QString &text);
   Q_INVOKABLE void registerDoSurface(QObject *surface);
@@ -220,8 +264,7 @@ public:
   Q_INVOKABLE QVariantMap readParquet(const QUrl &url, int maxRows = 12) const;
   // Read-only table browser for sqlite / duckdb peek handlers.
   // engine is "sqlite" or "duckdb". table empty → first table.
-  Q_INVOKABLE QVariantMap readDatabase(const QUrl &url,
-                                       const QString &engine,
+  Q_INVOKABLE QVariantMap readDatabase(const QUrl &url, const QString &engine,
                                        const QString &table = QString(),
                                        int offset = 0, int limit = 40) const;
   // Zip / tar / gzip member list. Does not extract.
@@ -265,8 +308,11 @@ signals:
   void actionItemChanged();
   void doVerbsChanged();
   void doIndexChanged();
+  void doMetadataChanged();
   void doFocusChanged();
   void doHintChanged();
+  void doPresentationChanged();
+  void doOperationChanged();
   void doPreviewChanged();
   void openCandidatesChanged();
   void folderPeekChanged();
@@ -282,6 +328,10 @@ signals:
   void inlineFolderChanged();
   void previewReady(quint64 requestId, const QUrl &file,
                     const QVariantMap &preview);
+  void parquetReady(quint64 requestId, const QUrl &file,
+                    const QVariantMap &preview);
+  void databaseReady(quint64 requestId, const QUrl &file,
+                     const QVariantMap &preview);
 
 private:
   Manifest::Item currentItem() const;
@@ -294,10 +344,17 @@ private:
   Manifest::Item inlineCurrentItem() const;
   void ensureInlineFolderListing();
   void destroyAction();
+  void refreshDoMetadata();
+  void mergeDoImageFacts(const QVariantMap &facts);
+  void applyDoMetadataResult(quint64 request, const QVariantMap &result);
   void refreshOpenCandidates();
   void onStatsApplied(const QStringList &paths);
   void destroyActionItem();
   void rebuildDoVerbs();
+  bool openDoLayerAt(const QString &focusId, bool contextual, qreal sceneX,
+                     qreal sceneY);
+  bool startCurrentFlow(bool dryRun);
+  void finishDoOperation(bool ok);
   void mountDoParams();
   void attachDoParams();
   void loadDoContent();
@@ -350,12 +407,14 @@ private:
   QString m_inlinePreviewHandler;
   int m_inlinePreviewCount = 0;
   QVariantMap m_inlinePreviewStat;
+  QSet<QString> m_inlineThumbPending;
   bool m_inlinePreviewActive = false;
   quint64 m_nextPreviewRequest = 0;
   QSet<QString> m_inlinePreparing;
   DirectoryModel *m_inlineFolderModel = nullptr;
   FilterProxy *m_inlineFolderProxy = nullptr;
   FileCatalog *m_fileCatalog = nullptr;
+  OmaflowBridge *m_omaflow = nullptr;
   quint64 m_inlineFolderRequest = 0;
   bool m_inlineFolderLoading = false;
   bool m_inlineFolderTruncated = false;
@@ -368,12 +427,18 @@ private:
   FilterProxy *m_doFolderProxy = nullptr;
   QString m_doTargetName;
   bool m_doTargetIsDir = false;
+  QVariantMap m_doMetadata;
+  QString m_doMetadataPath;
+  quint64 m_doMetadataRequest = 0;
   struct DoVerb {
     QString id;
     QString name;
     QString description;
     QString runtime;
     QString group;
+    QString provider;
+    QString providerId;
+    QString effect;
     bool hasParams = false;
   };
   QVector<DoVerb> m_doVerbs;
@@ -381,6 +446,17 @@ private:
   QVariantList m_doSelection;
   int m_doIndex = -1;
   bool m_doParamsFocused = false;
+  bool m_doExplicitSelection = false;
+  bool m_doContextual = false;
+  qreal m_doAnchorX = -1;
+  qreal m_doAnchorY = -1;
+  bool m_doArmed = false;
+  QString m_doOperationState;
+  QString m_doOperationTitle;
+  QString m_doOperationRule;
+  QStringList m_doOperationPaths;
+  QString m_doOperationSummary;
+  QVariantList m_doOperationArtifacts;
   QString m_loadedId;
   bool m_open = false;
   bool m_actionOpen = false;

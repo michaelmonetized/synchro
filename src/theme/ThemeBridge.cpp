@@ -72,7 +72,8 @@ void ThemeBridge::applyFallbackPalette() {
   m_accent = kFallbackAccent;
   m_urgent = kFallbackUrgent;
   m_muted = kFallbackMuted;
-  m_fontFamily = QStringLiteral("monospace");
+  m_sansFontFamily = QStringLiteral("sans-serif");
+  m_monoFontFamily = QStringLiteral("monospace");
   m_fontBaseSize = 12;
   m_fontBodyOverride = 0;
   m_fontBody = 12;

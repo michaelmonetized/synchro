@@ -7,6 +7,7 @@ HandlerSurface {
 
     peekFlickable: gridFlick
     property var info: ({})
+    property double requestId: 0
 
     implicitWidth: 720
     implicitHeight: 480
@@ -30,9 +31,10 @@ HandlerSurface {
     }
 
     function reload() {
-        if (!root.host || !root.file)
+        if (!root.host || !root.file || !root.host.requestParquet)
             return
-        root.info = root.host.readParquet(root.file, 12)
+        root.info = ({ loading: true })
+        root.requestId = root.host.requestParquet(root.file, 12)
     }
 
     function cellText(row, name) {
@@ -70,6 +72,25 @@ HandlerSurface {
 
     onFileChanged: root.reload()
     Component.onCompleted: root.reload()
+
+    Connections {
+        target: root.host
+        function onParquetReady(requestId, file, preview) {
+            if (requestId !== root.requestId ||
+                    file.toString() !== root.file.toString())
+                return
+            root.info = preview
+        }
+    }
+
+    Text {
+        visible: root.info && root.info.loading === true
+        anchors.centerIn: parent
+        text: "reading parquet…"
+        color: Theme.muted
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.fontBody
+    }
 
     Text {
         visible: root.info && root.info.ok === false
@@ -123,7 +144,7 @@ HandlerSurface {
         }
 
         Text {
-            visible: root.info && root.info.createdBy
+            visible: !!(root.info && root.info.createdBy)
             width: parent.width
             text: root.info && root.info.createdBy ? root.info.createdBy : ""
             color: Theme.muted
@@ -197,7 +218,7 @@ HandlerSurface {
                             anchors.rightMargin: Theme.space(8)
                             text: modelData.name || ""
                             color: Theme.foreground
-                            font.family: Theme.fontFamily
+                            font.family: Theme.monoFontFamily
                             font.pixelSize: Theme.fontBody
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
@@ -212,7 +233,7 @@ HandlerSurface {
                             text: (modelData.type || "") +
                                   (modelData.repetition ? "  " + modelData.repetition : "")
                             color: Theme.muted
-                            font.family: Theme.fontFamily
+                            font.family: Theme.monoFontFamily
                             font.pixelSize: Theme.fontBody
                         }
                     }
@@ -287,7 +308,7 @@ HandlerSurface {
                                         anchors.rightMargin: Theme.space(6)
                                         text: modelData
                                         color: Theme.foreground
-                                        font.family: Theme.fontFamily
+                                        font.family: Theme.monoFontFamily
                                         font.pixelSize: Theme.fontBody
                                         wrapMode: Text.NoWrap
                                         elide: Text.ElideRight
@@ -327,7 +348,7 @@ HandlerSurface {
                                             anchors.rightMargin: Theme.space(6)
                                             text: root.cellText(sampleRow.rowData, modelData)
                                             color: Theme.foreground
-                                            font.family: Theme.fontFamily
+                                            font.family: Theme.monoFontFamily
                                             font.pixelSize: Theme.fontBody
                                             wrapMode: Text.NoWrap
                                             elide: Text.ElideRight

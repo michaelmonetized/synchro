@@ -1,0 +1,3 @@
+{"at":"2026-08-24T09:15:00-04:00","kind":"dry-run","execId":"demo-03","ruleId":"night-shift","ruleName":"Night shift","trigger":"manual","status":"ok"}
+{"at":"2026-08-24T13:45:12-04:00","kind":"run","execId":"demo-02","ruleId":"presentation-dock","ruleName":"Presentation dock","trigger":"monitor-connected","status":"ok"}
+{"at":"2026-08-24T16:08:44-04:00","kind":"run","execId":"demo-01","ruleId":"quiet-build","ruleName":"Quiet build","trigger":"custom build-started","status":"ok"}

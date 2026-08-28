@@ -67,7 +67,7 @@ Item {
             anchors.centerIn: parent
             text: root.suffix
             color: Theme.muted
-            font.family: Theme.fontFamily
+            font.family: Theme.monoFontFamily
             font.pixelSize: Math.max(7, Math.round(root.height * 0.13))
             font.bold: true
             elide: Text.ElideRight

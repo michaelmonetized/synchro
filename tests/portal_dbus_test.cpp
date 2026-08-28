@@ -167,7 +167,8 @@ private slots:
   void chooserHasHomeAndRecentChips();
   void questionSearchThenEnterSendsFile();
   void directoryEnterOnFileSendsParent();
-  void saveEnterOnFolderSavesInsideIt();
+  void saveIgnoresIncidentalSelection();
+  void openActionNavigatesSelectedFolder();
   void bracketsCyclePortalFilters();
   void saveInvalidNameSetsStatus();
   void chooserPeekShowsIndexAndQCloses();
@@ -706,7 +707,7 @@ void PortalDbusTest::directoryEnterOnFileSendsParent() {
   closeBusPair(bus);
 }
 
-void PortalDbusTest::saveEnterOnFolderSavesInsideIt() {
+void PortalDbusTest::saveIgnoresIncidentalSelection() {
   if (!QDBusConnection::sessionBus().isConnected())
     QSKIP("No session bus");
 
@@ -741,7 +742,8 @@ void PortalDbusTest::saveEnterOnFolderSavesInsideIt() {
   session->selectionModel()->setCursor(row);
   QCOMPARE(QFileInfo(session->destPreview()).fileName(),
            QStringLiteral("shot.png"));
-  QVERIFY(session->destPreview().contains(QStringLiteral("inbox")));
+  QCOMPARE(QFileInfo(session->destPreview()).absolutePath(),
+           QFileInfo(tmp.path()).absoluteFilePath());
   const QString cwd = session->directoryModel()->path();
   session->keyMachine()->handleListKey(Qt::Key_Return, Qt::NoModifier,
                                        QString());
@@ -753,8 +755,91 @@ void PortalDbusTest::saveEnterOnFolderSavesInsideIt() {
   const QStringList uris =
       reply.argumentAt<1>().value(QStringLiteral("uris")).toStringList();
   QCOMPARE(uris.size(), 1);
+  QCOMPARE(
+      QUrl(uris.first()).toLocalFile(),
+      QFileInfo(tmp.filePath(QStringLiteral("shot.png"))).absoluteFilePath());
+
+  const QDBusObjectPath fileHandle(
+      QStringLiteral("/org/freedesktop/portal/desktop/request/test/sf"));
+  QVariantMap fileOptions;
+  fileOptions.insert(QStringLiteral("current_folder"), folderBytes(tmp.path()));
+  fileOptions.insert(QStringLiteral("current_name"),
+                     QStringLiteral("second.png"));
+  QDBusPendingCall filePending =
+      saveFile(bus.client, service, fileHandle, fileOptions);
+  QVERIFY(QTest::qWaitFor(
+      [&] { return portal.session(fileHandle.path()) != nullptr; }));
+  ChooserSession *fileSession = portal.session(fileHandle.path());
+  QVERIFY(fileSession);
+  QVERIFY(waitListingDone(*fileSession->directoryModel()));
+  const int fileRow =
+      findProxy(*fileSession->filterProxy(), QStringLiteral("other.txt"));
+  QVERIFY(fileRow >= 0);
+  fileSession->selectionModel()->setCursor(fileRow);
+  fileSession->activateOrAccept();
+  QVERIFY(waitFinished(filePending));
+  QDBusPendingReply<uint, QVariantMap> fileReply(filePending);
+  QVERIFY(fileReply.isValid());
+  const QStringList fileUris =
+      fileReply.argumentAt<1>().value(QStringLiteral("uris")).toStringList();
+  QCOMPARE(fileUris.size(), 1);
+  QCOMPARE(
+      QUrl(fileUris.first()).toLocalFile(),
+      QFileInfo(tmp.filePath(QStringLiteral("second.png"))).absoluteFilePath());
+  closeBusPair(bus);
+}
+
+void PortalDbusTest::openActionNavigatesSelectedFolder() {
+  if (!QDBusConnection::sessionBus().isConnected())
+    QSKIP("No session bus");
+
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("inbox")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("inbox/note.txt"))));
+
+  BusPair bus = openBusPair("openaction");
+  QVERIFY(bus.ok);
+  PortalService portal;
+  const QString service = testService("openaction");
+  QVERIFY2(portal.start(bus.server, service), qPrintable(portal.lastError()));
+  const QDBusObjectPath handle(
+      QStringLiteral("/org/freedesktop/portal/desktop/request/test/oa"));
+  QVariantMap options;
+  options.insert(QStringLiteral("current_folder"), folderBytes(tmp.path()));
+  QDBusPendingCall pending = openFile(bus.client, service, handle, options);
+  QVERIFY(QTest::qWaitFor(
+      [&] { return portal.session(handle.path()) != nullptr; }));
+  ChooserSession *session = portal.session(handle.path());
+  QVERIFY(session);
+  QVERIFY(waitListingDone(*session->directoryModel()));
+  const int folderRow =
+      findProxy(*session->filterProxy(), QStringLiteral("inbox"));
+  QVERIFY(folderRow >= 0);
+  session->selectionModel()->setCursor(folderRow);
+
+  session->activateOrAccept();
+  QVERIFY(!pending.isFinished());
+  QVERIFY(QTest::qWaitFor([&] {
+    return QFileInfo(session->directoryModel()->path()).fileName() ==
+           QStringLiteral("inbox");
+  }));
+  QVERIFY(waitListingDone(*session->directoryModel()));
+  const int fileRow =
+      findProxy(*session->filterProxy(), QStringLiteral("note.txt"));
+  QVERIFY(fileRow >= 0);
+  session->selectionModel()->setCursor(fileRow);
+  session->activateOrAccept();
+
+  QVERIFY(waitFinished(pending));
+  QDBusPendingReply<uint, QVariantMap> reply(pending);
+  QVERIFY(reply.isValid());
+  QCOMPARE(reply.argumentAt<0>(), 0u);
+  const QStringList uris =
+      reply.argumentAt<1>().value(QStringLiteral("uris")).toStringList();
+  QCOMPARE(uris.size(), 1);
   QCOMPARE(QUrl(uris.first()).toLocalFile(),
-           QFileInfo(tmp.filePath(QStringLiteral("inbox/shot.png")))
+           QFileInfo(tmp.filePath(QStringLiteral("inbox/note.txt")))
                .absoluteFilePath());
   closeBusPair(bus);
 }

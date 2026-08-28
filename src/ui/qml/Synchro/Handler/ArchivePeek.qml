@@ -144,7 +144,7 @@ Item {
                     anchors.rightMargin: Theme.space(8)
                     text: modelData.name || ""
                     color: modelData.kind === "dir" ? Theme.muted : Theme.foreground
-                    font.family: Theme.fontFamily
+                    font.family: Theme.monoFontFamily
                     font.pixelSize: Theme.fontBody
                     elide: Text.ElideMiddle
                     wrapMode: Text.NoWrap
@@ -157,7 +157,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     text: modelData.kind === "dir" ? "" : root.fmtSize(modelData.size)
                     color: Theme.muted
-                    font.family: Theme.fontFamily
+                    font.family: Theme.monoFontFamily
                     font.pixelSize: Theme.fontBody
                 }
             }

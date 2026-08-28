@@ -1,0 +1,41 @@
+{
+  "generatedAt": "2026-08-24T18:00:00Z",
+  "rules": [
+    {
+      "id": "downloads-router-lab",
+      "name": "Downloads router · reconverging paths",
+      "enabled": false,
+      "triggerSummary": "file-created: Downloads",
+      "actionsSummary": "route, inspect, transform, index",
+      "actionCount": 8,
+      "conditionCount": 3
+    },
+    {
+      "id": "presentation-fanout-lab",
+      "name": "Presentation mode · fan-out / fan-in",
+      "enabled": false,
+      "triggerSummary": "monitor-connected: projector",
+      "actionsSummary": "parallel desktop setup with fallback",
+      "actionCount": 7,
+      "conditionCount": 2
+    },
+    {
+      "id": "network-retry-lab",
+      "name": "Network recovery · bounded retry loop",
+      "enabled": false,
+      "triggerSummary": "network-changed: offline",
+      "actionsSummary": "probe, repair, wait, retry",
+      "actionCount": 4,
+      "conditionCount": 2
+    },
+    {
+      "id": "project-arrival-lab",
+      "name": "Project arrival · four-way dispatch",
+      "enabled": false,
+      "triggerSummary": "folder-created: workspace",
+      "actionsSummary": "detect, hydrate, notify, open",
+      "actionCount": 10,
+      "conditionCount": 4
+    }
+  ]
+}

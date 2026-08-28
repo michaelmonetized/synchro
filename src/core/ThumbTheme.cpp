@@ -15,6 +15,12 @@ const QColor kBg(QStringLiteral("#020000"));
 const QColor kAccent(QStringLiteral("#55937c"));
 const QColor kMuted(QStringLiteral("#707880"));
 
+QMutex gThemeCacheMutex;
+ThumbTheme gCachedTheme;
+qint64 gCachedThemeMtime = -1;
+QString gCachedThemePath;
+bool gThemeCacheInitialized = false;
+
 QString colorsPath() {
   return QDir::homePath() +
          QStringLiteral("/.local/state/omarchy/current/theme/colors.toml");
@@ -111,22 +117,28 @@ QString ThumbTheme::cacheId() const {
 }
 
 ThumbTheme ThumbTheme::current() {
-  static QMutex mu;
-  static ThumbTheme cached = fallback();
-  static qint64 cachedMtime = -1;
-  static QString cachedPath;
-  QMutexLocker lock(&mu);
+  QMutexLocker lock(&gThemeCacheMutex);
+  if (!gThemeCacheInitialized) {
+    gCachedTheme = fallback();
+    gThemeCacheInitialized = true;
+  }
   const QString path = colorsPath();
   const qint64 mt = QFileInfo(path).lastModified().toMSecsSinceEpoch();
-  if (cachedPath == path && cachedMtime == mt && mt > 0)
-    return cached;
-  cachedPath = path;
-  cachedMtime = mt;
+  if (gCachedThemePath == path && gCachedThemeMtime == mt && mt > 0)
+    return gCachedTheme;
+  gCachedThemePath = path;
+  gCachedThemeMtime = mt;
   QFile f(path);
   if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-    cached = fallback();
-    return cached;
+    gCachedTheme = fallback();
+    return gCachedTheme;
   }
-  cached = parseColors(QString::fromUtf8(f.readAll()));
-  return cached;
+  gCachedTheme = parseColors(QString::fromUtf8(f.readAll()));
+  return gCachedTheme;
+}
+
+void ThumbTheme::invalidateCache() {
+  QMutexLocker lock(&gThemeCacheMutex);
+  gCachedThemePath.clear();
+  gCachedThemeMtime = -1;
 }

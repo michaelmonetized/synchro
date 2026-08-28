@@ -106,7 +106,7 @@ Item {
                 visible: root.yn
                 text: "y / n / Esc"
                 color: Theme.muted
-                font.family: Theme.fontFamily
+                font.family: Theme.monoFontFamily
                 font.pixelSize: Theme.fontBody
             }
 
@@ -118,7 +118,7 @@ Item {
                 color: Theme.foreground
                 selectedTextColor: Theme.background
                 selectionColor: Theme.accent
-                font.family: Theme.fontFamily
+                font.family: Theme.monoFontFamily
                 font.pixelSize: Theme.fontBody
                 selectByMouse: true
                 text: root.yn ? "" : (root.keyMachine ? root.keyMachine.promptText : "")

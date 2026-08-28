@@ -117,7 +117,7 @@ Item {
         // terminal on QQuickPaintedItem's image-backed path instead: the FBO
         // path is where the NVIDIA driver crashes seen in Synchro originate.
         renderTarget: PaintedItem.Image
-        font.family: Theme.fontFamily
+        font.family: Theme.monoFontFamily
         font.pixelSize: Theme.fontBody + 1
         colorScheme: surface.schemeName
         enableBold: true

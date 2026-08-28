@@ -12,6 +12,7 @@ FocusScope {
     property bool loading: false
     property string errorText: ""
     property bool truncated: false
+    property bool queryBusy: false
     property bool gridMode: true
     property int currentIndex: -1
     readonly property int count: folderProxy ? folderProxy.count : 0
@@ -83,6 +84,14 @@ FocusScope {
     Keys.onPressed: function(event) {
         if (event.key === Qt.Key_V && event.modifiers === Qt.NoModifier) {
             root.viewToggleRequested()
+            event.accepted = true
+            return
+        }
+        if (event.key === Qt.Key_Space &&
+                (event.modifiers === Qt.NoModifier ||
+                 event.modifiers === Qt.ShiftModifier)) {
+            if (root.host && root.currentIndex >= 0)
+                root.host.promoteInlineFolderRow(root.currentIndex)
             event.accepted = true
             return
         }
@@ -162,7 +171,7 @@ FocusScope {
 
         Text {
             anchors.centerIn: parent
-            visible: !root.loading && !root.errorText.length &&
+            visible: !root.queryBusy && !root.loading && !root.errorText.length &&
                      root.folderModel && !root.folderModel.listing &&
                      root.count === 0
             text: "Empty folder"
@@ -173,8 +182,9 @@ FocusScope {
 
         Text {
             anchors.centerIn: parent
-            visible: root.loading || (root.folderModel &&
+            visible: !root.queryBusy && (root.loading || (root.folderModel &&
                      root.folderModel.listing && root.count === 0)
+                     )
             text: root.loading ? "Querying folder…" : "Reading folder…"
             color: Theme.muted
             font.family: Theme.fontFamily
@@ -184,13 +194,21 @@ FocusScope {
         Text {
             anchors.centerIn: parent
             width: Math.max(0, parent.width - Theme.spaceXL * 2)
-            visible: root.errorText.length > 0
+            visible: !root.queryBusy && root.errorText.length > 0
             text: root.errorText
             color: Theme.urgent
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontBodySmall
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
+        }
+
+        QueryBusy {
+            objectName: "folderQueryBusy"
+            anchors.fill: parent
+            running: root.queryBusy
+            label: "Querying this folder…"
+            z: 4
         }
     }
 

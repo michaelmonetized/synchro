@@ -9,6 +9,11 @@ HandlerSurface {
     implicitWidth: 720
     implicitHeight: 480
     objectName: "markdownPeekPreview"
+    readonly property int themeEpoch: Theme.epoch
+
+    onThemeEpochChanged: if (!findBody.findOpen)
+        findBody.reload()
+    Component.onCompleted: findBody.reload()
 
     function peekKey(key, modifiers) {
         var shift = modifiers & Qt.ShiftModifier
@@ -36,7 +41,8 @@ HandlerSurface {
         anchors.fill: parent
         host: root.host
         file: root.file
-        asyncLoad: root.inlinePreview
+        asyncLoad: true
+        renderOptions: Theme.markdownStyle()
         visible: findOpen
         onFileChanged: if (!findOpen)
             findBody.reload()
@@ -45,30 +51,41 @@ HandlerSurface {
     Flickable {
         id: flick
         anchors.fill: parent
-        anchors.margins: Theme.space(16)
+        anchors.margins: Theme.space(18)
         visible: !findBody.findOpen
         contentWidth: flick.width
         contentHeight: body.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
-        Text {
+        TextEdit {
             id: body
-            width: flick.width
+            objectName: "markdownReadingBody"
+            width: Math.min(flick.width,
+                            Math.max(480, Theme.fontBody * 58))
+            x: Math.max(0, (flick.width - width) / 2)
+            readOnly: true
+            selectByMouse: true
+            activeFocusOnPress: false
+            persistentSelection: true
             text: {
                 if (!findBody.preview || findBody.preview.ok === undefined)
-                    return ""
+                    return findBody.preview && findBody.preview.loading
+                           ? "Rendering…" : ""
                 if (findBody.preview.ok)
-                    return findBody.preview.text
+                    return findBody.preview.markdownHtml ||
+                           findBody.preview.text
                 return findBody.preview.error === "binary"
                        ? "(binary file)"
                        : (findBody.preview.error || "unreadable")
             }
-            textFormat: Text.MarkdownText
+            textFormat: findBody.preview && findBody.preview.markdownHtml
+                        ? TextEdit.RichText : TextEdit.PlainText
             color: Theme.foreground
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontBody
             wrapMode: Text.Wrap
+            padding: Theme.space(10)
         }
     }
 

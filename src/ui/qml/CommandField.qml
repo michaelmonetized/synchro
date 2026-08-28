@@ -5,8 +5,15 @@ Item {
     id: root
 
     required property var keyMachine
-    property var fileModel
-    property var filterProxy
+    property var fileModel: null
+    property var filterProxy: null
+    property bool lookAvailable: false
+    property bool lookHasRoom: true
+    property bool lookHasSelection: false
+    property bool lookOpen: true
+    property bool agentAvailable: false
+    signal lookToggleRequested()
+    signal agentRequested()
 
     readonly property bool fieldActive: keyMachine && keyMachine.fieldFocused
     readonly property bool typingSearch: keyMachine && keyMachine.mode === "field-search"
@@ -50,19 +57,37 @@ Item {
     }
 
     function modeLabel() {
-        if (root.keyMachine && root.keyMachine.statusMessage.length)
+        if (root.keyMachine && root.keyMachine.statusMessage.length &&
+                !(root.keyMachine.fsnMode &&
+                  root.keyMachine.statusMessage === "it's a unix system"))
             return root.keyMachine.statusMessage
-        if (root.keyMachine && root.keyMachine.panelFocused)
-            return root.keyMachine.panelId.indexOf("terminal") >= 0 ? "Terminal has keys"
-                                                                    : "Panel has keys"
         if (root.typingSearch) return root.contentSearch ? "Content search" : "Name search"
         if (root.viewingSearch) return root.fileModel.isContentSearch ? "Content results"
                                                                       : "Search results"
         if (root.keyMachine && root.keyMachine.mode === "field-filter") return "Filtering"
         if (root.keyMachine && root.keyMachine.mode === "field-command") return "Command"
         if (root.keyMachine && root.keyMachine.mode === "field-jump") return "Path"
-        if (root.keyMachine && root.keyMachine.fsnMode) return "3D browser"
         return ""
+    }
+
+    function currentViewId() {
+        if (!root.keyMachine)
+            return "list"
+        if (root.keyMachine.fsnMode)
+            return root.keyMachine.fsnTreeView ? "tree" : "map"
+        return root.keyMachine.gridMode ? "grid" : "list"
+    }
+
+    function activateView(id) {
+        if (!root.keyMachine)
+            return
+        if (id === "tree" || id === "map") {
+            root.keyMachine.fsnTreeView = id === "tree"
+            root.keyMachine.fsnMode = true
+        } else {
+            root.keyMachine.fsnMode = false
+            root.keyMachine.gridMode = id === "grid"
+        }
     }
 
     Rectangle {
@@ -80,7 +105,7 @@ Item {
         SegmentedControl {
             id: kindChips
             objectName: "kindChips"
-            visible: root.viewToggle && root.filterProxy &&
+            visible: root.viewToggle && !!root.filterProxy &&
                      !(root.keyMachine && root.keyMachine.fsnMode)
             showLabels: root.width >= Theme.space(700)
             currentId: root.filterProxy ? root.filterProxy.kindFilter : "all"
@@ -96,18 +121,47 @@ Item {
 
         SegmentedControl {
             objectName: "viewControl"
-            visible: root.viewToggle && !(root.keyMachine && root.keyMachine.fsnMode)
+            visible: root.viewToggle
             showLabels: false
-            currentId: root.keyMachine && root.keyMachine.gridMode ? "grid" : "list"
+            currentId: root.currentViewId()
             options: [
                 { id: "list", label: "List", icon: "view-list-symbolic", glyph: "☷",
                   tip: "List view  ·  V" },
                 { id: "grid", label: "Grid", icon: "view-grid-symbolic", glyph: "▦",
-                  tip: "Grid view  ·  V" }
+                  tip: "Grid view  ·  V" },
+                { id: "tree", label: "StrataV", glyph: "Y",
+                  tip: "StrataV 3D landscape  ·  Ctrl+M" },
+                { id: "map", label: "MapV", glyph: "▱",
+                  tip: "MapV 3D view  ·  M from StrataV" }
             ]
-            onActivated: function(id) {
-                if (root.keyMachine) root.keyMachine.gridMode = id === "grid"
-            }
+            onActivated: function(id) { root.activateView(id) }
+        }
+
+        ChromeButton {
+            objectName: "browserAgentFind"
+            visible: root.agentAvailable && root.viewToggle
+            height: Theme.controlHeight
+            label: root.width >= Theme.space(760) ? "Find" : ""
+            fallbackGlyph: "✦"
+            toolTip: "Find files with Omarchy's default agent  ·  :ask"
+            onTriggered: root.agentRequested()
+        }
+
+        ChromeButton {
+            objectName: "browserLookToggle"
+            visible: root.lookAvailable && root.viewToggle
+            height: Theme.controlHeight
+            label: root.width >= Theme.space(660) ? "Look" : ""
+            iconName: "xsi-preview-symbolic"
+            fallbackGlyph: "◫"
+            checked: root.lookOpen
+            toolTip: !root.lookHasRoom
+                     ? "Look is enabled · enlarge the window to show it"
+                     : (!root.lookHasSelection && checked
+                        ? "Look is enabled · select an item to preview"
+                        : (checked ? "Hide Look preview"
+                                   : "Show Look preview"))
+            onTriggered: root.lookToggleRequested()
         }
 
         Rectangle {
@@ -169,7 +223,7 @@ Item {
                 text: root.promptGlyph()
                 color: root.fieldActive || root.viewingSearch ? Theme.accent
                                                               : Theme.darkForeground
-                font.family: Theme.fontFamily
+                font.family: Theme.monoFontFamily
                 font.pixelSize: Theme.fontSubtitle
                 font.bold: root.fieldActive
             }
@@ -187,7 +241,7 @@ Item {
             color: Theme.brightForeground
             selectedTextColor: Theme.background
             selectionColor: Theme.accent
-            font.family: Theme.fontFamily
+            font.family: Theme.monoFontFamily
             font.pixelSize: Theme.fontBody
             selectByMouse: true
             activeFocusOnPress: true

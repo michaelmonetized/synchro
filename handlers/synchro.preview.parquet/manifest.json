@@ -24,7 +24,8 @@
     "preview": "Preview.qml"
   },
   "preview": {
-    "runtime": "inprocess"
+    "runtime": "inprocess",
+    "inline": "quick-app"
   },
   "thumbnail": {
     "runtime": "core",

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "id": "project-arrival-lab",
+  "name": "Project arrival · four-way dispatch",
+  "enabled": false,
+  "renderOnly": true,
+  "trigger": { "type": "folder-created", "path": "~/Work" },
+  "conditions": [],
+  "actions": [{ "type": "notify", "message": "render lab only" }],
+  "source": "Recognize a newly arrived project, hydrate its ecosystem-specific dependencies, run common indexing, and open the right workspace.",
+  "visualGraph": {
+    "nodes": [
+      { "id": "folder", "kind": "trigger", "label": "Project folder appears", "detail": "under ~/Work or ~/repos2026" },
+      { "id": "detect", "kind": "fork", "label": "Detect project shape", "detail": "Python · Node · Rust · unknown" },
+      { "id": "python", "kind": "subflow", "order": 0, "label": "Python bootstrap", "detail": "venv · lockfile · interpreter", "parameters": { "flow": "python-bootstrap", "lockfiles": ["uv.lock", "poetry.lock", "requirements.txt"], "isolated": true } },
+      { "id": "node", "kind": "subflow", "order": 1, "label": "Node bootstrap", "detail": "runtime · package manager · install" },
+      { "id": "rust", "kind": "subflow", "order": 2, "label": "Rust bootstrap", "detail": "toolchain · cargo metadata" },
+      { "id": "unknown", "kind": "action", "order": 3, "label": "Keep untouched", "detail": "record as an unclassified project" },
+      { "id": "py-ok", "kind": "condition", "order": 0, "label": "Lock resolves?", "detail": "dependency graph is satisfiable" },
+      { "id": "node-ok", "kind": "condition", "order": 1, "label": "Scripts safe?", "detail": "no unreviewed install hooks" },
+      { "id": "rust-ok", "kind": "condition", "order": 2, "label": "Toolchain present?", "detail": "pinned channel is installed" },
+      { "id": "manual", "kind": "terminal", "tone": "fail", "order": 3, "label": "Review setup", "detail": "one ecosystem needs a person" },
+      { "id": "common", "kind": "join", "label": "Common workspace", "detail": "successful routes reconverge" },
+      { "id": "git", "kind": "action", "label": "Read repository state", "detail": "branch · remotes · dirty files" },
+      { "id": "index", "kind": "action", "label": "Index project metadata", "detail": "language · size · recent activity" },
+      { "id": "open", "kind": "action", "label": "Open Synchro workspace", "detail": "folder plus terminal and Look", "parameters": { "panel": "terminal", "look": true, "cwd": "$project_path" } },
+      { "id": "done", "kind": "terminal", "tone": "success", "label": "Ready to work", "detail": "project context is live" }
+    ],
+    "edges": [
+      { "from": "folder", "to": "detect" },
+      { "from": "detect", "to": "python", "label": "PY" },
+      { "from": "detect", "to": "node", "label": "JS" },
+      { "from": "detect", "to": "rust", "label": "RS" },
+      { "from": "detect", "to": "unknown", "label": "OTHER" },
+      { "from": "python", "to": "py-ok" },
+      { "from": "node", "to": "node-ok" },
+      { "from": "rust", "to": "rust-ok" },
+      { "from": "py-ok", "to": "common", "label": "YES", "tone": "pass" },
+      { "from": "node-ok", "to": "common", "label": "YES", "tone": "pass" },
+      { "from": "rust-ok", "to": "common", "label": "YES", "tone": "pass" },
+      { "from": "unknown", "to": "common" },
+      { "from": "py-ok", "to": "manual", "label": "NO", "tone": "fail" },
+      { "from": "node-ok", "to": "manual", "label": "NO", "tone": "fail" },
+      { "from": "rust-ok", "to": "manual", "label": "NO", "tone": "fail" },
+      { "from": "common", "to": "git" },
+      { "from": "git", "to": "index" },
+      { "from": "index", "to": "open" },
+      { "from": "open", "to": "done", "tone": "success" }
+    ]
+  }
+}

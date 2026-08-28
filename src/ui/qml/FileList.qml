@@ -24,7 +24,7 @@ ListView {
     readonly property bool searching: fileModel && fileModel.isSearch
 
     signal viewToggleRequested()
-    signal doRequested()
+    signal doRequested(real sceneX, real sceneY)
     signal rowActivated(int row)
 
     readonly property var rows: filterProxy ? filterProxy : fileModel
@@ -574,6 +574,8 @@ ListView {
                    ? Theme.brightForeground : Theme.foreground
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontBody
+            font.weight: row.ListView.isCurrentItem || row.picked
+                         ? Font.DemiBold : Font.Normal
             elide: Text.ElideMiddle
         }
 
@@ -592,7 +594,7 @@ ListView {
                 horizontalAlignment: Text.AlignRight
                 text: row.isDir ? "—" : list.fmtSize(row.size)
                 color: Theme.darkForeground
-                font.family: Theme.fontFamily
+                font.family: Theme.monoFontFamily
                 font.pixelSize: Theme.fontBodySmall
                 elide: Text.ElideRight
             }
@@ -610,7 +612,7 @@ ListView {
                 visible: list.showMtimeCol
                 text: list.fmtMtime(row.mtime)
                 color: Theme.darkForeground
-                font.family: Theme.fontFamily
+                font.family: Theme.monoFontFamily
                 font.pixelSize: Theme.fontBodySmall
                 elide: Text.ElideRight
             }
@@ -682,7 +684,8 @@ ListView {
                     } else {
                         list.fileModel.currentIndex = row.index
                     }
-                    list.doRequested()
+                    var point = dragArea.mapToItem(null, mouse.x, mouse.y)
+                    list.doRequested(point.x, point.y)
                     return
                 }
                 if (list.keyMachine && list.keyMachine.mode === "field-search")

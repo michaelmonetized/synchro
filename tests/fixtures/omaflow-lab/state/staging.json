@@ -1,0 +1,49 @@
+{
+  "status": "ready",
+  "agent": "codex",
+  "request": "When I connect a projector on weekdays, enable DND, keep the machine awake, switch to workspace 4, and tell me presentation mode is ready.",
+  "updatedAt": "2026-08-24T19:30:00Z",
+  "warnings": [
+    "warn: no currently connected monitor description contains projector"
+  ],
+  "rule": {
+    "schemaVersion": 1,
+    "id": "weekday-presentation-mode",
+    "name": "Weekday presentation mode",
+    "enabled": true,
+    "trigger": {
+      "type": "monitor-connected",
+      "match": {
+        "description": "projector"
+      }
+    },
+    "conditions": [
+      {
+        "type": "weekday",
+        "days": ["mon", "tue", "wed", "thu", "fri"]
+      }
+    ],
+    "actions": [
+      {
+        "type": "dnd",
+        "state": "on"
+      },
+      {
+        "type": "stay-awake",
+        "state": "on"
+      },
+      {
+        "type": "workspace",
+        "number": 4
+      },
+      {
+        "type": "notify",
+        "title": "Presentation mode",
+        "message": "Desktop ready on workspace 4"
+      }
+    ],
+    "cooldownSeconds": 120,
+    "source": "When I connect a projector on weekdays, enable DND, keep the machine awake, switch to workspace 4, and tell me presentation mode is ready.",
+    "createdBy": "codex"
+  }
+}

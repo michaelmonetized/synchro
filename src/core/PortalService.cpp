@@ -759,17 +759,6 @@ void ChooserSession::onAcceptRequested() {
     return;
   }
   if (m_kind == Kind::SaveFile) {
-    if (m_host && m_host->isOpen()) {
-      const QString peeked = m_host->folderListing()
-                                 ? m_host->peekCursorPath()
-                                 : (m_host->file().isLocalFile()
-                                        ? m_host->file().toLocalFile()
-                                        : m_host->peekCursorPath());
-      if (!peeked.isEmpty() && QFileInfo(peeked).isFile())
-        setSaveName(QFileInfo(peeked).fileName());
-    } else if (cursorIsFile()) {
-      setSaveName(m_selection.cursorName());
-    }
     accept();
     return;
   }
@@ -869,16 +858,21 @@ QStringList ChooserSession::collectOpenPaths() const {
 }
 
 QString ChooserSession::destFolder() const {
+  // Save As targets the directory being browsed. The cursor is always parked
+  // on some row (often the first sorted item), so treating a selected folder
+  // or a Miller preview as the destination makes saving depend on incidental
+  // focus rather than the location shown in the dialog.
+  if (m_kind == Kind::SaveFile) {
+    const QString cwd = m_model.path();
+    if (!cwd.isEmpty() && !DirectoryModel::isVirtualPath(cwd) &&
+        QFileInfo(cwd).isDir())
+      return cwd;
+    return {};
+  }
   if (m_host && m_host->isOpen() && m_host->folderListing() &&
       !m_host->folderPath().isEmpty() &&
       !DirectoryModel::isVirtualPath(m_host->folderPath()))
     return m_host->folderPath();
-  if (m_kind == Kind::SaveFile && cursorIsDir()) {
-    const QString path = m_selection.cursorPath();
-    if (!path.isEmpty() && !DirectoryModel::isVirtualPath(path) &&
-        QFileInfo(path).isDir())
-      return path;
-  }
   if (m_kind == Kind::SaveFiles && cursorIsDir()) {
     const QString path = m_selection.cursorPath();
     if (!path.isEmpty() && !DirectoryModel::isVirtualPath(path) &&
@@ -936,6 +930,8 @@ QString ChooserSession::saveFileDest() const {
     return {};
   return dest;
 }
+
+void ChooserSession::activateOrAccept() { onAcceptRequested(); }
 
 void ChooserSession::accept() {
   if (m_done)

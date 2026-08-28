@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "presentation-fanout-lab",
+  "name": "Presentation mode · fan-out / fan-in",
+  "enabled": false,
+  "renderOnly": true,
+  "trigger": { "type": "monitor-connected", "match": "projector" },
+  "conditions": [],
+  "actions": [{ "type": "notify", "message": "render lab only" }],
+  "source": "Prepare the desktop in parallel, recover from missing display audio, then open the deck only after every branch is ready.",
+  "visualGraph": {
+    "nodes": [
+      { "id": "projector", "kind": "trigger", "label": "Projector connected", "detail": "HDMI or DisplayPort display" },
+      { "id": "work-hours", "kind": "condition", "label": "Presentation window?", "detail": "weekday · 08:30–18:00" },
+      { "id": "split", "kind": "fork", "label": "Prepare desktop", "detail": "three independent branches" },
+      { "id": "quiet", "kind": "action", "order": 0, "label": "Enable DND", "detail": "silence notifications" },
+      { "id": "audio", "kind": "action", "order": 1, "label": "Select display audio", "detail": "prefer connected sink", "parameters": { "prefer": ["DisplayPort", "HDMI"], "fallback": "laptop speakers", "volume": 74 } },
+      { "id": "workspace", "kind": "action", "order": 2, "label": "Open workspace 4", "detail": "clean presentation surface" },
+      { "id": "audio-ready", "kind": "condition", "order": 1, "label": "Sink available?", "detail": "confirm route became active" },
+      { "id": "fallback", "kind": "action", "order": 1, "label": "Use laptop speakers", "detail": "safe local fallback" },
+      { "id": "ready", "kind": "join", "label": "Desktop ready", "detail": "wait for every setup branch" },
+      { "id": "deck", "kind": "subflow", "label": "Open latest deck", "detail": "call project presentation flow", "parameters": { "flow": "latest-presentation", "sort": "mtime desc", "limit": 1 } },
+      { "id": "done", "kind": "terminal", "tone": "success", "label": "Presenting", "detail": "all setup branches complete" },
+      { "id": "ignored", "kind": "terminal", "label": "Ignore", "detail": "outside presentation window" }
+    ],
+    "edges": [
+      { "from": "projector", "to": "work-hours" },
+      { "from": "work-hours", "to": "split", "label": "YES", "tone": "pass" },
+      { "from": "work-hours", "to": "ignored", "label": "NO" },
+      { "from": "split", "to": "quiet", "label": "DND" },
+      { "from": "split", "to": "audio", "label": "AUDIO" },
+      { "from": "split", "to": "workspace", "label": "SPACE" },
+      { "from": "audio", "to": "audio-ready" },
+      { "from": "audio-ready", "to": "ready", "label": "YES", "tone": "pass" },
+      { "from": "audio-ready", "to": "fallback", "label": "NO", "tone": "fail" },
+      { "from": "quiet", "to": "ready" },
+      { "from": "workspace", "to": "ready" },
+      { "from": "fallback", "to": "ready" },
+      { "from": "ready", "to": "deck" },
+      { "from": "deck", "to": "done", "tone": "success" }
+    ]
+  }
+}

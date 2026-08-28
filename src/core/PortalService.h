@@ -127,6 +127,7 @@ public:
   Q_INVOKABLE void setCurrentFilterIndex(int index);
   Q_INVOKABLE void cycleFilter(int delta);
   Q_INVOKABLE void setChoiceValue(int index, const QString &value);
+  Q_INVOKABLE void activateOrAccept();
   Q_INVOKABLE void accept();
   Q_INVOKABLE void cancel();
   Q_INVOKABLE void confirmOverwrite();

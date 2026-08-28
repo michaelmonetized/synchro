@@ -35,6 +35,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <cstdarg>
 #include <cstring>
 #include <dirent.h>
@@ -888,6 +889,7 @@ public:
 
   void cancelAll() {
     m_pending.clear();
+    m_factPending.clear();
     while (!m_active.isEmpty())
       killActive(0, false);
   }
@@ -918,6 +920,18 @@ public:
     for (int i = m_active.size() - 1; i >= 0; --i) {
       if (m_active.at(i).path == path)
         killActive(i, false);
+    }
+    for (auto it = m_factPending.begin(); it != m_factPending.end();) {
+      if (it.value().path == path)
+        it = m_factPending.erase(it);
+      else
+        ++it;
+    }
+    for (auto it = m_factsPublished.begin(); it != m_factsPublished.end();) {
+      if (it->startsWith(prefix))
+        it = m_factsPublished.erase(it);
+      else
+        ++it;
     }
   }
 
@@ -951,6 +965,7 @@ public:
             cachePath(job), job.mtime, job.sizePx);
         if (!ready.isEmpty()) {
           hits.append({job.path, ready});
+          queueCachedFacts(job);
           continue;
         }
         m_ready.erase(it);
@@ -967,6 +982,7 @@ public:
       if (!hit.isEmpty()) {
         m_ready.insert(job.key, hit);
         hits.append({job.path, hit});
+        queueCachedFacts(job);
         continue;
       }
       cold.append(job);
@@ -986,6 +1002,7 @@ public:
         ++legacyHits;
         m_ready.insert(job.key, hit);
         hits.append({job.path, hit});
+        queueCachedFacts(job);
         // Do not make the first legacy hits wait behind every remaining file.
         if (hits.size() >= 8 && notifyBatch) {
           notifyBatch(hits);
@@ -1078,6 +1095,69 @@ private:
   QString lookupPacked(const Job &job) const {
     const QString packed = cachePath(job);
     return ThumbCache::instance().lookupUrl(packed, job.mtime, job.sizePx);
+  }
+
+  QString factKey(const Job &job) const {
+    return job.path + QLatin1Char('\n') + QString::number(job.mtime);
+  }
+
+  void rememberPublishedFacts(const QString &key) {
+    if (m_factsPublished.contains(key))
+      return;
+    m_factsPublished.insert(key);
+    m_factPublishedOrder.append(key);
+    while (m_factPublishedOrder.size() > 4096) {
+      const QString oldest = m_factPublishedOrder.takeFirst();
+      m_factsPublished.remove(oldest);
+    }
+  }
+
+  void publishFacts(const Job &job, const QImage &image) {
+    if (!notifyFacts || image.isNull())
+      return;
+    const QString key = factKey(job);
+    if (m_factsPublished.contains(key))
+      return;
+    const QVariantMap facts =
+        ThumbnailService::deterministicImageFacts(job.path, image);
+    if (facts.isEmpty())
+      return;
+    rememberPublishedFacts(key);
+    notifyFacts(job.path, job.mtime, facts);
+  }
+
+  void queueCachedFacts(const Job &job) {
+    if (!looksLikeImage(job.path, job.mime) || !notifyFacts)
+      return;
+    const QString key = factKey(job);
+    if (m_factsPublished.contains(key) || m_factPending.contains(key))
+      return;
+    m_factPending.insert(key, job);
+    if (m_factDrainScheduled)
+      return;
+    m_factDrainScheduled = true;
+    QMetaObject::invokeMethod(this, [this] { drainCachedFacts(); },
+                              Qt::QueuedConnection);
+  }
+
+  void drainCachedFacts() {
+    m_factDrainScheduled = false;
+    int remaining = 6;
+    while (remaining-- > 0 && !m_factPending.isEmpty()) {
+      auto it = m_factPending.begin();
+      const Job job = it.value();
+      m_factPending.erase(it);
+      if (m_factsPublished.contains(factKey(job)))
+        continue;
+      const QImage image = ThumbCache::instance().getImage(
+          cachePath(job), job.mtime, job.sizePx);
+      publishFacts(job, image);
+    }
+    if (!m_factPending.isEmpty() && !m_factDrainScheduled) {
+      m_factDrainScheduled = true;
+      QMetaObject::invokeMethod(this, [this] { drainCachedFacts(); },
+                                Qt::QueuedConnection);
+    }
   }
 
   QString lookupLegacyCache(const Job &job) const {
@@ -1173,6 +1253,7 @@ private:
       m_ready.insert(job.key, hit);
       if (notify)
         notify(job.path, hit);
+      queueCachedFacts(job);
       kick();
       return;
     }
@@ -1223,10 +1304,7 @@ private:
     if (looksLikeImage(job.path, job.mime)) {
       QImage direct = ThumbnailService::decodeRaster(job.path, job.sizePx);
       if (!direct.isNull()) {
-        if (notifyFacts)
-          notifyFacts(job.path, job.mtime,
-                      ThumbnailService::deterministicImageFacts(job.path,
-                                                                direct));
+        publishFacts(job, direct);
         direct = scaleToFit(direct, job.sizePx);
         if (storePackedImage(job, direct)) {
           const QString url = packedUrl(job);
@@ -1469,6 +1547,10 @@ private:
   QHash<QString, QString> m_ready;
   QSet<QString> m_failed;
   QVector<Active> m_active;
+  QHash<QString, Job> m_factPending;
+  QSet<QString> m_factsPublished;
+  QStringList m_factPublishedOrder;
+  bool m_factDrainScheduled = false;
   QMimeDatabase m_mime;
   quint64 m_seq = 0;
 };
@@ -1766,26 +1848,42 @@ QVariantMap ThumbnailService::deterministicImageFacts(const QString &path,
                                : QStringLiteral("square"));
 
   const QImage sample =
-      image.convertToFormat(QImage::Format_RGB32)
+      image.convertToFormat(QImage::Format_ARGB32)
           .scaled(64, 64, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+  struct PalettePixel {
+    int red = 0;
+    int green = 0;
+    int blue = 0;
+    int weight = 0;
+  };
+  QVector<PalettePixel> palettePixels;
+  palettePixels.reserve(sample.width() * sample.height());
   quint64 red = 0, green = 0, blue = 0;
+  quint64 pixelWeight = 0;
   double luminance = 0.0;
   double saturation = 0.0;
-  int chromatic = 0;
-  QHash<QString, int> families;
+  quint64 chromatic = 0;
+  QHash<QString, quint64> families;
   for (int y = 0; y < sample.height(); ++y) {
     const auto *line = reinterpret_cast<const QRgb *>(sample.constScanLine(y));
     for (int x = 0; x < sample.width(); ++x) {
       const QColor color(line[x]);
-      red += color.red();
-      green += color.green();
-      blue += color.blue();
-      luminance += 0.2126 * color.redF() + 0.7152 * color.greenF() +
-                   0.0722 * color.blueF();
-      saturation += color.hsvSaturationF();
+      const int weight = color.alpha();
+      if (weight < 24)
+        continue;
+      palettePixels.append(
+          {color.red(), color.green(), color.blue(), weight});
+      pixelWeight += weight;
+      red += quint64(color.red()) * weight;
+      green += quint64(color.green()) * weight;
+      blue += quint64(color.blue()) * weight;
+      luminance +=
+          (0.2126 * color.redF() + 0.7152 * color.greenF() +
+           0.0722 * color.blueF()) * weight;
+      saturation += color.hsvSaturationF() * weight;
       if (color.hsvSaturationF() < 0.16 || color.valueF() < 0.10)
         continue;
-      ++chromatic;
+      chromatic += weight;
       const double hue = color.hsvHueF() * 360.0;
       QString family;
       if (hue < 18.0 || hue >= 345.0)
@@ -1804,35 +1902,153 @@ QVariantMap ThumbnailService::deterministicImageFacts(const QString &path,
         family = QStringLiteral("purple");
       else
         family = QStringLiteral("pink");
-      ++families[family];
+      families[family] += weight;
     }
   }
-  const int pixels = qMax(1, sample.width() * sample.height());
-  const QColor average(int(red / pixels), int(green / pixels),
-                       int(blue / pixels));
-  QString dominant = luminance / pixels < 0.13 ? QStringLiteral("black")
-                     : luminance / pixels > 0.90 && saturation / pixels < 0.12
+  const quint64 totalWeight = qMax<quint64>(1, pixelWeight);
+  const QColor average(int(red / totalWeight), int(green / totalWeight),
+                       int(blue / totalWeight));
+  QString dominant = luminance / totalWeight < 0.13 ? QStringLiteral("black")
+                     : luminance / totalWeight > 0.90 &&
+                               saturation / totalWeight < 0.12
                          ? QStringLiteral("white")
                          : QStringLiteral("gray");
-  int dominantCount = 0;
+  quint64 dominantCount = 0;
   for (auto it = families.cbegin(); it != families.cend(); ++it) {
-    if (it.value() > dominantCount) {
+    if (it.value() > dominantCount ||
+        (it.value() == dominantCount && it.key() < dominant)) {
       dominant = it.key();
       dominantCount = it.value();
     }
   }
-  const int bluePixels = families.value(QStringLiteral("blue")) +
-                         families.value(QStringLiteral("cyan"));
-  facts.insert(QStringLiteral("dominant_color"), average.name(QColor::HexRgb));
+  const quint64 bluePixels = families.value(QStringLiteral("blue")) +
+                             families.value(QStringLiteral("cyan"));
+
+  struct PaletteCenter {
+    double red = 0.0;
+    double green = 0.0;
+    double blue = 0.0;
+    quint64 weight = 0;
+  };
+  QHash<int, PaletteCenter> bins;
+  for (const PalettePixel &pixel : std::as_const(palettePixels)) {
+    const int key = ((pixel.red >> 4) << 8) | ((pixel.green >> 4) << 4) |
+                    (pixel.blue >> 4);
+    PaletteCenter &bin = bins[key];
+    bin.red += double(pixel.red) * pixel.weight;
+    bin.green += double(pixel.green) * pixel.weight;
+    bin.blue += double(pixel.blue) * pixel.weight;
+    bin.weight += pixel.weight;
+  }
+  QVector<PaletteCenter> seeds;
+  seeds.reserve(bins.size());
+  for (PaletteCenter bin : std::as_const(bins)) {
+    if (bin.weight == 0)
+      continue;
+    bin.red /= bin.weight;
+    bin.green /= bin.weight;
+    bin.blue /= bin.weight;
+    seeds.append(bin);
+  }
+  const auto paletteOrder = [](const PaletteCenter &a,
+                               const PaletteCenter &b) {
+    if (a.weight != b.weight)
+      return a.weight > b.weight;
+    if (a.red != b.red)
+      return a.red < b.red;
+    if (a.green != b.green)
+      return a.green < b.green;
+    return a.blue < b.blue;
+  };
+  std::sort(seeds.begin(), seeds.end(), paletteOrder);
+
+  QVector<PaletteCenter> centers;
+  if (!seeds.isEmpty())
+    centers.append(seeds.constFirst());
+  const auto distanceSquared = [](const PaletteCenter &a,
+                                  const PaletteCenter &b) {
+    const double dr = a.red - b.red;
+    const double dg = a.green - b.green;
+    const double db = a.blue - b.blue;
+    return dr * dr + dg * dg + db * db;
+  };
+  while (centers.size() < 3 && centers.size() < seeds.size()) {
+    int best = -1;
+    double bestScore = 0.0;
+    for (int i = 0; i < seeds.size(); ++i) {
+      double nearest = std::numeric_limits<double>::max();
+      for (const PaletteCenter &center : std::as_const(centers))
+        nearest = qMin(nearest, distanceSquared(seeds.at(i), center));
+      const double score = nearest * std::sqrt(double(seeds.at(i).weight));
+      if (score > bestScore) {
+        bestScore = score;
+        best = i;
+      }
+    }
+    if (best < 0 || bestScore < 1.0)
+      break;
+    centers.append(seeds.at(best));
+  }
+
+  for (int iteration = 0; iteration < 5 && !centers.isEmpty(); ++iteration) {
+    QVector<PaletteCenter> sums(centers.size());
+    for (const PalettePixel &pixel : std::as_const(palettePixels)) {
+      PaletteCenter point{double(pixel.red), double(pixel.green),
+                          double(pixel.blue), quint64(pixel.weight)};
+      int nearestIndex = 0;
+      double nearest = distanceSquared(point, centers.constFirst());
+      for (int i = 1; i < centers.size(); ++i) {
+        const double distance = distanceSquared(point, centers.at(i));
+        if (distance < nearest) {
+          nearest = distance;
+          nearestIndex = i;
+        }
+      }
+      PaletteCenter &sum = sums[nearestIndex];
+      sum.red += point.red * point.weight;
+      sum.green += point.green * point.weight;
+      sum.blue += point.blue * point.weight;
+      sum.weight += point.weight;
+    }
+    for (int i = 0; i < centers.size(); ++i) {
+      if (sums.at(i).weight == 0)
+        continue;
+      centers[i].red = sums.at(i).red / sums.at(i).weight;
+      centers[i].green = sums.at(i).green / sums.at(i).weight;
+      centers[i].blue = sums.at(i).blue / sums.at(i).weight;
+      centers[i].weight = sums.at(i).weight;
+    }
+  }
+  std::sort(centers.begin(), centers.end(), paletteOrder);
+
+  facts.insert(QStringLiteral("average_color"), average.name(QColor::HexRgb));
+  for (int i = 0; i < qMin(3, centers.size()); ++i) {
+    const PaletteCenter &center = centers.at(i);
+    const QColor color(qBound(0, qRound(center.red), 255),
+                       qBound(0, qRound(center.green), 255),
+                       qBound(0, qRound(center.blue), 255));
+    facts.insert(QStringLiteral("palette_%1").arg(i),
+                 color.name(QColor::HexRgb));
+    facts.insert(QStringLiteral("palette_weight_%1").arg(i),
+                 qRound((double(center.weight) / totalWeight) * 1000.0) /
+                     1000.0);
+  }
+  facts.insert(QStringLiteral("dominant_color"),
+               centers.isEmpty()
+                   ? average.name(QColor::HexRgb)
+                   : QColor(qBound(0, qRound(centers.constFirst().red), 255),
+                            qBound(0, qRound(centers.constFirst().green), 255),
+                            qBound(0, qRound(centers.constFirst().blue), 255))
+                         .name(QColor::HexRgb));
   facts.insert(QStringLiteral("color_family"), dominant);
   facts.insert(QStringLiteral("brightness"),
-               qRound((luminance / pixels) * 1000.0) / 1000.0);
+               qRound((luminance / totalWeight) * 1000.0) / 1000.0);
   facts.insert(QStringLiteral("saturation"),
-               qRound((saturation / pixels) * 1000.0) / 1000.0);
+               qRound((saturation / totalWeight) * 1000.0) / 1000.0);
   facts.insert(QStringLiteral("blue_share"),
-               qRound((double(bluePixels) / pixels) * 1000.0) / 1000.0);
+               qRound((double(bluePixels) / totalWeight) * 1000.0) / 1000.0);
   facts.insert(QStringLiteral("chromatic_share"),
-               qRound((double(chromatic) / pixels) * 1000.0) / 1000.0);
+               qRound((double(chromatic) / totalWeight) * 1000.0) / 1000.0);
 
   const QImage hashSample =
       image.convertToFormat(QImage::Format_Grayscale8)
@@ -2156,6 +2372,17 @@ ThumbnailService::~ThumbnailService() {
 QString ThumbnailService::packedUrl(const QString &path, qint64 mtime,
                                     int sizePx) {
   return ThumbCache::imageUrl(cachePathFor(path), mtime, sizePx);
+}
+
+bool ThumbnailService::thumbnailDependsOnTheme(const QString &path,
+                                               const QString &mime,
+                                               bool isDir) {
+  return isDir ||
+         (!looksLikeImage(path, mime) && !looksLikeVideo(path, mime));
+}
+
+void ThumbnailService::invalidateThemeCache() {
+  ThumbTheme::invalidateCache();
 }
 
 bool hydratePacked(const ThumbnailJob &job, QString *url) {

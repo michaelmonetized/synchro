@@ -142,6 +142,8 @@ private slots:
   void staleDeleteSelfDoesNotKickNewPath();
   void deleteDuringListingIsNotResurrected();
   void visibleThumbsFillPngAndFolderMosaic();
+  void imageFactsReachCurrentStat();
+  void themeRefreshKeepsContentThumbnails();
   void createdFileGetsThumbnail();
   void refreshThumbsUpdatesFolderMosaicOnly();
 
@@ -1077,6 +1079,8 @@ void DirectoryModelTest::sqlResultProjectsFilesAndGroups() {
   QCOMPARE(model.sqlLabel(), QStringLiteral("types"));
   QCOMPARE(model.rowCount(), 3);
   QCOMPARE(roleAt(model, 0, DirectoryModel::PathRole).toString(), filePath);
+  QCOMPARE(roleAt(model, 0, DirectoryModel::MimeRole).toString(),
+           QStringLiteral("text/plain"));
   QCOMPARE(roleAt(model, 1, DirectoryModel::NameRole).toString(),
            QStringLiteral("txt"));
   QVERIFY(roleAt(model, 1, DirectoryModel::IsDirRole).toBool());
@@ -1116,6 +1120,96 @@ void DirectoryModelTest::sqlResultProjectsFilesAndGroups() {
   QCOMPARE(model.path(), m_scratch.path());
   QVERIFY(!model.isSql());
   QVERIFY(!nav.canGoForward());
+}
+
+void DirectoryModelTest::imageFactsReachCurrentStat() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QImage image(48, 32, QImage::Format_RGB32);
+  image.fill(qRgb(30, 80, 220));
+  const QString path = tmp.filePath(QStringLiteral("palette.png"));
+  QVERIFY(image.save(path, "PNG"));
+
+  DirectoryModel model;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const int row = findRow(model, QStringLiteral("palette.png"));
+  QVERIFY(row >= 0);
+  model.setCurrentIndex(row);
+  model.requestVisibleThumbs(row, row, 128);
+  QTRY_VERIFY_WITH_TIMEOUT(
+      model.currentStat()
+              .value(QStringLiteral("imagePalette"))
+              .toList()
+              .size() >= 1,
+      3000);
+  QVERIFY(model.currentStat()
+              .value(QStringLiteral("imagePalette"))
+              .toList()
+              .first()
+              .toString()
+              .startsWith('#'));
+  QVERIFY(model.currentStat()
+              .value(QStringLiteral("imageSaturation"))
+              .toDouble() > 0.4);
+}
+
+void DirectoryModelTest::themeRefreshKeepsContentThumbnails() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("folder")));
+  QImage imageFile(8, 8, QImage::Format_RGB32);
+  imageFile.fill(qRgb(42, 88, 140));
+  QVERIFY(imageFile.save(tmp.filePath(QStringLiteral("image.png")), "PNG"));
+  {
+    QFile text(tmp.filePath(QStringLiteral("notes.txt")));
+    QVERIFY(text.open(QIODevice::WriteOnly));
+    text.write("theme-painted card\n");
+  }
+  {
+    QFile video(tmp.filePath(QStringLiteral("clip.mp4")));
+    QVERIFY(video.open(QIODevice::WriteOnly));
+    video.write("poster-cache");
+  }
+
+  DirectoryModel model;
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const int folder = findRow(model, QStringLiteral("folder"));
+  const int image = findRow(model, QStringLiteral("image.png"));
+  const int text = findRow(model, QStringLiteral("notes.txt"));
+  const int video = findRow(model, QStringLiteral("clip.mp4"));
+  QVERIFY(folder >= 0);
+  QVERIFY(image >= 0);
+  QVERIFY(text >= 0);
+  QVERIFY(video >= 0);
+
+  const auto seed = [&model](int visibleRow, const QString &url) {
+    const int all = model.m_visible.at(visibleRow);
+    model.m_all[all].thumbnail = url;
+    model.m_all[all].thumbnailPending = true;
+  };
+  seed(folder, QStringLiteral("image://synchrothumb/folder-card"));
+  seed(image, QStringLiteral("image://synchrothumb/image-content"));
+  seed(text, QStringLiteral("image://synchrothumb/text-card"));
+  seed(video, QStringLiteral("image://synchrothumb/video-poster"));
+  model.m_thumbRows.clear();
+
+  model.refreshThemedThumbnails();
+
+  QCOMPARE(roleAt(model, folder, DirectoryModel::ThumbnailRole).toString(),
+           QString());
+  QCOMPARE(roleAt(model, text, DirectoryModel::ThumbnailRole).toString(),
+           QString());
+  QCOMPARE(roleAt(model, image, DirectoryModel::ThumbnailRole).toString(),
+           QStringLiteral("image://synchrothumb/image-content"));
+  QCOMPARE(roleAt(model, video, DirectoryModel::ThumbnailRole).toString(),
+           QStringLiteral("image://synchrothumb/video-poster"));
+  QVERIFY(!roleAt(model, folder, DirectoryModel::ThumbnailPendingRole)
+               .toBool());
+  QVERIFY(!roleAt(model, text, DirectoryModel::ThumbnailPendingRole).toBool());
+  QVERIFY(roleAt(model, image, DirectoryModel::ThumbnailPendingRole).toBool());
+  QVERIFY(roleAt(model, video, DirectoryModel::ThumbnailPendingRole).toBool());
 }
 
 void DirectoryModelTest::visibleThumbsFillPngAndFolderMosaic() {

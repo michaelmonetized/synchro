@@ -13,8 +13,15 @@ Window {
     readonly property var chips: typeof locationChips !== "undefined" ? locationChips : null
     readonly property var selection: typeof selectionModel !== "undefined" ? selectionModel : null
     readonly property var config: typeof appConfig !== "undefined" ? appConfig : null
+    readonly property var finder: typeof agentSearch !== "undefined" ? agentSearch : null
     readonly property bool gridMode: root.keys ? root.keys.gridMode : false
     readonly property bool fsnMode: root.keys ? root.keys.fsnMode : false
+    readonly property int themeEpoch: Theme.epoch
+
+    onThemeEpochChanged: {
+        if (typeof hostApi !== "undefined" && hostApi)
+            hostApi.refreshThemedPreviews()
+    }
 
     width: 960
     height: 640
@@ -48,6 +55,13 @@ Window {
         keyMachine: root.keys
         fileModel: root.files
         filterProxy: root.listing
+        lookAvailable: true
+        lookHasRoom: root.lookStandaloneHasRoom || root.lookInPanel
+        lookHasSelection: root.selectionCount > 0
+        lookOpen: root.lookEnabled
+        onLookToggleRequested: root.setLookOpen(!root.lookEnabled, true)
+        agentAvailable: typeof agentSearch !== "undefined" && !!agentSearch
+        onAgentRequested: root.openAgentSearch()
     }
 
     Rectangle {
@@ -85,6 +99,28 @@ Window {
     readonly property bool panelLeft: panelSide === "left"
     readonly property bool panelRight: panelSide === "right"
     readonly property bool panelHorizontal: panelBottom || panelTopSide
+    readonly property int selectionCount: root.selection
+                                          ? root.selection.selectedCount : 0
+    property bool lookSessionOpen: root.config
+                                   ? root.config.panelLookOpen : true
+    readonly property bool lookEnabled: root.lookSessionOpen
+    // Action Deck is a true overlay: keep the browser composition and its
+    // loaded Look companion intact underneath it.
+    readonly property bool lookWanted: lookEnabled && selectionCount > 0 &&
+                                       root.keys && !root.keys.peekOpen
+    readonly property bool lookStandaloneHasRoom:
+        root.lookTargetSize >= 240 &&
+        root.width - root.lookTargetSize >= Theme.space(300) &&
+        statusLine.y - commandField.y - commandField.height >= Theme.space(260)
+    readonly property bool lookInPanel: lookWanted && root.panelOpen &&
+                                       panelDock.lookSupported &&
+                                       panelDock.lookHasRoom
+    readonly property bool lookStandalone: lookWanted && !root.panelOpen &&
+                                          lookStandaloneHasRoom
+    readonly property int lookTargetSize: root.config
+                                          ? Math.min(root.config.lookSize,
+                                                     Math.round(root.width * 0.46))
+                                          : Theme.space(360)
 
     // Grip-drag re-docking state (the gesture only starts from the grip,
     // so panel content keeps its own drag and drop untouched).
@@ -100,6 +136,44 @@ Window {
     property var openedPanels: []
     property var pendingSqlBookmark: null
     property bool pendingSqlScan: false
+    // Published by the keep-alive SQL panel. This is deliberately distinct
+    // from HostApi.inlineFolderLoading: a workbench query updates the browser
+    // and its Miller companion, while a preview-only drill marks Miller alone.
+    property bool mainSqlBusy: false
+
+    function setLookOpen(open, persist) {
+        root.lookSessionOpen = !!open
+        if (persist && root.config)
+            root.config.panelLookOpen = root.lookSessionOpen
+    }
+
+    function openAgentSearch() {
+        var scope = root.files && root.files.isSql
+                    ? root.files.sqlContext
+                    : (root.files && root.files.path ? root.files.path : "")
+        agentOverlay.openFor(scope)
+    }
+
+    function toggleLookFromBrowser() {
+        if (root.selectionCount <= 0) {
+            if (root.keys)
+                root.keys.setStatusMessage("Select an item to preview")
+            return
+        }
+        if (root.lookInPanel || root.lookStandalone) {
+            root.setLookOpen(false, false)
+            return
+        }
+        var canRender = root.panelOpen
+                        ? (panelDock.lookSupported && panelDock.lookHasRoom)
+                        : root.lookStandaloneHasRoom
+        if (canRender) {
+            root.setLookOpen(true, false)
+            return
+        }
+        if (typeof hostApi !== "undefined" && hostApi)
+            hostApi.toggle()
+    }
 
     function refreshRelevantPanels() {
         if (typeof hostApi === "undefined" || !hostApi)
@@ -252,6 +326,26 @@ Window {
         }
     }
 
+    // Standalone Look reserves browser space only while an explicit
+    // selection exists. Its width animates; the preview item itself is shared
+    // with the app-panel companion below.
+    Item {
+        id: standaloneLookDock
+        x: root.width - width
+        y: commandField.y + commandField.height
+        width: root.lookStandalone ? root.lookTargetSize : 0
+        height: Math.max(0, statusLine.y - y)
+        z: 2
+        clip: true
+
+        Behavior on width {
+            NumberAnimation {
+                duration: 140
+                easing.type: Easing.OutCubic
+            }
+        }
+    }
+
     Loader {
         id: listingLoader
 
@@ -267,7 +361,7 @@ Window {
         anchors.left: root.panelOpen && root.panelLeft ? panelDock.right
                                                        : parent.left
         anchors.right: root.panelOpen && root.panelRight ? panelDock.left
-                                                         : parent.right
+                                                         : standaloneLookDock.left
         anchors.bottom: root.panelOpen && root.panelBottom ? panelDock.top
                                                            : statusLine.top
         z: 1
@@ -279,6 +373,14 @@ Window {
             if (root.keys && root.keys.listFocused && item)
                 item.forceActiveFocus()
         }
+    }
+
+    QueryBusy {
+        objectName: "mainQueryBusy"
+        anchors.fill: listingLoader
+        running: root.mainSqlBusy
+        label: "Updating browser results…"
+        z: 3
     }
 
     Component {
@@ -293,8 +395,10 @@ Window {
             host: typeof hostApi !== "undefined" ? hostApi : null
             fileOps: typeof fileOpEngine !== "undefined" ? fileOpEngine : null
             onViewToggleRequested: if (root.keys) root.keys.gridMode = true
-            onDoRequested: if (typeof hostApi !== "undefined" && hostApi)
-                hostApi.openDoLayer()
+            onDoRequested: function(sceneX, sceneY) {
+                if (typeof hostApi !== "undefined" && hostApi)
+                    hostApi.openDoContext(sceneX, sceneY)
+            }
         }
     }
 
@@ -307,12 +411,15 @@ Window {
             navStack: root.history
             keyMachine: root.keys
             selection: root.selection
+            catalog: typeof fileCatalog !== "undefined" ? fileCatalog : null
             host: typeof hostApi !== "undefined" ? hostApi : null
             fileOps: typeof fileOpEngine !== "undefined" ? fileOpEngine : null
             onViewToggleRequested: if (root.keys)
                                        root.keys.fsnTreeView = !root.keys.fsnTreeView
-            onDoRequested: if (typeof hostApi !== "undefined" && hostApi)
-                hostApi.openDoLayer()
+            onDoRequested: function(sceneX, sceneY) {
+                if (typeof hostApi !== "undefined" && hostApi)
+                    hostApi.openDoContext(sceneX, sceneY)
+            }
         }
     }
 
@@ -329,8 +436,10 @@ Window {
             fileOps: typeof fileOpEngine !== "undefined" ? fileOpEngine : null
             config: typeof appConfig !== "undefined" ? appConfig : null
             onViewToggleRequested: if (root.keys) root.keys.gridMode = false
-            onDoRequested: if (typeof hostApi !== "undefined" && hostApi)
-                hostApi.openDoLayer()
+            onDoRequested: function(sceneX, sceneY) {
+                if (typeof hostApi !== "undefined" && hostApi)
+                    hostApi.openDoContext(sceneX, sceneY)
+            }
         }
     }
 
@@ -353,6 +462,14 @@ Window {
         anchors.fill: parent
         z: 105
         keyMachine: root.keys
+    }
+
+    AgentSearchOverlay {
+        id: agentOverlay
+        anchors.fill: parent
+        z: 130
+        bridge: root.finder
+        onDismissed: Qt.callLater(root.focusListingForce)
     }
 
     FocusScope {
@@ -378,10 +495,7 @@ Window {
                                                      contentHeight >= 145
                                                    : contentWidth >= 240 &&
                                                      contentHeight >= 360
-        readonly property bool lookVisible: lookSupported && lookHasRoom &&
-                                            root.config &&
-                                            root.config.panelLookOpen &&
-                                            !(root.keys && root.keys.peekOpen)
+        readonly property bool lookVisible: root.lookInPanel
         readonly property real lookRatio: root.config
                                           ? root.config.panelLookRatio : 0.34
         readonly property int lookSpan: lookVisible
@@ -389,11 +503,6 @@ Window {
                                                       ? contentWidth
                                                       : contentHeight) *
                                                      lookRatio) : 0
-        readonly property string targetLabel: {
-            var s = root.files && root.files.currentStat
-                    ? root.files.currentStat : null
-            return s && s.name ? s.name : (root.files ? root.files.path : "")
-        }
         readonly property int span: root.config
                                     ? Math.min(root.config.panelSize,
                                                (root.panelHorizontal
@@ -450,7 +559,10 @@ Window {
                         id: modeTab
                         required property var modelData
                         readonly property bool current: modelData.id === root.panelId
-                        width: modeLabel.implicitWidth + Theme.controlPaddingX * 2
+                        visible: panelDock.width >= Theme.space(420) || current
+                        width: visible
+                               ? modeLabel.implicitWidth +
+                                 Theme.controlPaddingX * 2 : 0
                         height: Theme.space(22)
                         color: current ? Theme.accent
                                        : (modeHover.hovered ? Theme.hoverFill
@@ -485,14 +597,6 @@ Window {
                     }
                 }
 
-                Text {
-                    width: Math.max(0, parent.width - x)
-                    text: panelDock.targetLabel
-                    color: Theme.darkForeground
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontCaption
-                    elide: Text.ElideMiddle
-                }
             }
 
             Row {
@@ -504,7 +608,8 @@ Window {
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: panelDock.activeFocus
+                    visible: panelDock.activeFocus &&
+                             panelDock.width >= Theme.space(420)
                     text: "KEYBOARD"
                     color: Theme.accent
                     font.family: Theme.fontFamily
@@ -517,15 +622,14 @@ Window {
                     height: Theme.space(24)
                     compact: false
                     label: "LOOK"
-                    checked: root.config && root.config.panelLookOpen &&
-                             panelDock.lookHasRoom
+                    checked: root.lookEnabled
                     toolTip: !panelDock.lookHasRoom
-                             ? "Enlarge the panel to show Look"
+                             ? (checked
+                                ? "Look is enabled · enlarge the panel to show it"
+                                : "Enlarge the panel to show Look")
                              : (checked ? "Hide ambient preview"
                                         : "Show ambient preview")
-                    onTriggered: if (root.config)
-                                     root.config.panelLookOpen =
-                                         !root.config.panelLookOpen
+                    onTriggered: root.setLookOpen(!root.lookEnabled, true)
                 }
 
                 ChromeButton {
@@ -592,40 +696,24 @@ Window {
                                      ? fileCatalog : null
                     if (item.config !== undefined)
                         item.config = root.config
+                    if (item.shell !== undefined)
+                        item.shell = root
                     panelDock.panelItems[modelData] = item
                     Qt.callLater(root.deliverPendingSqlAction)
                 }
             }
         }
 
-        PanelLook {
-            id: panelLook
-            visible: panelDock.lookVisible
-            z: 2
-            x: root.panelHorizontal
-               ? panelDock.contentRight - panelDock.lookSpan
-               : panelDock.contentLeft
-            y: root.panelHorizontal
-               ? panelDock.contentTop
-               : panelDock.contentBottom - panelDock.lookSpan
-            width: root.panelHorizontal ? panelDock.lookSpan
-                                        : panelDock.contentWidth
-            height: root.panelHorizontal ? panelDock.contentHeight
-                                         : panelDock.lookSpan
-            host: typeof hostApi !== "undefined" ? hostApi : null
-            fileModel: root.files
-            selectionModel: root.selection
-            horizontalSplit: root.panelHorizontal
-            onCollapseRequested: if (root.config)
-                                     root.config.panelLookOpen = false
-        }
-
         MouseArea {
             id: lookResize
             visible: panelDock.lookVisible
             z: 4
-            x: root.panelHorizontal ? panelLook.x - 3 : panelDock.contentLeft
-            y: root.panelHorizontal ? panelDock.contentTop : panelLook.y - 3
+            x: root.panelHorizontal
+               ? panelDock.contentRight - panelDock.lookSpan - 3
+               : panelDock.contentLeft
+            y: root.panelHorizontal
+               ? panelDock.contentTop
+               : panelDock.contentBottom - panelDock.lookSpan - 3
             width: root.panelHorizontal ? 6 : panelDock.contentWidth
             height: root.panelHorizontal ? panelDock.contentHeight : 6
             cursorShape: root.panelHorizontal ? Qt.SplitHCursor
@@ -791,6 +879,71 @@ Window {
                 var delta = root.panelRight ? (startX - x) : (x - startX)
                 root.config.panelSize = Math.round(startSize + delta)
             }
+        }
+    }
+
+    // One preview companion, two homes. Keeping this as a single instance
+    // preserves loaded rich handlers and folder state as it moves between the
+    // browser and an app panel.
+    PanelLook {
+        id: panelLook
+        parent: root.lookInPanel ? panelDock : root.contentItem
+        visible: root.lookInPanel || standaloneLookDock.width > 0.5
+        opacity: root.lookInPanel || root.lookStandalone ? 1 : 0
+        z: 2
+        x: root.lookInPanel
+           ? (root.panelHorizontal
+              ? panelDock.contentRight - panelDock.lookSpan
+              : panelDock.contentLeft)
+           : standaloneLookDock.x
+        y: root.lookInPanel
+           ? (root.panelHorizontal
+              ? panelDock.contentTop
+              : panelDock.contentBottom - panelDock.lookSpan)
+           : standaloneLookDock.y
+        width: root.lookInPanel
+               ? (root.panelHorizontal ? panelDock.lookSpan
+                                       : panelDock.contentWidth)
+               : standaloneLookDock.width
+        height: root.lookInPanel
+                ? (root.panelHorizontal ? panelDock.contentHeight
+                                        : panelDock.lookSpan)
+                : standaloneLookDock.height
+        host: typeof hostApi !== "undefined" ? hostApi : null
+        fileModel: root.files
+        filterProxy: root.listing
+        selectionModel: root.selection
+        horizontalSplit: root.lookInPanel ? root.panelHorizontal : true
+        mainQueryBusy: root.mainSqlBusy
+        onCollapseRequested: root.setLookOpen(false, true)
+
+        Behavior on opacity {
+            NumberAnimation { duration: 90 }
+        }
+    }
+
+    MouseArea {
+        id: standaloneLookResize
+        visible: standaloneLookDock.width > 0.5 && !root.lookInPanel &&
+                 !root.panelOpen
+        z: 5
+        x: standaloneLookDock.x - 3
+        y: standaloneLookDock.y
+        width: 6
+        height: standaloneLookDock.height
+        cursorShape: Qt.SplitHCursor
+        preventStealing: true
+        property real startSize: 0
+        property real startX: 0
+        onPressed: function(mouse) {
+            startSize = root.config ? root.config.lookSize : 360
+            startX = mapToItem(null, mouse.x, mouse.y).x
+        }
+        onPositionChanged: function(mouse) {
+            if (!pressed || !root.config)
+                return
+            var now = mapToItem(null, mouse.x, mouse.y).x
+            root.config.lookSize = Math.round(startSize + startX - now)
         }
     }
 
@@ -1030,6 +1183,7 @@ Window {
     // style — but never steals from the command field or overlays.
     readonly property bool hoverFocusAllowed: panelOpen && keys &&
                                               !panelDragging &&
+                                              !agentOverlay.visible &&
                                               !keys.fieldFocused &&
                                               !keys.peekOpen &&
                                               !keys.actionOpen &&
@@ -1039,6 +1193,8 @@ Window {
 
     Connections {
         target: root.keys
+        function onLookToggleRequested() { root.toggleLookFromBrowser() }
+        function onAgentSearchRequested() { root.openAgentSearch() }
         function onPanelFocusRequested() { Qt.callLater(root.focusPanel) }
         function onSqlScanRequested() {
             root.pendingSqlScan = true
@@ -1106,6 +1262,14 @@ Window {
         target: root.files
         function onPathChanged() {
             root.focusListing()
+        }
+    }
+
+    Connections {
+        target: root.finder
+        function onResultReady(label, sql, cwd) {
+            root.openSqlBookmark(label, sql, cwd, "agent")
+            agentOverlay.complete()
         }
     }
 
@@ -1339,6 +1503,8 @@ Window {
     }
 
     Component.onCompleted: {
+        if (root.keys)
+            root.keys.lookKeyMode = true
         // A panel restored from config was set before QML loaded, so the
         // panelChanged connection never saw it — seed the keep-alive list.
         if (root.panelId.length)
@@ -1346,4 +1512,7 @@ Window {
         Qt.callLater(root.focusListing)
         Qt.callLater(root.refreshRelevantPanels)
     }
+
+    Component.onDestruction: if (root.keys)
+                                 root.keys.lookKeyMode = false
 }

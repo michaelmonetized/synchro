@@ -63,7 +63,7 @@ Item {
         if (root.extra) return root.extra
         if (root.host && root.host.actionOpen && root.host.doHint) return root.host.doHint
         if (root.keyMachine && root.keyMachine.panelFocused) return "Ctrl+` returns to files"
-        return root.hasSelection ? "Space previews  ·  Ctrl+Enter shows actions"
+        return root.hasSelection ? "Space toggles Look  ·  Shift+Space opens Peek"
                                  : "Press / to filter  ·  ? for help"
     }
 
@@ -138,7 +138,7 @@ Item {
             visible: root.stat.size !== undefined
             text: root.fmtSize(root.stat.size)
             color: Theme.darkForeground
-            font.family: Theme.fontFamily
+            font.family: Theme.monoFontFamily
             font.pixelSize: Theme.fontCaption
         }
 
@@ -146,7 +146,7 @@ Item {
             visible: !!root.stat.mtime
             text: root.fmtTime(root.stat.mtime)
             color: Theme.darkForeground
-            font.family: Theme.fontFamily
+            font.family: Theme.monoFontFamily
             font.pixelSize: Theme.fontCaption
         }
 
@@ -154,7 +154,7 @@ Item {
             visible: !!root.stat.perm && root.width >= Theme.space(1050)
             text: root.stat.perm || ""
             color: Theme.darkForeground
-            font.family: Theme.fontFamily
+            font.family: Theme.monoFontFamily
             font.pixelSize: Theme.fontCaption
         }
     }
@@ -182,7 +182,7 @@ Item {
             compact: true
             iconName: "xsi-preview-symbolic"
             fallbackGlyph: "◉"
-            toolTip: "Preview  ·  Space"
+            toolTip: "Toggle Look  ·  Space"
             onTriggered: root.keyMachine.handleListKey(Qt.Key_Space, Qt.NoModifier, "")
         }
         ChromeButton {
@@ -203,7 +203,7 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         width: root.catalogStatusActive
                ? root.width - Theme.spaceLG * 2
-               : Math.min(implicitWidth,
+               : Math.min(contextMetrics.advanceWidth,
                           root.roomy ? Theme.space(330) : root.width * 0.42)
         text: root.contextText()
         color: root.catalogStatusActive && root.catalog.indexing
@@ -217,5 +217,11 @@ Item {
         horizontalAlignment: Text.AlignRight
         elide: root.catalogStatusActive ? Text.ElideNone : Text.ElideLeft
         wrapMode: Text.NoWrap
+    }
+
+    TextMetrics {
+        id: contextMetrics
+        text: context.text
+        font: context.font
     }
 }

@@ -1,22 +1,24 @@
 #include "FsnLayout.h"
 
+#include <QByteArray>
 #include <QDir>
 #include <QFileInfo>
+#include <QHash>
+#include <QSet>
 #include <QVariantMap>
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <vector>
 
 // Layout constants follow fsv 0.9's geometry.c, normalized so that one world
 // unit equals fsv's TREEV_LEAF_NODE_EDGE (256):
 //   MapV:  dir height 384 -> 1.5   leaf height 128 -> 0.5
-//   TreeV: platform height 158.2 -> 0.62   ring spacing 2048 -> 8
-//          leaf height sqrt(bytes)/256     core radius 8192 -> 32
+//   StrataV: sibling directories become bounded MapV buildings in a
+//            deterministic neighborhood; current-folder files occupy its lots.
 
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
 
 // MapV
 constexpr double kMapDirHeight = 1.5;
@@ -25,16 +27,11 @@ constexpr double kMapRootAspect = 1.2;
 constexpr double kMapBorderProportion = 0.01;
 constexpr double kMapSpan = 26.0;
 
-// TreeV
-constexpr double kTreePlatformHeight = 0.62;
-constexpr double kTreeRingSpacing = 8.0;
-constexpr double kTreeCoreRadius = 32.0;
-constexpr double kTreeCoreGrow = 1.25;
-constexpr double kTreeMaxArc = 225.0;
-constexpr double kTreeLeafCell = 1.4;
-constexpr double kTreePlatformPad = 1.6;
-constexpr double kTreeRoadHalf = 0.5;
-constexpr double kTreeCurveStep = 6.0; // degrees per arc segment
+// StrataV neighborhood
+constexpr double kStrataBridgeHalf = 0.34;
+constexpr int kStrataBridgeSteps = 5;
+constexpr double kGoldenAngle = 2.39996322972865332;
+constexpr double kDistrictSpacing = 8.4;
 
 // Side slant ratios per node type (fsv mapv_side_slant_ratios)
 double slantRatio(int ntype) {
@@ -51,9 +48,25 @@ double slantRatio(int ntype) {
 struct Node {
   QString name;
   QString path;
+  QString sourceParent;
+  QString extension;
+  QString mime;
+  QString category;
+  QString ageBucket;
   bool isDir = false;
   bool isLink = false;
+  bool hidden = false;
+  bool aggregate = false;
+  bool expanded = false;
+  bool previewChildren = false;
   qint64 bytes = 1;
+  // Exact catalog/file value for labels and selection metadata. bytes may be
+  // raised to a small geometry floor while laying out tiny directories.
+  qint64 reportedBytes = -1;
+  qint64 mtime = 0;
+  int childCount = 0;
+  int fileCount = 0;
+  int dirCount = 0;
   bool truncated = false; // dir whose contents were not scanned
   std::vector<Node> kids; // dirs first, then files
 };
@@ -64,16 +77,11 @@ int nodeType(const Node &n) {
   return n.isDir ? FsnLayout::TypeDir : FsnLayout::TypeFile;
 }
 
-bool skipDirName(const QString &name) {
-  return name == QLatin1String(".git") || name == QLatin1String("node_modules") ||
-         name == QLatin1String("__pycache__") || name == QLatin1String(".svn") ||
-         name == QLatin1String(".hg") || name == QLatin1String("lost+found");
-}
-
-// Breadth-first scan so shallow directories fill in before deep ones eat the
-// node budget (a DFS would let the first big subtree starve its siblings).
-void fillDir(Node *n, int depth, int *budget, bool hidden,
-             std::vector<std::pair<Node *, int>> *queue) {
+// Read one complete directory level. Descendants are loaded only when their
+// path is explicitly expanded; completeness is structural rather than a
+// global sample budget, matching fsv's expand/collapse semantics.
+void fillDir(Node *n, bool hidden, const QSet<QString> &expanded,
+             std::vector<Node *> *queue) {
   QDir dir(n->path);
   QDir::Filters filters = QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot;
   if (hidden)
@@ -84,35 +92,30 @@ void fillDir(Node *n, int depth, int *budget, bool hidden,
   QFileInfoList dirs;
   QFileInfoList files;
   for (const QFileInfo &fi : list) {
-    if (fi.isDir() && !fi.isSymLink()) {
-      if (!skipDirName(fi.fileName()))
-        dirs.append(fi);
-    } else {
+    if (fi.isDir() && !fi.isSymLink())
+      dirs.append(fi);
+    else
       files.append(fi);
-    }
   }
-  // Keep some slots for files even in dir-crowded folders.
-  const int fileReserve = std::min<int>(12, files.size());
-  const int dirCap = std::min<int>(dirs.size(), FsnLayout::kMaxChildren - fileReserve);
 
-  for (int i = 0; i < dirCap && *budget > 0; ++i) {
-    const QFileInfo &fi = dirs.at(i);
+  for (const QFileInfo &fi : std::as_const(dirs)) {
     Node d;
     d.name = fi.fileName();
     d.path = fi.absoluteFilePath();
+    d.sourceParent = n->path;
     d.isDir = true;
-    d.truncated = true; // cleared if the queue gets to it
+    d.expanded = expanded.contains(d.path);
+    d.aggregate = true;
+    d.truncated = !d.expanded;
     d.bytes = 32768;
     n->kids.push_back(std::move(d));
-    --*budget;
   }
   const int dirCount = int(n->kids.size());
-  for (const QFileInfo &fi : files) {
-    if (int(n->kids.size()) >= FsnLayout::kMaxChildren || *budget <= 0)
-      break;
+  for (const QFileInfo &fi : std::as_const(files)) {
     Node f;
     f.name = fi.fileName();
     f.path = fi.absoluteFilePath();
+    f.sourceParent = n->path;
     f.isLink = fi.isSymLink();
     f.isDir = fi.isDir();
     if (f.isDir) {
@@ -121,43 +124,44 @@ void fillDir(Node *n, int depth, int *budget, bool hidden,
     } else {
       const qint64 sz = fi.size();
       f.bytes = sz > 0 ? sz : 1;
+      f.reportedBytes = std::max(sz, qint64(0));
     }
     n->kids.push_back(std::move(f));
-    --*budget;
   }
-  // Only enqueue once this node's kid vector is final: queued pointers must
-  // stay stable.
-  if (depth < FsnLayout::kMaxDepth) {
-    for (int i = 0; i < dirCount; ++i)
-      queue->push_back({&n->kids[i], depth + 1});
+  // Only enqueue once this node's kid vector is final: queued pointers stay
+  // stable while descendant levels are populated.
+  for (int i = 0; i < dirCount; ++i) {
+    if (n->kids[i].expanded)
+      queue->push_back(&n->kids[i]);
   }
 }
 
 qint64 sumBytes(Node *n) {
   if (!n->kids.empty()) {
-    n->bytes = 0;
+    qint64 visibleBytes = 0;
     for (Node &k : n->kids)
-      n->bytes += sumBytes(&k);
-    n->bytes = std::max(n->bytes, qint64(4096));
+      visibleBytes += sumBytes(&k);
+    // Catalog scenes may know a directory's aggregate direct-child weight
+    // even when the visual node budget only admits a representative subset.
+    n->bytes = std::max({n->bytes, visibleBytes, qint64(4096)});
   }
   return n->bytes;
 }
 
-Node walk(const QString &path, bool hidden) {
+Node walk(const QString &path, bool hidden, const QSet<QString> &expanded) {
   Node root;
   const QFileInfo self(path);
   root.name = self.fileName().isEmpty() ? path : self.fileName();
   root.path = self.absoluteFilePath();
   root.isDir = true;
+  root.expanded = true;
   root.bytes = 4096;
 
-  int budget = FsnLayout::kMaxNodes;
-  std::vector<std::pair<Node *, int>> queue;
-  queue.push_back({&root, 0});
-  for (size_t i = 0; i < queue.size() && budget > 0; ++i) {
-    Node *n = queue[i].first;
+  std::vector<Node *> queue{&root};
+  for (size_t i = 0; i < queue.size(); ++i) {
+    Node *n = queue[i];
     n->truncated = false;
-    fillDir(n, queue[i].second, &budget, hidden, &queue);
+    fillDir(n, hidden, expanded, &queue);
   }
   sumBytes(&root);
   return root;
@@ -191,82 +195,26 @@ FsnLayout::Prim rectPrim(double x0, double z0, double x1, double z1, double y0,
   return p;
 }
 
-double deg2rad(double a) { return a * kPi / 180.0; }
-
-// Polar point: theta in degrees, 0 along +x, 90 along +z.
-void pushPolar(QVector<float> *v, double r, double thetaDeg) {
-  const double a = deg2rad(thetaDeg);
-  pushPt(v, r * std::cos(a), r * std::sin(a));
-}
-
-// Annular sector between r0..r1 and aLo..aHi degrees. The first edge runs
-// along the inner arc from aHi (screen left) to aLo (screen right).
-FsnLayout::Prim sectorPrim(double r0, double r1, double aLo, double aHi,
-                           double y0, double h, double slantK) {
-  FsnLayout::Prim p;
-  p.y0 = float(y0);
-  p.h = float(h);
-  const int segs =
-      std::max(1, int(std::ceil((aHi - aLo) / kTreeCurveStep)));
-  const double t =
-      std::clamp(std::min(h, slantK * std::min(r1 - r0, 8.0)), 0.0,
-                 0.45 * (r1 - r0));
-  const double dIn = std::min(t / std::max(r0, 0.5) * 180.0 / kPi,
-                              0.45 * (aHi - aLo));
-  const double dOut = std::min(t / std::max(r1 - t, 0.5) * 180.0 / kPi,
-                               0.45 * (aHi - aLo));
-  for (int i = 0; i <= segs; ++i) {
-    const double a = aHi - (aHi - aLo) * double(i) / segs;
-    pushPolar(&p.base, r0, a);
-    const double at = (aHi - dIn) - ((aHi - dIn) - (aLo + dIn)) * double(i) / segs;
-    pushPolar(&p.top, r0 + t, at);
-  }
-  for (int i = 0; i <= segs; ++i) {
-    const double a = aLo + (aHi - aLo) * double(i) / segs;
-    pushPolar(&p.base, r1, a);
-    const double at = (aLo + dOut) + ((aHi - dOut) - (aLo + dOut)) * double(i) / segs;
-    pushPolar(&p.top, r1 - t, at);
-  }
-  return p;
-}
-
-// Rotated square box on a platform. theta locates the box; halfW spans the
-// tangential direction, halfD the radial one. First edge faces inward.
-FsnLayout::Prim polarBoxPrim(double r, double thetaDeg, double halfW,
-                             double halfD, double y0, double h,
-                             double slantK) {
-  FsnLayout::Prim p;
-  p.y0 = float(y0);
-  p.h = float(h);
-  const double a = deg2rad(thetaDeg);
-  const double rx = std::cos(a), rz = std::sin(a);   // radial (outward)
-  const double tx = -std::sin(a), tz = std::cos(a);  // tangential (+theta)
-  const double cx = r * rx, cz = r * rz;
-  const double t = std::clamp(std::min(h, slantK * 2.0 * std::min(halfW, halfD)),
-                              0.0, 0.9 * std::min(halfW, halfD));
-  auto corner = [&](QVector<float> *v, double sR, double sT, double inset) {
-    const double dR = (halfD - inset) * sR;
-    const double dT = (halfW - inset) * sT;
-    pushPt(v, cx + rx * dR + tx * dT, cz + rz * dR + tz * dT);
-  };
-  corner(&p.base, -1, +1, 0); // inner left
-  corner(&p.base, -1, -1, 0); // inner right
-  corner(&p.base, +1, -1, 0); // outer right
-  corner(&p.base, +1, +1, 0); // outer left
-  corner(&p.top, -1, +1, t);
-  corner(&p.top, -1, -1, t);
-  corner(&p.top, +1, -1, t);
-  corner(&p.top, +1, +1, t);
-  return p;
-}
-
 void tagPrim(FsnLayout::Prim *p, const Node &n, int kind) {
   p->name = n.name;
   p->path = n.path;
   p->kind = kind;
   p->ntype = nodeType(n);
   p->isDir = n.isDir;
-  p->bytes = n.bytes;
+  p->bytes = n.reportedBytes >= 0 ? n.reportedBytes : n.bytes;
+  p->sourceParent = n.sourceParent;
+  p->extension = n.extension;
+  p->mime = n.mime;
+  p->category = n.category;
+  p->ageBucket = n.ageBucket;
+  p->mtime = n.mtime;
+  p->childCount = n.childCount;
+  p->fileCount = n.fileCount;
+  p->dirCount = n.dirCount;
+  p->hidden = n.hidden;
+  p->isLink = n.isLink;
+  p->aggregate = n.aggregate || n.truncated;
+  p->expanded = n.expanded;
 }
 
 // --------------------------------------------------------------------- MapV
@@ -399,250 +347,511 @@ QVector<FsnLayout::Prim> mapBuild(const Node &root) {
   return out;
 }
 
-// -------------------------------------------------------------------- TreeV
-// fsv's treev geometry: expanded directories are annular-sector platforms in
-// concentric rings; leaves stand on platforms in a polar grid; dark-red
-// roads (trunk, cross-arc, stubs) tie each platform to its children.
+// ------------------------------------------------------------------ StrataV
+// The current directory is intentionally absent as geometry. Its child
+// directories become MapV buildings in a deterministic neighborhood, linked by
+// a minimum-spanning street graph with a few local loops. Root files fill the
+// open lots as small structures. This uses all three dimensions without letting
+// one ISO/AppImage turn the view into a bar chart.
 
-double treeLeafHeight(qint64 bytes) {
-  const double h = std::sqrt(double(std::max(bytes, qint64(1)))) / 256.0;
-  return std::clamp(h, 0.12, 12.0);
+quint64 stableHash(const QString &value) {
+  const QByteArray bytes = value.toUtf8();
+  quint64 hash = 1469598103934665603ULL;
+  for (const char byte : bytes) {
+    hash ^= quint8(byte);
+    hash *= 1099511628211ULL;
+  }
+  return hash;
 }
 
-struct TNode {
+double hashUnit(quint64 hash, int shift) {
+  return double((hash >> shift) & 0xffffULL) / 65535.0;
+}
+
+double strataFileHeight(qint64 bytes) {
+  const double units = double(std::max(bytes, qint64(1))) / 4096.0;
+  return std::clamp(0.30 + 0.22 * std::log2(1.0 + units), 0.30, 4.4);
+}
+
+struct District {
   const Node *node = nullptr;
-  bool isRoot = false;
-  double r0 = 0, depth = 0;
-  double arcOwn = 0, arcSub = 0, kidsArc = 0;
-  double theta = 90.0;
-  int cols = 0, rows = 0;
-  double arcLen = 0;
-  std::vector<TNode> kids;         // expanded child platforms
-  std::vector<const Node *> leaves; // boxes standing on this platform
+  quint64 hash = 0;
+  double x = 0, z = 0, y = 0;
+  double w = 5, d = 5, h = 1.2;
+  double sizeScore = 0.5;
+  std::vector<int> links;
 };
 
-double treeGapDeg(double r) { return 2.0 / std::max(r, 1.0) * 180.0 / kPi; }
+struct Lot {
+  double x = 0, z = 0, halfW = 0, halfD = 0;
+};
 
-// Breadth-first choice of which directories deploy as platforms, so every
-// ring-1 directory gets its platform before a deep subtree hogs the budget.
-std::vector<const Node *> markExpanded(const Node &root, bool leavesOnly) {
-  std::vector<const Node *> out;
-  if (leavesOnly)
-    return out;
-  std::vector<std::pair<const Node *, int>> queue{{&root, 0}};
-  int budget = FsnLayout::kMaxPlatforms;
-  for (size_t i = 0; i < queue.size(); ++i) {
-    const Node *n = queue[i].first;
-    const int ring = queue[i].second;
-    if (ring >= FsnLayout::kMaxTreeRings)
-      continue;
-    // Deeper rings: cap platforms per parent so one bushy subtree can't
-    // hog the whole deployment budget; the rest stay as gray leaf blocks.
-    const int perParent = ring == 0 ? FsnLayout::kMaxPlatforms : 6;
-    int taken = 0;
-    for (const Node &k : n->kids) {
-      if (budget <= 0)
-        return out;
-      if (taken >= perParent)
+bool overlapsLot(double x, double z, double halfW, double halfD,
+                 const std::vector<Lot> &lots, double gap) {
+  for (const Lot &lot : lots) {
+    if (std::abs(x - lot.x) < halfW + lot.halfW + gap &&
+        std::abs(z - lot.z) < halfD + lot.halfD + gap)
+      return true;
+  }
+  return false;
+}
+
+void measureDistrict(District *district) {
+  const Node &n = *district->node;
+  const double countSignal = std::log2(1.0 + std::max(0, n.childCount));
+  const double score = std::clamp(district->sizeScore, 0.0, 1.0);
+  // Footprint and height both carry size, but from a sibling-relative log
+  // axis. The fixed floor keeps tiny folders useful; the capped ceiling keeps
+  // one backup tree from flattening the rest of the neighborhood.
+  const double area = 16.0 + 67.0 * std::pow(score, 0.82) +
+                      std::clamp(countSignal * 0.55, 0.0, 4.0);
+  const double aspect = 0.78 + hashUnit(district->hash, 17) * 0.52;
+  district->w = std::sqrt(area * aspect);
+  district->d = std::sqrt(area / aspect);
+  district->w = std::max(
+      district->w,
+      std::clamp(2.8 + 0.27 * double(n.name.size()), 4.8, 10.5));
+  district->h = 0.72 + 4.05 * std::pow(score, 0.90);
+  district->y = 0.10 + hashUnit(district->hash, 39) * 0.46;
+}
+
+void scoreDistrictSizes(std::vector<District> *districts) {
+  if (districts->empty())
+    return;
+  if (districts->size() == 1) {
+    districts->front().sizeScore = 0.58;
+    measureDistrict(&districts->front());
+    return;
+  }
+  std::vector<double> logs;
+  logs.reserve(districts->size());
+  for (const District &district : *districts)
+    logs.push_back(std::log2(double(std::max(district.node->bytes,
+                                             qint64(4096)))));
+  std::sort(logs.begin(), logs.end());
+  const auto percentile = [&](double q) {
+    const double position = q * double(logs.size() - 1);
+    const int lo = int(std::floor(position));
+    const int hi = int(std::ceil(position));
+    const double t = position - lo;
+    return logs[lo] * (1.0 - t) + logs[hi] * t;
+  };
+  const double low = percentile(0.10);
+  const double high = percentile(0.90);
+  const double rawSpread = high - low;
+  const double spread = std::max(0.25, rawSpread);
+  for (District &district : *districts) {
+    const double value =
+        std::log2(double(std::max(district.node->bytes, qint64(4096))));
+    const double magnitude = std::clamp((value - low) / spread, 0.0, 1.0);
+    const auto position = std::lower_bound(logs.begin(), logs.end(), value);
+    const double rank = double(position - logs.begin()) /
+                        double(std::max<size_t>(1, logs.size() - 1));
+    district.sizeScore = rawSpread < 0.25
+                             ? 0.5
+                             : 0.82 * magnitude + 0.18 * rank;
+    measureDistrict(&district);
+  }
+}
+
+void placeDistricts(std::vector<District> *districts) {
+  std::sort(districts->begin(), districts->end(),
+            [](const District &a, const District &b) {
+              return a.hash < b.hash;
+            });
+  std::vector<Lot> placed;
+  placed.reserve(districts->size());
+  for (int i = 0; i < int(districts->size()); ++i) {
+    District &district = (*districts)[i];
+    const double jitter = (hashUnit(district.hash, 3) - 0.5) * 0.72;
+    double angle = double(i) * kGoldenAngle + jitter;
+    double radius = i == 0 ? 0.0 : kDistrictSpacing * std::sqrt(double(i));
+    for (int attempt = 0; attempt < 96; ++attempt) {
+      district.x = radius * std::cos(angle);
+      district.z = radius * std::sin(angle);
+      if (!overlapsLot(district.x, district.z, 0.5 * district.w,
+                       0.5 * district.d, placed, 1.5))
         break;
-      if (k.isDir && !k.isLink && !k.truncated && !k.kids.empty()) {
-        out.push_back(&k);
-        --budget;
-        ++taken;
-        queue.push_back({&k, ring + 1});
+      radius += 0.85;
+      angle += 0.09;
+    }
+    placed.push_back(
+        {district.x, district.z, 0.5 * district.w, 0.5 * district.d});
+  }
+  if (districts->empty())
+    return;
+  double minX = 1e18, maxX = -1e18, minZ = 1e18, maxZ = -1e18;
+  for (const District &district : *districts) {
+    minX = std::min(minX, district.x - 0.5 * district.w);
+    maxX = std::max(maxX, district.x + 0.5 * district.w);
+    minZ = std::min(minZ, district.z - 0.5 * district.d);
+    maxZ = std::max(maxZ, district.z + 0.5 * district.d);
+  }
+  const double ox = 0.5 * (minX + maxX);
+  const double oz = 0.5 * (minZ + maxZ);
+  for (District &district : *districts) {
+    district.x -= ox;
+    district.z -= oz;
+  }
+}
+
+bool linked(const District &district, int other) {
+  return std::find(district.links.begin(), district.links.end(), other) !=
+         district.links.end();
+}
+
+void addLink(std::vector<District> *districts, int a, int b) {
+  if (a == b || linked((*districts)[a], b))
+    return;
+  (*districts)[a].links.push_back(b);
+  (*districts)[b].links.push_back(a);
+}
+
+double districtDistance2(const District &a, const District &b) {
+  const double dx = b.x - a.x;
+  const double dz = b.z - a.z;
+  return dx * dx + dz * dz;
+}
+
+void connectDistricts(std::vector<District> *districts) {
+  const int n = int(districts->size());
+  if (n < 2)
+    return;
+  std::vector<bool> inTree(n, false);
+  inTree[0] = true;
+  for (int edge = 1; edge < n; ++edge) {
+    int bestA = -1, bestB = -1;
+    double best = 1e100;
+    for (int a = 0; a < n; ++a) {
+      if (!inTree[a])
+        continue;
+      for (int b = 0; b < n; ++b) {
+        if (inTree[b])
+          continue;
+        const double distance = districtDistance2((*districts)[a],
+                                                  (*districts)[b]);
+        if (distance < best) {
+          best = distance;
+          bestA = a;
+          bestB = b;
+        }
       }
     }
-  }
-  return out;
-}
-
-bool isExpanded(const std::vector<const Node *> &expanded, const Node *n) {
-  return std::find(expanded.begin(), expanded.end(), n) != expanded.end();
-}
-
-TNode treeMeasure(const Node &n, double r0,
-                  const std::vector<const Node *> &expanded) {
-  TNode t;
-  t.node = &n;
-  t.r0 = r0;
-  for (const Node &k : n.kids) {
-    if (isExpanded(expanded, &k)) {
-      TNode placeholder;
-      placeholder.node = &k; // measured below, once this ring is sized
-      t.kids.push_back(placeholder);
-    } else {
-      t.leaves.push_back(&k);
-    }
-  }
-  const int nl = int(t.leaves.size());
-  t.cols = nl > 0 ? std::clamp(int(std::ceil(std::sqrt(nl * 1.7))), 1, nl) : 0;
-  t.rows = t.cols > 0 ? (nl + t.cols - 1) / t.cols : 0;
-  t.depth = std::max(3.0, t.rows * kTreeLeafCell + kTreePlatformPad);
-  t.arcLen = std::max(3.0, t.cols * kTreeLeafCell + kTreePlatformPad);
-  t.arcOwn = t.arcLen / std::max(r0, 1.0) * 180.0 / kPi;
-  const double r1 = r0 + t.depth + kTreeRingSpacing;
-  double sum = 0.0;
-  for (TNode &kid : t.kids) {
-    kid = treeMeasure(*kid.node, r1, expanded);
-    sum += kid.arcSub;
-  }
-  if (t.kids.size() > 1)
-    sum += treeGapDeg(r1) * double(t.kids.size() - 1);
-  t.kidsArc = sum;
-  t.arcSub = std::max(t.arcOwn, sum);
-  return t;
-}
-
-void treePlace(TNode *t, double theta) {
-  t->theta = theta;
-  double cursor = theta + 0.5 * t->kidsArc;
-  const double r1 = t->r0 + t->depth + kTreeRingSpacing;
-  for (TNode &kid : t->kids) {
-    treePlace(&kid, cursor - 0.5 * kid.arcSub);
-    cursor -= kid.arcSub + treeGapDeg(r1);
-  }
-}
-
-void treeGroundLabel(FsnLayout::Prim *p, const QString &name, double r0,
-                     double theta, double arcLen, bool isRoot) {
-  const int len = std::max(3, int(name.size()));
-  const double maxSize = isRoot ? 4.2 : 1.8;
-  const double size =
-      std::clamp((isRoot ? 1.9 : 1.6) * arcLen / len, 0.55, maxSize);
-  const double r = std::max(1.0, r0 - 0.35 - size);
-  const double a = deg2rad(theta);
-  p->hasLabel = true;
-  p->labelX = float(r * std::cos(a));
-  p->labelZ = float(r * std::sin(a));
-  // Baseline reads left-to-right for a camera looking inward at theta.
-  p->labelAngle = float(std::atan2(-std::cos(a), std::sin(a)));
-  p->labelSize = float(size);
-}
-
-void treeRoad(QVector<FsnLayout::Prim> *out, double rIn, double rOut,
-              double aLo, double aHi) {
-  if (rOut - rIn <= 1e-3 || aHi - aLo <= 1e-4)
-    return;
-  FsnLayout::Prim p = sectorPrim(rIn, rOut, aLo, aHi, 0.0, 0.0, 0.0);
-  p.kind = FsnLayout::KindRoad;
-  out->push_back(p);
-}
-
-void treeEmit(QVector<FsnLayout::Prim> *out, const TNode &t,
-              const QString &parentPath) {
-  const Node &n = *t.node;
-  const double aLo = t.theta - 0.5 * t.arcOwn;
-  const double aHi = t.theta + 0.5 * t.arcOwn;
-  const double rOut = t.r0 + t.depth;
-
-  FsnLayout::Prim plat =
-      sectorPrim(t.r0, rOut, aLo, aHi, 0.0, kTreePlatformHeight, 0.032);
-  tagPrim(&plat, n, FsnLayout::KindPlatform);
-  plat.root = t.isRoot;
-  treeGroundLabel(&plat, n.name, t.r0, t.theta, t.arcLen, t.isRoot);
-  const double aRad = deg2rad(t.theta);
-  plat.hasRoads = true;
-  plat.gateX = float(t.r0 * std::cos(aRad));
-  plat.gateZ = float(t.r0 * std::sin(aRad));
-  plat.exitX = float(rOut * std::cos(aRad));
-  plat.exitZ = float(rOut * std::sin(aRad));
-  plat.parentPath = parentPath;
-  out->push_back(plat);
-
-  // Leaf grid: rows march outward, columns run left (high theta) to right.
-  const double innerPad = 0.5 * kTreePlatformPad;
-  for (int i = 0; i < int(t.leaves.size()); ++i) {
-    const Node &leaf = *t.leaves[i];
-    const int row = t.cols > 0 ? i / t.cols : 0;
-    const int col = t.cols > 0 ? i % t.cols : 0;
-    const int inRow =
-        std::min(t.cols, int(t.leaves.size()) - row * t.cols);
-    const double r =
-        t.r0 + innerPad + (row + 0.5) * kTreeLeafCell;
-    const double cellDeg = kTreeLeafCell / std::max(r, 1.0) * 180.0 / kPi;
-    const double theta =
-        t.theta + (0.5 * double(inRow - 1) - col) * cellDeg;
-    FsnLayout::Prim box =
-        polarBoxPrim(r, theta, 0.5, 0.5, kTreePlatformHeight,
-                     treeLeafHeight(leaf.bytes), slantRatio(nodeType(leaf)));
-    tagPrim(&box, leaf,
-            leaf.isDir ? FsnLayout::KindDirLeaf : FsnLayout::KindLeaf);
-    out->push_back(box);
-  }
-
-  // Roads to children: trunk out the back, an arc across, stubs inward.
-  if (!t.kids.empty()) {
-    const double rArc = rOut + 0.5 * kTreeRingSpacing;
-    const double trunkHalf = kTreeRoadHalf / rArc * 180.0 / kPi;
-    treeRoad(out, rOut - 0.2, rArc + kTreeRoadHalf, t.theta - trunkHalf,
-             t.theta + trunkHalf);
-    double kidLo = t.kids.front().theta, kidHi = t.kids.front().theta;
-    for (const TNode &kid : t.kids) {
-      kidLo = std::min(kidLo, kid.theta);
-      kidHi = std::max(kidHi, kid.theta);
-    }
-    if (t.kids.size() > 1)
-      treeRoad(out, rArc - kTreeRoadHalf, rArc + kTreeRoadHalf,
-               kidLo - trunkHalf, kidHi + trunkHalf);
-    for (const TNode &kid : t.kids) {
-      const double stubHalf = kTreeRoadHalf / rArc * 180.0 / kPi;
-      treeRoad(out, rArc, kid.r0 + 0.2, kid.theta - stubHalf,
-               kid.theta + stubHalf);
-      treeEmit(out, kid, n.path);
-    }
-  }
-
-  // The root's own road runs inward, toward the viewer, under its label.
-  if (t.isRoot) {
-    const double trunkHalf = kTreeRoadHalf / std::max(t.r0, 1.0) * 180.0 / kPi;
-    treeRoad(out, std::max(0.5, t.r0 - 6.5), t.r0 + 0.2,
-             t.theta - trunkHalf, t.theta + trunkHalf);
-  }
-}
-
-QVector<FsnLayout::Prim> treeBuild(const Node &root, bool leavesOnly) {
-  QVector<FsnLayout::Prim> out;
-  const std::vector<const Node *> expanded = markExpanded(root, leavesOnly);
-  double core = kTreeCoreRadius;
-  TNode t;
-  for (int iter = 0; iter < 8; ++iter) {
-    t = treeMeasure(root, core, expanded);
-    if (t.arcSub <= kTreeMaxArc)
+    if (bestA < 0)
       break;
-    core *= kTreeCoreGrow;
+    addLink(districts, bestA, bestB);
+    inTree[bestB] = true;
   }
-  t.isRoot = true;
-  treePlace(&t, 90.0);
-  treeEmit(&out, t, QString());
+  // Sparse nearest-neighbor loops keep the neighborhood from reading as a
+  // single branching diagram while retaining an understandable street graph.
+  for (int i = 0; i < n; ++i) {
+    if ((stableHash((*districts)[i].node->path) % 3ULL) != 0)
+      continue;
+    int nearest = -1;
+    double best = 1e100;
+    for (int j = 0; j < n; ++j) {
+      if (i == j || linked((*districts)[i], j))
+        continue;
+      const double distance = districtDistance2((*districts)[i],
+                                                (*districts)[j]);
+      if (distance < best) {
+        best = distance;
+        nearest = j;
+      }
+    }
+    if (nearest >= 0)
+      addLink(districts, i, nearest);
+  }
+}
+
+FsnLayout::Prim bridgeSegment(double ax, double az, double bx, double bz,
+                              double y) {
+  const double dx = bx - ax;
+  const double dz = bz - az;
+  const double len = std::hypot(dx, dz);
+  if (len <= 1e-5)
+    return {};
+  const double nx = -dz / len * kStrataBridgeHalf;
+  const double nz = dx / len * kStrataBridgeHalf;
+  FsnLayout::Prim p;
+  p.kind = FsnLayout::KindRoad;
+  p.y0 = float(y);
+  p.h = 0.10f;
+  pushPt(&p.base, ax + nx, az + nz);
+  pushPt(&p.base, bx + nx, bz + nz);
+  pushPt(&p.base, bx - nx, bz - nz);
+  pushPt(&p.base, ax - nx, az - nz);
+  p.top = p.base;
+  return p;
+}
+
+void strataBridge(QVector<FsnLayout::Prim> *out, double ax, double az,
+                   double ay, double bx, double bz, double by) {
+  if (std::hypot(bx - ax, bz - az) <= 1e-4)
+    return;
+  for (int i = 0; i < kStrataBridgeSteps; ++i) {
+    const double t0 = double(i) / kStrataBridgeSteps;
+    const double t1 = double(i + 1) / kStrataBridgeSteps;
+    const double tm = 0.5 * (t0 + t1);
+    out->push_back(bridgeSegment(ax + (bx - ax) * t0,
+                                 az + (bz - az) * t0,
+                                 ax + (bx - ax) * t1,
+                                 az + (bz - az) * t1,
+                                 ay + (by - ay) * tm));
+  }
+}
+
+void roadBetween(QVector<FsnLayout::Prim> *out, const District &a,
+                 const District &b) {
+  const double dx = b.x - a.x;
+  const double dz = b.z - a.z;
+  const double distance = std::hypot(dx, dz);
+  if (distance <= 1e-4)
+    return;
+  const double ux = dx / distance, uz = dz / distance;
+  const double ta = std::min(0.5 * a.w / std::max(std::abs(ux), 0.01),
+                             0.5 * a.d / std::max(std::abs(uz), 0.01));
+  const double tb = std::min(0.5 * b.w / std::max(std::abs(ux), 0.01),
+                             0.5 * b.d / std::max(std::abs(uz), 0.01));
+  const double ax = a.x + ux * ta, az = a.z + uz * ta;
+  const double bx = b.x - ux * tb, bz = b.z - uz * tb;
+  const double sign = ((a.hash ^ b.hash) & 1ULL) ? 1.0 : -1.0;
+  const double bend = std::min(2.8, distance * 0.12) * sign;
+  const double mx = 0.5 * (ax + bx) - uz * bend;
+  const double mz = 0.5 * (az + bz) + ux * bend;
+  const double ay = a.y + 0.08;
+  const double by = b.y + 0.08;
+  const double my = std::min(ay, by) - 0.04;
+  strataBridge(out, ax, az, ay, mx, mz, my);
+  strataBridge(out, mx, mz, my, bx, bz, by);
+}
+
+void emitDistrict(QVector<FsnLayout::Prim> *out, const District &district,
+                  const std::vector<District> &districts) {
+  const Node &n = *district.node;
+  const double x0 = district.x - 0.5 * district.w;
+  const double x1 = district.x + 0.5 * district.w;
+  const double z0 = district.z - 0.5 * district.d;
+  const double z1 = district.z + 0.5 * district.d;
+  FsnLayout::Prim building =
+      rectPrim(x0, z0, x1, z1, district.y, district.h, 0.025);
+  tagPrim(&building, n, FsnLayout::KindPlatform);
+  building.hasLabel = true;
+  building.labelX = float(district.x);
+  building.labelZ = float(z0 + 0.50);
+  building.labelSize = 0.96f;
+  building.hasRoads = true;
+  building.sizeScore = float(district.sizeScore);
+  building.gateX = building.exitX = float(district.x);
+  building.gateZ = building.exitZ = float(district.z);
+  building.parentPath.clear();
+  for (const int link : district.links)
+    building.neighbors.append(districts[link].node->path);
+  out->push_back(building);
+
+  if (n.kids.empty())
+    return;
+  const double insetX = std::min(0.18, district.w * 0.04);
+  const double insetZ = std::min(0.18, district.d * 0.04);
+  const int firstChild = out->size();
+  const double scale = std::max(district.w, district.d) /
+                       std::sqrt(double(std::max(n.bytes, qint64(4096))));
+  MapCtx ctx{out, scale};
+  mapLayoutChildren(&ctx, n, x0 + insetX, z0 + insetZ, x1 - insetX,
+                    z1 - insetZ, district.y + district.h, 1);
+  for (int i = firstChild; i < out->size(); ++i) {
+    FsnLayout::Prim &child = (*out)[i];
+    child.depthLevel = 1;
+    child.ownerPath = n.path;
+    if (child.kind == FsnLayout::KindPlatform)
+      child.parentPath = child.sourceParent;
+  }
+}
+
+void emitLooseFiles(QVector<FsnLayout::Prim> *out, const Node &root,
+                    const std::vector<District> &districts) {
+  std::vector<const Node *> files;
+  for (const Node &kid : root.kids) {
+    if (!kid.isDir || kid.isLink)
+      files.push_back(&kid);
+  }
+  std::sort(files.begin(), files.end(), [](const Node *a, const Node *b) {
+    const quint64 ah = stableHash(a->path);
+    const quint64 bh = stableHash(b->path);
+    return ah == bh ? a->path < b->path : ah < bh;
+  });
+  std::vector<Lot> occupied;
+  occupied.reserve(districts.size() + files.size());
+  double minX = 1e18, maxX = -1e18, minZ = 1e18, maxZ = -1e18;
+  for (const District &district : districts) {
+    occupied.push_back(
+        {district.x, district.z, 0.5 * district.w, 0.5 * district.d});
+    minX = std::min(minX, district.x - 0.5 * district.w);
+    maxX = std::max(maxX, district.x + 0.5 * district.w);
+    minZ = std::min(minZ, district.z - 0.5 * district.d);
+    maxZ = std::max(maxZ, district.z + 0.5 * district.d);
+  }
+  if (districts.empty()) {
+    const double half = std::max(5.0, 0.72 * std::sqrt(double(files.size())));
+    minX = minZ = -half;
+    maxX = maxZ = half;
+  } else {
+    const double margin =
+        std::clamp(3.8 + 0.15 * std::sqrt(double(files.size())), 4.0, 8.5);
+    minX -= margin;
+    maxX += margin;
+    minZ -= margin;
+    maxZ += margin;
+  }
+  const double lotW = std::max(1.0, maxX - minX);
+  const double lotD = std::max(1.0, maxZ - minZ);
+  for (int i = 0; i < int(files.size()); ++i) {
+    const Node &file = *files[i];
+    const quint64 hash = stableHash(file.path);
+    const double height = strataFileHeight(file.bytes);
+    const double half = 0.36 + std::min(0.18, height * 0.022);
+    double x = 0, z = 0;
+    for (int attempt = 0; attempt < 256; ++attempt) {
+      // Two irrational strides produce a stable low-discrepancy scatter over
+      // the whole neighborhood. Hash offsets keep similarly named folders
+      // from inheriting the same visual pattern.
+      const double sequence = double(i + 1) +
+                              double(attempt) * double(files.size() + 1);
+      const double u = std::fmod(hashUnit(hash, 5) +
+                                     sequence * 0.6180339887498948,
+                                 1.0);
+      const double v = std::fmod(hashUnit(hash, 29) +
+                                     sequence * 0.7548776662466927,
+                                 1.0);
+      x = minX + u * lotW;
+      z = minZ + v * lotD;
+      if (!overlapsLot(x, z, half, half, occupied, 0.16))
+        break;
+    }
+    const double y = 0.08 + hashUnit(hash, 43) * 0.18;
+    FsnLayout::Prim structure =
+        rectPrim(x - half, z - half, x + half, z + half, y, height,
+                 slantRatio(nodeType(file)));
+    tagPrim(&structure, file, FsnLayout::KindLeaf);
+    out->push_back(structure);
+    occupied.push_back({x, z, half, half});
+  }
+}
+
+QVector<FsnLayout::Prim> strataBuild(const Node &root) {
+  QVector<FsnLayout::Prim> out;
+  std::vector<District> districts;
+  for (const Node &kid : root.kids) {
+    if (!kid.isDir || kid.isLink)
+      continue;
+    District district;
+    district.node = &kid;
+    district.hash = stableHash(kid.path);
+    districts.push_back(district);
+  }
+  scoreDistrictSizes(&districts);
+  placeDistricts(&districts);
+  connectDistricts(&districts);
+  for (int i = 0; i < int(districts.size()); ++i) {
+    for (const int link : districts[i].links) {
+      if (i < link)
+        roadBetween(&out, districts[i], districts[link]);
+    }
+  }
+  for (const District &district : districts)
+    emitDistrict(&out, district, districts);
+  emitLooseFiles(&out, root, districts);
   return out;
 }
 
 Node rootFromItems(const QString &rootName, const QString &rootPath,
-                   const QVector<FsnLayout::Item> &items) {
+                   const QVector<FsnLayout::Item> &items,
+                   const QSet<QString> &expandedPaths) {
   Node root;
   root.name = rootName;
   root.path = rootPath;
   root.isDir = true;
-  root.bytes = 0;
-  const int cap = 120;
+  root.expanded = true;
+  root.bytes = 4096;
+  root.category = QStringLiteral("folder");
+
+  QHash<QString, QVector<FsnLayout::Item>> byParent;
+  QHash<QString, bool> knownPaths;
   for (const FsnLayout::Item &it : items) {
-    if (int(root.kids.size()) >= cap)
-      break;
-    Node k;
-    k.name = it.name;
-    k.path = it.path;
-    k.isDir = it.isDir;
-    k.truncated = it.isDir;
-    k.bytes = std::max(it.bytes, qint64(it.isDir ? 32768 : 1));
-    root.kids.push_back(std::move(k));
+    knownPaths.insert(it.path, true);
+    const QString parent = it.parentPath.isEmpty() ? rootPath : it.parentPath;
+    byParent[parent].append(it);
   }
-  std::stable_sort(root.kids.begin(), root.kids.end(),
-                   [](const Node &a, const Node &b) {
-                     return a.isDir && !b.isDir;
-                   });
-  for (const Node &k : root.kids)
-    root.bytes += k.bytes;
-  root.bytes = std::max(root.bytes, qint64(4096));
+
+  // Preserve the old flat-item behavior when a synthetic result has no
+  // parent information, while attaching any orphaned rows to the root rather
+  // than silently losing them.
+  for (const FsnLayout::Item &it : items) {
+    if (!it.parentPath.isEmpty() && it.parentPath != rootPath &&
+        !knownPaths.contains(it.parentPath))
+      byParent[rootPath].append(it);
+  }
+
+  std::function<Node(const FsnLayout::Item &, int)> makeNode;
+  makeNode = [&](const FsnLayout::Item &it, int depth) {
+    Node n;
+    n.name = it.name;
+    n.path = it.path;
+    n.sourceParent = it.parentPath;
+    n.extension = it.extension;
+    n.mime = it.mime;
+    n.category = it.category;
+    n.ageBucket = it.ageBucket;
+    n.isDir = it.isDir;
+    n.isLink = it.isLink;
+    n.hidden = it.hidden;
+    n.aggregate = it.aggregate;
+    n.expanded = it.expanded || expandedPaths.contains(it.path);
+    n.previewChildren = it.previewChildren;
+    n.reportedBytes = std::max(it.bytes, qint64(0));
+    n.bytes = std::max(it.bytes, qint64(it.isDir ? 4096 : 1));
+    n.mtime = it.mtime;
+    n.childCount = it.childCount;
+    n.fileCount = it.fileCount;
+    n.dirCount = it.dirCount;
+
+    const QVector<FsnLayout::Item> children = byParent.value(it.path);
+    if (it.isDir && (n.expanded || n.previewChildren) &&
+        depth < FsnLayout::kMaxDepth) {
+      for (const FsnLayout::Item &child : children)
+        n.kids.push_back(makeNode(child, depth + 1));
+    }
+    if (n.previewChildren && it.childCount > int(n.kids.size())) {
+      Node remainder;
+      const int omitted = it.childCount - int(n.kids.size());
+      remainder.name = QStringLiteral("+%L1 more").arg(omitted);
+      remainder.path = n.path + QStringLiteral("/.synchro-folded");
+      remainder.sourceParent = n.path;
+      remainder.isDir = true;
+      remainder.aggregate = true;
+      remainder.truncated = true;
+      qint64 visibleBytes = 0;
+      for (const Node &child : std::as_const(n.kids))
+        visibleBytes += child.bytes;
+      remainder.bytes = std::max(qint64(1), n.bytes - visibleBytes);
+      remainder.reportedBytes = remainder.bytes;
+      remainder.childCount = omitted;
+      n.kids.push_back(std::move(remainder));
+    }
+    n.truncated = it.isDir &&
+                  (it.childCount > int(n.kids.size()) ||
+                   (depth >= FsnLayout::kMaxDepth && it.childCount > 0));
+    n.aggregate = n.aggregate || n.truncated;
+    return n;
+  };
+
+  const QVector<FsnLayout::Item> top = byParent.value(rootPath);
+  for (const FsnLayout::Item &item : top)
+    root.kids.push_back(makeNode(item, 1));
+  root.childCount = top.size();
+  root.truncated = top.size() > qsizetype(root.kids.size());
+  root.aggregate = root.truncated;
+  sumBytes(&root);
   return root;
 }
 
@@ -650,20 +859,30 @@ Node rootFromItems(const QString &rootName, const QString &rootPath,
 
 QVector<FsnLayout::Prim> FsnLayout::build(const QString &root, bool hidden,
                                           View view) {
+  return build(root, hidden, view, {});
+}
+
+QVector<FsnLayout::Prim> FsnLayout::build(const QString &root, bool hidden,
+                                          View view,
+                                          const QStringList &expandedPaths) {
   QVector<Prim> out;
   const QFileInfo fi(root);
   if (root.isEmpty() || !fi.exists() || !fi.isDir())
     return out;
-  const Node tree = walk(fi.absoluteFilePath(), hidden);
-  return view == MapView ? mapBuild(tree) : treeBuild(tree, false);
+  const Node tree = walk(fi.absoluteFilePath(), hidden,
+                         QSet<QString>(expandedPaths.begin(),
+                                       expandedPaths.end()));
+  return view == MapView ? mapBuild(tree) : strataBuild(tree);
 }
 
 QVector<FsnLayout::Prim> FsnLayout::buildFromItems(const QString &rootName,
                                                    const QString &rootPath,
                                                    const QVector<Item> &items,
-                                                   View view) {
-  const Node root = rootFromItems(rootName, rootPath, items);
-  return view == MapView ? mapBuild(root) : treeBuild(root, true);
+                                                   View view,
+                                                   const QStringList &expandedPaths) {
+  const QSet<QString> expanded(expandedPaths.begin(), expandedPaths.end());
+  const Node root = rootFromItems(rootName, rootPath, items, expanded);
+  return view == MapView ? mapBuild(root) : strataBuild(root);
 }
 
 QVariantList FsnLayout::toVariantList(const QVector<Prim> &prims) {
@@ -678,6 +897,21 @@ QVariantList FsnLayout::toVariantList(const QVector<Prim> &prims) {
     m.insert(QStringLiteral("isDir"), p.isDir);
     m.insert(QStringLiteral("root"), p.root);
     m.insert(QStringLiteral("bytes"), QVariant::fromValue(p.bytes));
+    m.insert(QStringLiteral("sourceParent"), p.sourceParent);
+    m.insert(QStringLiteral("extension"), p.extension);
+    m.insert(QStringLiteral("mime"), p.mime);
+    m.insert(QStringLiteral("category"), p.category);
+    m.insert(QStringLiteral("ageBucket"), p.ageBucket);
+    m.insert(QStringLiteral("mtime"), QVariant::fromValue(p.mtime));
+    m.insert(QStringLiteral("childCount"), p.childCount);
+    m.insert(QStringLiteral("fileCount"), p.fileCount);
+    m.insert(QStringLiteral("dirCount"), p.dirCount);
+    m.insert(QStringLiteral("hidden"), p.hidden);
+    m.insert(QStringLiteral("isLink"), p.isLink);
+    m.insert(QStringLiteral("aggregate"), p.aggregate);
+    m.insert(QStringLiteral("expanded"), p.expanded);
+    m.insert(QStringLiteral("depthLevel"), p.depthLevel);
+    m.insert(QStringLiteral("sizeScore"), p.sizeScore);
     m.insert(QStringLiteral("y0"), p.y0);
     m.insert(QStringLiteral("h"), p.h);
     QVariantList base;
@@ -701,8 +935,13 @@ QVariantList FsnLayout::toVariantList(const QVector<Prim> &prims) {
       m.insert(QStringLiteral("gateZ"), p.gateZ);
       m.insert(QStringLiteral("exitX"), p.exitX);
       m.insert(QStringLiteral("exitZ"), p.exitZ);
-      m.insert(QStringLiteral("parentPath"), p.parentPath);
     }
+    if (!p.parentPath.isEmpty())
+      m.insert(QStringLiteral("parentPath"), p.parentPath);
+    if (!p.neighbors.isEmpty())
+      m.insert(QStringLiteral("neighbors"), p.neighbors);
+    if (!p.ownerPath.isEmpty())
+      m.insert(QStringLiteral("ownerPath"), p.ownerPath);
     out.append(m);
   }
   return out;

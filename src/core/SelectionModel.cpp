@@ -4,6 +4,8 @@
 #include "FilterProxy.h"
 
 #include <algorithm>
+#include <QFileInfo>
+#include <QUrl>
 
 SelectionModel::SelectionModel(FilterProxy *proxy, DirectoryModel *model,
                                QObject *parent)
@@ -31,22 +33,40 @@ int SelectionModel::cursor() const {
   return m_proxy ? m_proxy->currentIndex() : -1;
 }
 
+int SelectionModel::selectedCount() const {
+  return m_externalItem.value(QStringLiteral("path")).toString().isEmpty()
+             ? m_selected.size()
+             : 1;
+}
+
 QString SelectionModel::statusText() const {
   const int n = m_proxy ? m_proxy->count() : 0;
   const QString files = QStringLiteral("%1 files").arg(n);
-  if (m_selected.size() > 1)
-    return QStringLiteral("%1 selected   %2").arg(m_selected.size()).arg(files);
+  if (selectedCount() > 1)
+    return QStringLiteral("%1 selected   %2").arg(selectedCount()).arg(files);
   return files;
 }
 
 void SelectionModel::setCursor(int proxyRow) {
-  if (m_proxy)
-    m_proxy->setCurrentIndex(proxyRow);
+  if (!m_proxy)
+    return;
+  const bool hadExternal = clearExternalItem();
+  m_proxy->setCurrentIndex(proxyRow);
+  if (hadExternal) {
+    const int now = cursor();
+    replaceSelected(now >= 0 ? QSet<int>{now} : QSet<int>{});
+  }
 }
 
 void SelectionModel::moveCursor(int delta) {
-  if (m_proxy)
-    m_proxy->moveCursor(delta);
+  if (!m_proxy)
+    return;
+  const bool hadExternal = clearExternalItem();
+  m_proxy->moveCursor(delta);
+  if (hadExternal) {
+    const int now = cursor();
+    replaceSelected(now >= 0 ? QSet<int>{now} : QSet<int>{});
+  }
 }
 
 void SelectionModel::toggleCursor() {
@@ -84,13 +104,53 @@ void SelectionModel::setAnchor(int proxyRow) {
 }
 
 void SelectionModel::click(int proxyRow) {
-  const int size = m_selected.size();
+  const int size = selectedCount();
   setAnchor(proxyRow);
   m_suppressFollow = true;
   setCursor(proxyRow);
   m_suppressFollow = false;
   if (size <= 1)
     replaceSelected({proxyRow});
+}
+
+void SelectionModel::selectPath(const QString &path, const QString &name,
+                                bool isDir, qint64 size) {
+  if (path.isEmpty())
+    return;
+
+  // Prefer ordinary row selection whenever the target belongs to the current
+  // listing. This keeps all established range and cursor semantics intact.
+  if (m_proxy) {
+    for (int row = 0; row < m_proxy->count(); ++row) {
+      if (pathAt(row) == path) {
+        click(row);
+        return;
+      }
+    }
+  }
+
+  QVariantMap item;
+  item.insert(QStringLiteral("path"), path);
+  item.insert(QStringLiteral("uri"), QUrl::fromLocalFile(path));
+  item.insert(QStringLiteral("name"),
+              name.isEmpty() ? QFileInfo(path).fileName() : name);
+  item.insert(QStringLiteral("isDir"), isDir);
+  item.insert(QStringLiteral("size"), size);
+  item.insert(QStringLiteral("mime"), QString());
+  if (m_externalItem == item && m_selected.isEmpty())
+    return;
+
+  if (m_visual) {
+    m_visual = false;
+    emit visualChanged();
+  }
+  m_selected.clear();
+  m_selectedNames.clear();
+  m_externalItem = item;
+  ++m_epoch;
+  emit selectionChanged();
+  emit epochChanged();
+  emit statusTextChanged();
 }
 
 void SelectionModel::shiftClick(int proxyRow) {
@@ -126,6 +186,8 @@ void SelectionModel::exitVisual() {
 
 void SelectionModel::collapseToCursor() {
   exitVisual();
+  if (!m_externalItem.isEmpty())
+    return;
   const int c = cursor();
   if (c >= 0)
     replaceSelected({c});
@@ -136,6 +198,18 @@ void SelectionModel::collapseToCursor() {
 void SelectionModel::activate() {
   if (!m_proxy || !m_model)
     return;
+  if (!m_externalItem.isEmpty()) {
+    const QString path =
+        m_externalItem.value(QStringLiteral("path")).toString();
+    if (path.isEmpty())
+      return;
+    if (m_externalItem.value(QStringLiteral("isDir")).toBool())
+      m_model->setPath(path);
+    else
+      emit m_model->fileActivated(
+          path, m_externalItem.value(QStringLiteral("mime")).toString());
+    return;
+  }
   if (m_model->isTrash()) {
     QStringList paths = selectedPaths();
     if (paths.isEmpty()) {
@@ -201,6 +275,12 @@ QVariantList SelectionModel::selectedIndices() const {
 
 QStringList SelectionModel::selectedPaths() const {
   QStringList out;
+  const QString external =
+      m_externalItem.value(QStringLiteral("path")).toString();
+  if (!external.isEmpty()) {
+    out.append(external);
+    return out;
+  }
   const QList<int> rows = selectedInOrder();
   out.reserve(rows.size());
   for (int r : rows) {
@@ -211,9 +291,173 @@ QStringList SelectionModel::selectedPaths() const {
   return out;
 }
 
-QString SelectionModel::cursorPath() const { return pathAt(cursor()); }
+QVariantMap SelectionModel::previewSummary(int itemLimit,
+                                           int aggregateLimit) const {
+  QVariantMap out;
+  const int count = selectedCount();
+  itemLimit = qBound(1, itemLimit, 24);
+  aggregateLimit = qBound(itemLimit, aggregateLimit, 50000);
+  out.insert(QStringLiteral("count"), count);
+  if (!m_externalItem.isEmpty()) {
+    out.insert(QStringLiteral("items"), QVariantList{m_externalItem});
+    const bool isDir =
+        m_externalItem.value(QStringLiteral("isDir")).toBool();
+    const qint64 size =
+        m_externalItem.value(QStringLiteral("size")).toLongLong();
+    out.insert(QStringLiteral("files"), isDir ? 0 : 1);
+    out.insert(QStringLiteral("folders"), isDir ? 1 : 0);
+    out.insert(QStringLiteral("bytes"), !isDir && size >= 0 ? size : 0);
+    out.insert(QStringLiteral("knownSizes"), !isDir && size >= 0 ? 1 : 0);
+    out.insert(QStringLiteral("aggregateCount"), 1);
+    out.insert(QStringLiteral("aggregateComplete"), true);
+    out.insert(QStringLiteral("sizeComplete"), isDir || size >= 0);
+    out.insert(QStringLiteral("kindSummary"),
+               QStringList{isDir ? QStringLiteral("1 folders")
+                                 : QStringLiteral("1 files")});
+    return out;
+  }
+  if (!m_proxy || count == 0) {
+    out.insert(QStringLiteral("items"), QVariantList());
+    out.insert(QStringLiteral("aggregateComplete"), true);
+    return out;
+  }
 
-QString SelectionModel::cursorName() const { return nameAt(cursor()); }
+  // Keep a stable, listing-order sample without sorting a potentially huge
+  // selection. Aggregate common selections exactly; very large selections
+  // are explicitly labelled as sampled so Look never stalls the browser.
+  QList<int> sampleRows;
+  sampleRows.reserve(qMin(itemLimit, count));
+  qint64 bytes = 0;
+  int files = 0;
+  int folders = 0;
+  int knownSizes = 0;
+  int aggregateCount = 0;
+  QHash<QString, int> kinds;
+
+  const auto categoryFor = [](const QString &name, const QString &mime) {
+    if (mime.startsWith(QLatin1String("image/")))
+      return QStringLiteral("images");
+    if (mime.startsWith(QLatin1String("video/")))
+      return QStringLiteral("videos");
+    if (mime.startsWith(QLatin1String("audio/")))
+      return QStringLiteral("audio");
+    const QString suffix = name.contains(QLatin1Char('.'))
+                               ? name.section(QLatin1Char('.'), -1).toLower()
+                               : QString();
+    if (QStringList{QStringLiteral("zip"), QStringLiteral("tar"),
+                    QStringLiteral("gz"), QStringLiteral("bz2"),
+                    QStringLiteral("xz"), QStringLiteral("zst"),
+                    QStringLiteral("7z"), QStringLiteral("rar")}
+            .contains(suffix))
+      return QStringLiteral("archives");
+    if (QStringList{QStringLiteral("csv"), QStringLiteral("tsv"),
+                    QStringLiteral("parquet"), QStringLiteral("duckdb"),
+                    QStringLiteral("sqlite"), QStringLiteral("db")}
+            .contains(suffix))
+      return QStringLiteral("data");
+    if (QStringList{QStringLiteral("md"), QStringLiteral("txt"),
+                    QStringLiteral("pdf"), QStringLiteral("doc"),
+                    QStringLiteral("docx"), QStringLiteral("odt")}
+            .contains(suffix))
+      return QStringLiteral("documents");
+    if (QStringList{QStringLiteral("cpp"), QStringLiteral("h"),
+                    QStringLiteral("qml"), QStringLiteral("js"),
+                    QStringLiteral("ts"), QStringLiteral("py"),
+                    QStringLiteral("rs"), QStringLiteral("go"),
+                    QStringLiteral("java"), QStringLiteral("sh")}
+            .contains(suffix))
+      return QStringLiteral("code");
+    return QStringLiteral("files");
+  };
+
+  for (int row : m_selected) {
+    if (sampleRows.size() < itemLimit) {
+      sampleRows.append(row);
+      std::sort(sampleRows.begin(), sampleRows.end());
+    } else if (row < sampleRows.constLast()) {
+      sampleRows.last() = row;
+      std::sort(sampleRows.begin(), sampleRows.end());
+    }
+
+    if (aggregateCount >= aggregateLimit)
+      continue;
+    const QModelIndex index = m_proxy->index(row, 0);
+    if (!index.isValid())
+      continue;
+    ++aggregateCount;
+    const bool isDir =
+        m_proxy->data(index, DirectoryModel::IsDirRole).toBool();
+    if (isDir) {
+      ++folders;
+      ++kinds[QStringLiteral("folders")];
+      continue;
+    }
+    ++files;
+    const qint64 size =
+        m_proxy->data(index, DirectoryModel::SizeRole).toLongLong();
+    if (size >= 0) {
+      bytes += size;
+      ++knownSizes;
+    }
+    const QString name =
+        m_proxy->data(index, DirectoryModel::NameRole).toString();
+    const QString mime =
+        m_proxy->data(index, DirectoryModel::MimeRole).toString();
+    ++kinds[categoryFor(name, mime)];
+  }
+
+  QVariantList items;
+  items.reserve(sampleRows.size());
+  for (int row : sampleRows)
+    items.append(m_proxy->rowMap(row));
+
+  QList<QPair<QString, int>> orderedKinds;
+  orderedKinds.reserve(kinds.size());
+  for (auto it = kinds.cbegin(); it != kinds.cend(); ++it)
+    orderedKinds.append({it.key(), it.value()});
+  std::sort(orderedKinds.begin(), orderedKinds.end(),
+            [](const auto &a, const auto &b) {
+              return a.second == b.second ? a.first < b.first
+                                          : a.second > b.second;
+            });
+  QStringList kindSummary;
+  for (int i = 0; i < qMin(3, orderedKinds.size()); ++i)
+    kindSummary.append(QStringLiteral("%1 %2")
+                           .arg(orderedKinds.at(i).second)
+                           .arg(orderedKinds.at(i).first));
+
+  const bool complete = aggregateCount == count;
+  out.insert(QStringLiteral("items"), items);
+  out.insert(QStringLiteral("files"), files);
+  out.insert(QStringLiteral("folders"), folders);
+  out.insert(QStringLiteral("bytes"), bytes);
+  out.insert(QStringLiteral("knownSizes"), knownSizes);
+  out.insert(QStringLiteral("aggregateCount"), aggregateCount);
+  out.insert(QStringLiteral("aggregateComplete"), complete);
+  out.insert(QStringLiteral("sizeComplete"), complete && knownSizes == files);
+  out.insert(QStringLiteral("kindSummary"), kindSummary);
+  return out;
+}
+
+QString SelectionModel::cursorPath() const {
+  const QString external =
+      m_externalItem.value(QStringLiteral("path")).toString();
+  return external.isEmpty() ? pathAt(cursor()) : external;
+}
+
+QString SelectionModel::cursorName() const {
+  const QString external =
+      m_externalItem.value(QStringLiteral("name")).toString();
+  return external.isEmpty() ? nameAt(cursor()) : external;
+}
+
+QVariantMap SelectionModel::primaryItem() const {
+  if (!m_externalItem.isEmpty())
+    return m_externalItem;
+  const QList<int> rows = selectedInOrder();
+  const int row = rows.isEmpty() ? cursor() : rows.constFirst();
+  return m_proxy && row >= 0 ? m_proxy->rowMap(row) : QVariantMap();
+}
 
 void SelectionModel::onCursorChanged() {
   const int now = cursor();
@@ -251,6 +495,7 @@ void SelectionModel::onPathChanged() {
     emit visualChanged();
   }
   m_selected.clear();
+  m_externalItem.clear();
   m_selectedNames.clear();
   m_cursorName.clear();
   emit selectionChanged();
@@ -259,6 +504,11 @@ void SelectionModel::onPathChanged() {
 
 void SelectionModel::rematch() {
   if (m_leaveDir)
+    return;
+  // Recursive 3D selections intentionally live outside the current proxy.
+  // Listing batches and background sort/filter rematches must not silently
+  // replace them with whichever direct child currently owns the cursor.
+  if (!m_externalItem.isEmpty())
     return;
   const QStringList names = m_selectedNames;
   QSet<int> next;
@@ -295,7 +545,8 @@ void SelectionModel::applyRange(int a, int b) {
 }
 
 void SelectionModel::replaceSelected(const QSet<int> &rows) {
-  if (m_selected == rows) {
+  const bool hadExternal = clearExternalItem();
+  if (!hadExternal && m_selected == rows) {
     syncNames();
     return;
   }
@@ -305,6 +556,13 @@ void SelectionModel::replaceSelected(const QSet<int> &rows) {
   emit selectionChanged();
   emit epochChanged();
   emit statusTextChanged();
+}
+
+bool SelectionModel::clearExternalItem() {
+  if (m_externalItem.isEmpty())
+    return false;
+  m_externalItem.clear();
+  return true;
 }
 
 void SelectionModel::syncNames() {

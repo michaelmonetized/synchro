@@ -25,6 +25,8 @@ class ThemeBridge : public QObject {
   Q_PROPERTY(int radius READ radius NOTIFY themeChanged)
   Q_PROPERTY(int gapsOut READ gapsOut NOTIFY themeChanged)
   Q_PROPERTY(QString fontFamily READ fontFamily NOTIFY themeChanged)
+  Q_PROPERTY(QString sansFontFamily READ sansFontFamily NOTIFY themeChanged)
+  Q_PROPERTY(QString monoFontFamily READ monoFontFamily NOTIFY themeChanged)
   Q_PROPERTY(int fontBody READ fontBody NOTIFY themeChanged)
   Q_PROPERTY(int fontBaseSize READ fontBaseSize NOTIFY themeChanged)
   Q_PROPERTY(qreal spacingScale READ spacingScale NOTIFY themeChanged)
@@ -47,7 +49,9 @@ public:
   QColor normalBorder() const { return m_normalBorder; }
   int radius() const { return m_radius; }
   int gapsOut() const { return m_gapsOut; }
-  QString fontFamily() const { return m_fontFamily; }
+  QString fontFamily() const { return m_sansFontFamily; }
+  QString sansFontFamily() const { return m_sansFontFamily; }
+  QString monoFontFamily() const { return m_monoFontFamily; }
   int fontBody() const { return m_fontBody; }
   int fontBaseSize() const { return m_fontBaseSize; }
   qreal spacingScale() const { return m_spacingScale; }
@@ -115,7 +119,10 @@ private:
   QColor m_hoverFill;
   QColor m_normalBorder;
 
-  QString m_fontFamily = QStringLiteral("monospace");
+  // Generic fontconfig aliases deliberately follow the fonts selected by the
+  // Omarchy system instead of pinning Synchro to a bundled family.
+  QString m_sansFontFamily = QStringLiteral("sans-serif");
+  QString m_monoFontFamily = QStringLiteral("monospace");
   int m_radius = 0;
   int m_gapsOut = 5;
   int m_fontBaseSize = 12;

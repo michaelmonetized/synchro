@@ -48,7 +48,7 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             text: "sudo pacman -S qmltermwidget   then reopen with :term"
             color: Theme.muted
-            font.family: Theme.fontFamily
+            font.family: Theme.monoFontFamily
             font.pixelSize: Theme.fontBody
         }
     }
