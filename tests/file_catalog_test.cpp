@@ -2,6 +2,7 @@
 #include "DirectoryModel.h"
 #include "FileCatalog.h"
 #include "FsnLayout.h"
+#include "ThumbCache.h"
 #include "ThumbnailService.h"
 
 #include <QCoreApplication>
@@ -15,6 +16,7 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUrl>
 
 #include <sqlite3.h>
 
@@ -73,6 +75,11 @@ private slots:
   void completedScanStateSurvivesRelaunch();
   void legacyCatalogStateIsAdopted();
   void legacySchemaMigratesWithoutRowLoss();
+  void trigramSearchTracksCatalogMutations();
+  void launcherSearchUsesAndTerms();
+  void launcherSearchPrioritizesSavedLocations();
+  void launcherSearchExportsWarmThumbnail();
+  void launcherContentSearchFindsLiteralText();
   void aggregateRowsExposeDrillQueries();
   void incrementalRefreshReconcilesExternalMove();
   void rescanPrunesMissingRows();
@@ -130,8 +137,8 @@ void FileCatalogTest::nativeShadowIsAtomicAndDeliberatelyLagged() {
            qPrintable(query.value(QStringLiteral("error")).toString()));
   QVERIFY2(query.value(QStringLiteral("engine")).toString() ==
                QLatin1String("duckdb-shadow"),
-           qPrintable(query.value(QStringLiteral("shadowFallbackError"))
-                          .toString()));
+           qPrintable(
+               query.value(QStringLiteral("shadowFallbackError")).toString()));
   QCOMPARE(query.value(QStringLiteral("rows")).toList().size(), 1);
 
   QFile second(root.filePath(QStringLiteral("second.txt")));
@@ -160,9 +167,7 @@ void FileCatalogTest::nativeShadowIsAtomicAndDeliberatelyLagged() {
   query = FileCatalog::querySync(
       QStringLiteral("select name,path from tree order by name"), root.path());
   QCOMPARE(query.value(QStringLiteral("rows")).toList().size(), 2);
-  QVERIFY(!FileCatalog::shadowStatus()
-               .value(QStringLiteral("stale"))
-               .toBool());
+  QVERIFY(!FileCatalog::shadowStatus().value(QStringLiteral("stale")).toBool());
 }
 
 void FileCatalogTest::deterministicImageFactsAreQueryable() {
@@ -234,8 +239,7 @@ void FileCatalogTest::repeatedImageFactsOnlyInvalidateActualChanges() {
   QTRY_VERIFY_WITH_TIMEOUT(!catalog.indexing() && catalog.indexedCount() == 1,
                            10000);
 
-  const qint64 treeRevision =
-      FileCatalog::shadowStatus()
+  const qint64 treeRevision = FileCatalog::shadowStatus()
           .value(QStringLiteral("currentRevision"))
           .toLongLong();
   const qint64 initialFactsRevision =
@@ -243,12 +247,11 @@ void FileCatalogTest::repeatedImageFactsOnlyInvalidateActualChanges() {
           .value(QStringLiteral("currentFactsRevision"))
           .toLongLong();
   const qint64 mtime = QFileInfo(path).lastModified().toMSecsSinceEpoch();
-  const QVariantMap blue{{QStringLiteral("palette_0"),
-                          QStringLiteral("#1450dc")},
+  const QVariantMap blue{
+      {QStringLiteral("palette_0"), QStringLiteral("#1450dc")},
                          {QStringLiteral("palette_weight_0"), 0.75}};
   catalog.recordImageFacts(path, mtime, blue);
-  QTRY_COMPARE_WITH_TIMEOUT(
-      FileCatalog::shadowStatus()
+  QTRY_COMPARE_WITH_TIMEOUT(FileCatalog::shadowStatus()
           .value(QStringLiteral("currentFactsRevision"))
           .toLongLong(),
       initialFactsRevision + 1, 5000);
@@ -259,8 +262,7 @@ void FileCatalogTest::repeatedImageFactsOnlyInvalidateActualChanges() {
   QVariantMap red = blue;
   red.insert(QStringLiteral("palette_0"), QStringLiteral("#dc5030"));
   catalog.recordImageFacts(path, mtime, red);
-  QTRY_COMPARE_WITH_TIMEOUT(
-      FileCatalog::shadowStatus()
+  QTRY_COMPARE_WITH_TIMEOUT(FileCatalog::shadowStatus()
           .value(QStringLiteral("currentFactsRevision"))
           .toLongLong(),
       initialFactsRevision + 2, 5000);
@@ -287,8 +289,8 @@ void FileCatalogTest::catalogSceneBuildsEnrichedHierarchy() {
   QVERIFY(image.open(QIODevice::WriteOnly));
   image.write("not decoded by the scene builder");
   image.close();
-  const qint64 recursiveProjectBytes = QFileInfo(code.fileName()).size() +
-                                       QFileInfo(image.fileName()).size();
+  const qint64 recursiveProjectBytes =
+      QFileInfo(code.fileName()).size() + QFileInfo(image.fileName()).size();
 
   DirectoryModel model;
   FileCatalog catalog(&model);
@@ -322,8 +324,7 @@ void FileCatalogTest::catalogSceneBuildsEnrichedHierarchy() {
   int roads = 0;
   for (const QVariant &value : boxes) {
     const QVariantMap box = value.toMap();
-    if (box.value(QStringLiteral("kind")).toInt() ==
-        FsnLayout::KindRoad)
+    if (box.value(QStringLiteral("kind")).toInt() == FsnLayout::KindRoad)
       ++roads;
     if (box.value(QStringLiteral("name")).toString() ==
         QStringLiteral("main.cpp"))
@@ -331,8 +332,7 @@ void FileCatalogTest::catalogSceneBuildsEnrichedHierarchy() {
     if (box.value(QStringLiteral("name")).toString() ==
         QStringLiteral("project"))
       projectPlatform = box;
-    if (box.value(QStringLiteral("name")).toString() ==
-        QStringLiteral("src"))
+    if (box.value(QStringLiteral("name")).toString() == QStringLiteral("src"))
       srcPlatform = box;
     if (box.value(QStringLiteral("root")).toBool())
       hasRootPlatform = true;
@@ -1014,7 +1014,9 @@ void FileCatalogTest::legacySchemaMigratesWithoutRowLoss() {
 
   DirectoryModel model;
   FileCatalog catalog(&model);
-  QCOMPARE(catalogRows(), 1);
+  // The low-priority legacy FTS backfill may briefly hold the first write
+  // transaction after construction; ordinary readers retry through WAL.
+  QTRY_COMPARE_WITH_TIMEOUT(catalogRows(), 1, 1000);
   QVERIFY(sqlite3_open_v2(QFile::encodeName(FileCatalog::dbPath()).constData(),
                           &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
   for (const char *column : {"file_id", "device", "inode"}) {
@@ -1037,6 +1039,216 @@ void FileCatalogTest::legacySchemaMigratesWithoutRowLoss() {
   QCOMPARE(sqlite3_column_int(facts, 0), 0);
   sqlite3_finalize(facts);
   sqlite3_close(db);
+
+  QVariantMap migratedSearch;
+  QTRY_VERIFY_WITH_TIMEOUT(
+      ([&] {
+        migratedSearch = FileCatalog::searchSync(QStringLiteral("a.txt"),
+                                                 QStringLiteral("/old"));
+        return migratedSearch.value(QStringLiteral("count")).toInt() == 1 &&
+               migratedSearch.value(QStringLiteral("index"))
+                   .toMap()
+                   .value(QStringLiteral("complete"))
+                   .toBool();
+      })(),
+      5000);
+  QCOMPARE(migratedSearch.value(QStringLiteral("rows"))
+               .toList()
+               .first()
+               .toMap()
+               .value(QStringLiteral("path"))
+               .toString(),
+           QStringLiteral("/old/a.txt"));
+}
+
+void FileCatalogTest::trigramSearchTracksCatalogMutations() {
+  QTemporaryDir home;
+  QTemporaryDir root;
+  QVERIFY(home.isValid());
+  QVERIFY(root.isValid());
+  qputenv("SYNCHRO_HOME", QFile::encodeName(home.path()));
+
+  const QString alpha = root.filePath(QStringLiteral("AlphaWidget.txt"));
+  QFile file(alpha);
+  QVERIFY(file.open(QIODevice::WriteOnly));
+  file.write("alpha");
+  file.close();
+
+  DirectoryModel model;
+  FileCatalog catalog(&model);
+  catalog.scanTree(root.path(), 100);
+  QTRY_VERIFY_WITH_TIMEOUT(!catalog.indexing() && catalog.indexedCount() == 1,
+                           10000);
+
+  QVariantMap result =
+      FileCatalog::searchSync(QStringLiteral("phaw"), root.path(), {}, {}, 8);
+  QVERIFY2(result.value(QStringLiteral("ok")).toBool(),
+           qPrintable(result.value(QStringLiteral("error")).toString()));
+  QCOMPARE(result.value(QStringLiteral("index"))
+               .toMap()
+               .value(QStringLiteral("tokenizer"))
+               .toString(),
+           QStringLiteral("fts5-trigram"));
+  QCOMPARE(result.value(QStringLiteral("count")).toInt(), 1);
+  QCOMPARE(result.value(QStringLiteral("rows"))
+               .toList()
+               .first()
+               .toMap()
+               .value(QStringLiteral("path"))
+               .toString(),
+           alpha);
+
+  const QString beta = root.filePath(QStringLiteral("BetaArchive.txt"));
+  QVERIFY(QFile::rename(alpha, beta));
+  catalog.scanTree(root.path());
+  QTRY_VERIFY_WITH_TIMEOUT(!catalog.indexing(), 10000);
+  result = FileCatalog::searchSync(QStringLiteral("phaw"), root.path());
+  QCOMPARE(result.value(QStringLiteral("count")).toInt(), 0);
+  result = FileCatalog::searchSync(QStringLiteral("archi"), root.path());
+  QCOMPARE(result.value(QStringLiteral("count")).toInt(), 1);
+  QCOMPARE(result.value(QStringLiteral("rows"))
+               .toList()
+               .first()
+               .toMap()
+               .value(QStringLiteral("path"))
+               .toString(),
+           beta);
+
+  QVERIFY(QFile::remove(beta));
+  catalog.scanTree(root.path());
+  QTRY_VERIFY_WITH_TIMEOUT(!catalog.indexing(), 10000);
+  result = FileCatalog::searchSync(QStringLiteral("archi"), root.path());
+  QCOMPARE(result.value(QStringLiteral("count")).toInt(), 0);
+}
+
+void FileCatalogTest::launcherSearchUsesAndTerms() {
+  QTemporaryDir home;
+  QTemporaryDir root;
+  QVERIFY(home.isValid());
+  QVERIFY(root.isValid());
+  qputenv("SYNCHRO_HOME", QFile::encodeName(home.path()));
+
+  for (const QString &name :
+       {QStringLiteral("TestReport.pdf"), QStringLiteral("TestNotes.md"),
+        QStringLiteral("AnnualReport.pdf")}) {
+    QFile file(root.filePath(name));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(name.toUtf8());
+  }
+
+  DirectoryModel model;
+  FileCatalog catalog(&model);
+  catalog.scanTree(root.path(), 100);
+  QTRY_VERIFY_WITH_TIMEOUT(!catalog.indexing() && catalog.indexedCount() == 3,
+                           10000);
+
+  const QVariantMap result = FileCatalog::searchSync(QStringLiteral("test pdf"),
+                                                     root.path(), {}, {}, 8);
+  QVERIFY(result.value(QStringLiteral("ok")).toBool());
+  const QVariantList rows = result.value(QStringLiteral("rows")).toList();
+  QCOMPARE(rows.size(), 1);
+  QCOMPARE(rows.first().toMap().value(QStringLiteral("name")).toString(),
+           QStringLiteral("TestReport.pdf"));
+}
+
+void FileCatalogTest::launcherSearchPrioritizesSavedLocations() {
+  QTemporaryDir home;
+  QTemporaryDir root;
+  QVERIFY(home.isValid());
+  QVERIFY(root.isValid());
+  qputenv("SYNCHRO_HOME", QFile::encodeName(home.path()));
+
+  const QString ordinary = root.filePath(QStringLiteral("ProjectOrdinary"));
+  const QString pinned = root.filePath(QStringLiteral("ProjectPinned"));
+  QVERIFY(QDir().mkpath(ordinary));
+  QVERIFY(QDir().mkpath(pinned));
+
+  DirectoryModel model;
+  FileCatalog catalog(&model);
+  catalog.scanTree(root.path(), 100);
+  QTRY_VERIFY_WITH_TIMEOUT(!catalog.indexing() && catalog.indexedCount() == 2,
+                           10000);
+
+  const QVariantList bookmarks{
+      QVariantMap{{QStringLiteral("id"), QStringLiteral("big-projects")},
+                  {QStringLiteral("name"), QStringLiteral("Project giants")},
+                  {QStringLiteral("sql"),
+                   QStringLiteral("select * from tree where size > 1")},
+                  {QStringLiteral("cwd"), root.path()}}};
+  const QVariantMap result = FileCatalog::searchSync(
+      QStringLiteral("project"), root.path(), {pinned}, bookmarks, 8);
+  QVERIFY(result.value(QStringLiteral("ok")).toBool());
+  const QVariantList rows = result.value(QStringLiteral("rows")).toList();
+  QCOMPARE(rows.size(), 3);
+  QCOMPARE(rows.at(0).toMap().value(QStringLiteral("kind")).toString(),
+           QStringLiteral("saved-query"));
+  QCOMPARE(rows.at(1).toMap().value(QStringLiteral("path")).toString(), pinned);
+  QVERIFY(rows.at(1).toMap().value(QStringLiteral("bookmarked")).toBool());
+  QCOMPARE(rows.at(2).toMap().value(QStringLiteral("path")).toString(),
+           ordinary);
+}
+
+void FileCatalogTest::launcherSearchExportsWarmThumbnail() {
+  QTemporaryDir home;
+  QTemporaryDir root;
+  QVERIFY(home.isValid());
+  QVERIFY(root.isValid());
+  qputenv("SYNCHRO_HOME", QFile::encodeName(home.path()));
+
+  const QString path = root.filePath(QStringLiteral("PreviewImage.png"));
+  QImage image(24, 18, QImage::Format_ARGB32_Premultiplied);
+  image.fill(QColor(QStringLiteral("#33aaff")));
+  QVERIFY(image.save(path));
+
+  DirectoryModel model;
+  FileCatalog catalog(&model);
+  catalog.scanTree(root.path(), 100);
+  QTRY_VERIFY_WITH_TIMEOUT(!catalog.indexing() && catalog.indexedCount() == 1,
+                           10000);
+
+  QVariantMap result = FileCatalog::searchSync(QStringLiteral("preview"),
+                                               root.path(), {}, {}, 8);
+  QVariantMap row =
+      result.value(QStringLiteral("rows")).toList().first().toMap();
+  const qint64 mtime = row.value(QStringLiteral("mtime")).toLongLong();
+  ThumbCache::instance().putImage(path, mtime, 128, image);
+
+  result = FileCatalog::searchSync(QStringLiteral("preview"), root.path(), {},
+                                   {}, 8);
+  row = result.value(QStringLiteral("rows")).toList().first().toMap();
+  const QString thumbnail = row.value(QStringLiteral("thumbnail")).toString();
+  QVERIFY(thumbnail.startsWith(QLatin1String("file:")));
+  QVERIFY(QFileInfo::exists(QUrl(thumbnail).toLocalFile()));
+}
+
+void FileCatalogTest::launcherContentSearchFindsLiteralText() {
+  if (QStandardPaths::findExecutable(QStringLiteral("rg")).isEmpty())
+    QSKIP("rg is not installed");
+  QTemporaryDir home;
+  QTemporaryDir root;
+  QVERIFY(home.isValid());
+  QVERIFY(root.isValid());
+  qputenv("SYNCHRO_HOME", QFile::encodeName(home.path()));
+
+  QFile match(root.filePath(QStringLiteral("matcher.py")));
+  QVERIFY(match.open(QIODevice::WriteOnly));
+  match.write("import re\npattern = re.compile('synchro')\n");
+  match.close();
+  QFile miss(root.filePath(QStringLiteral("other.py")));
+  QVERIFY(miss.open(QIODevice::WriteOnly));
+  miss.write("import os\n");
+  miss.close();
+
+  const QVariantMap result = FileCatalog::contentSearchSync(
+      QStringLiteral("'import re'"), root.path(), 8, 3000);
+  QVERIFY2(result.value(QStringLiteral("ok")).toBool(),
+           qPrintable(result.value(QStringLiteral("error")).toString()));
+  const QVariantList rows = result.value(QStringLiteral("rows")).toList();
+  QCOMPARE(rows.size(), 1);
+  QCOMPARE(rows.first().toMap().value(QStringLiteral("name")).toString(),
+           QStringLiteral("matcher.py"));
+  QCOMPARE(rows.first().toMap().value(QStringLiteral("matchType")).toString(),
+           QStringLiteral("content"));
 }
 
 void FileCatalogTest::aggregateRowsExposeDrillQueries() {

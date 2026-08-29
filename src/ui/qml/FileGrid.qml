@@ -12,6 +12,9 @@ Item {
     property var host: null
     property var fileOps: null
     property var config: null
+    property bool centerInitialSelection: false
+    property string initialSelectionPath: ""
+    property bool initialSelectionRevealed: false
     property bool dndEnabled: true
     readonly property int selectionEpoch: selection ? selection.epoch : 0
     readonly property bool dndLive: dndEnabled && fileOps && fileModel &&
@@ -312,6 +315,25 @@ Item {
             grid.fileModel.requestVisibleThumbs(first, last, grid.thumbSizePx)
     }
 
+    function syncStartupSelectionThumbnails() {
+        if (!grid.rows || grid.rows.currentIndex < 0 || grid.rows.count <= 0)
+            return
+        var cols = Math.max(1, grid.columns)
+        var visibleRows = Math.max(1, Math.ceil(grid.height /
+                                                Math.max(1, grid.cellHeight)))
+        var runwayRows = Math.ceil(visibleRows / 2) + 3
+        var currentRow = Math.floor(grid.rows.currentIndex / cols)
+        var first = Math.max(0, (currentRow - runwayRows) * cols)
+        var last = Math.min(grid.rows.count - 1,
+                            (currentRow + runwayRows + 1) * cols - 1)
+        if (grid.filterProxy)
+            grid.filterProxy.requestVisibleThumbs(first, last,
+                                                  grid.thumbSizePx)
+        else
+            grid.fileModel.requestVisibleThumbs(first, last,
+                                                grid.thumbSizePx)
+    }
+
     Rectangle {
         anchors.fill: parent
         z: -2
@@ -549,16 +571,60 @@ Item {
         }
     }
 
+    Timer {
+        id: initialReveal
+        interval: 32
+        repeat: false
+        onTriggered: {
+            if (!grid.centerInitialSelection || grid.initialSelectionRevealed ||
+                    !grid.rows || grid.rows.currentIndex < 0)
+                return
+            if (grid.initialSelectionPath.length && grid.selection &&
+                    grid.selection.cursorPath() !== grid.initialSelectionPath)
+                return
+            var view = grid.tilesView()
+            if (!view || !view.positionViewAtIndex)
+                return
+            view.positionViewAtIndex(grid.rows.currentIndex, GridView.Center)
+            // positionViewAtIndex() can update the visual viewport during the
+            // polish pass without producing a later contentY notification.
+            // Re-sample after layout so the exclusive thumbnail runway tracks
+            // the viewport we actually jumped to, not the launch-time page.
+            postRevealThumbSync.restart()
+            // A large directory arrives in batches. Sorting can move the
+            // selected row after an early reveal, so keep re-centering until
+            // the listing is complete and only then consume the one-shot.
+            grid.initialSelectionRevealed = !grid.fileModel ||
+                                            !grid.fileModel.listing
+        }
+    }
+
+    Timer {
+        id: postRevealThumbSync
+        interval: 64
+        repeat: false
+        // GridView can retain its pre-jump contentY while it materializes a
+        // distant current item. Anchor this one runway to the selected row;
+        // ordinary wheel/drag scrolling returns to contentY-based scheduling.
+        onTriggered: grid.syncStartupSelectionThumbnails()
+    }
+
     onWidthChanged: thumbSync.restart()
     onHeightChanged: thumbSync.restart()
-    Component.onCompleted: thumbSync.restart()
+    Component.onCompleted: {
+        thumbSync.restart()
+        if (grid.centerInitialSelection)
+            initialReveal.restart()
+    }
 
     Connections {
         target: grid.rows
         function onCurrentIndexChanged() {
             if (!grid.rows || grid.rows.currentIndex < 0)
                 return
-            if (grid.searching)
+            if (grid.centerInitialSelection && !grid.initialSelectionRevealed) {
+                initialReveal.restart()
+            } else if (grid.searching)
                 grid.ensureSearchRowVisible(grid.rows.currentIndex)
             else {
                 var tiles = grid.tilesView()
@@ -569,13 +635,27 @@ Item {
         }
         function onCountChanged() {
             thumbSync.restart()
+            if (grid.centerInitialSelection && !grid.initialSelectionRevealed)
+                initialReveal.restart()
         }
     }
 
     Connections {
         target: grid.fileModel
+        function onListingChanged() {
+            if (grid.centerInitialSelection && !grid.initialSelectionRevealed)
+                initialReveal.restart()
+        }
         function onFolderGroupsChanged() {
             thumbSync.restart()
+        }
+    }
+
+    Connections {
+        target: grid.selection
+        function onEpochChanged() {
+            if (grid.centerInitialSelection && !grid.initialSelectionRevealed)
+                initialReveal.restart()
         }
     }
 

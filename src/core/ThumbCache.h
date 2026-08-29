@@ -27,6 +27,7 @@ public:
   // Prefer the smallest cached tier that is at least as large as requested.
   // Returning the existing key avoids copying/re-encoding a larger thumbnail.
   QString lookupUrl(const QString &path, qint64 mtime, int sizePx);
+  QString exportFileUrl(const QString &path, qint64 mtime, int sizePx);
   QByteArray getPng(const QString &path, qint64 mtime, int sizePx);
   QImage getImage(const QString &path, qint64 mtime, int sizePx);
   QImage imageForKey(const QString &key);

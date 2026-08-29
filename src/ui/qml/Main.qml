@@ -14,6 +14,8 @@ Window {
     readonly property var selection: typeof selectionModel !== "undefined" ? selectionModel : null
     readonly property var config: typeof appConfig !== "undefined" ? appConfig : null
     readonly property var finder: typeof agentSearch !== "undefined" ? agentSearch : null
+    readonly property string startupRevealPath: startupSelectPath
+    readonly property bool startupReveal: startupRevealPath.length > 0
     readonly property bool gridMode: root.keys ? root.keys.gridMode : false
     readonly property bool fsnMode: root.keys ? root.keys.fsnMode : false
     readonly property int themeEpoch: Theme.epoch
@@ -394,6 +396,8 @@ Window {
             selection: root.selection
             host: typeof hostApi !== "undefined" ? hostApi : null
             fileOps: typeof fileOpEngine !== "undefined" ? fileOpEngine : null
+            centerInitialSelection: root.startupReveal
+            initialSelectionPath: root.startupRevealPath
             onViewToggleRequested: if (root.keys) root.keys.gridMode = true
             onDoRequested: function(sceneX, sceneY) {
                 if (typeof hostApi !== "undefined" && hostApi)
@@ -435,6 +439,8 @@ Window {
             host: typeof hostApi !== "undefined" ? hostApi : null
             fileOps: typeof fileOpEngine !== "undefined" ? fileOpEngine : null
             config: typeof appConfig !== "undefined" ? appConfig : null
+            centerInitialSelection: root.startupReveal
+            initialSelectionPath: root.startupRevealPath
             onViewToggleRequested: if (root.keys) root.keys.gridMode = false
             onDoRequested: function(sceneX, sceneY) {
                 if (typeof hostApi !== "undefined" && hostApi)

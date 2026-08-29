@@ -158,6 +158,14 @@ qt_add_qml_module(synchro
         src/ui/qml/ScrollChrome.qml
 )
 
+qt_add_resources(synchro "synchro_brand"
+    PREFIX "/synchro/brand"
+    BASE "packaging/brand"
+    FILES
+        packaging/brand/synchro-mark.svg
+        packaging/brand/synchro-wordmark.svg
+)
+
 qt_add_shaders(synchro "synchro_fsn_shaders"
     PREFIX "/shaders"
     BASE "shaders"
@@ -943,6 +951,9 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.freedesktop.impl.portal.desktop.sy
         DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/services)
 install(FILES packaging/icons/org.omarchy.synchro.svg
         DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+install(FILES packaging/brand/NOTICE.md
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/synchro
+        RENAME BRAND-ASSETS.md)
 
 # Launchers go to bindir so `{ omarchy = "synchro" }` works after a prefix
 # install. Hypr overlays stay in-tree — never /usr/share/omarchy/ (K15).
@@ -950,3 +961,11 @@ install(PROGRAMS
         packaging/omarchy/omarchy-launch-synchro
         packaging/omarchy/omarchy-launch-synchro-cwd
         DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS packaging/omarchy/menu/install.sh
+        DESTINATION ${CMAKE_INSTALL_BINDIR}
+        RENAME synchro-omarchy-menu-install)
+install(FILES
+        packaging/omarchy/menu/SynchroSearch.qml
+        packaging/omarchy/menu/omarchy-menu.patch
+        packaging/omarchy/menu/README.md
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/synchro/omarchy-menu)

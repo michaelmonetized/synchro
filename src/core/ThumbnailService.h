@@ -85,6 +85,9 @@ public:
   static QImage renderPathMosaicImage(const QStringList &paths,
                                       const QString &label, int sizePx);
   static QString packedUrl(const QString &path, qint64 mtime, int sizePx);
+  // Export an already-cached thumbnail as a short-lived file URL for external
+  // QML processes such as the Omarchy shell. This never generates a preview.
+  static QString cachedFileUrl(const QString &path, qint64 mtime, int sizePx);
   // Raw image/video thumbnails are content-derived and survive theme changes;
   // folder mosaics and generated file cards contain palette colors.
   static bool thumbnailDependsOnTheme(const QString &path,

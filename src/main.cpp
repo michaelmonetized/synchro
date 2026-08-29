@@ -57,6 +57,7 @@ int main(int argc, char *argv[]) {
       (std::strcmp(argv[1], "handler") == 0 ||
        std::strcmp(argv[1], "agent") == 0 ||
        std::strcmp(argv[1], "catalog") == 0 ||
+       std::strcmp(argv[1], "launcher") == 0 ||
        std::strcmp(argv[1], "query") == 0 ||
        std::strcmp(argv[1], "mcp") == 0)) {
     QCoreApplication app(argc, argv);
@@ -66,6 +67,8 @@ int main(int argc, char *argv[]) {
     app.setOrganizationDomain(QStringLiteral("omarchy.org"));
     if (std::strcmp(argv[1], "query") == 0)
       return runQueryCli(argc, argv);
+    if (std::strcmp(argv[1], "launcher") == 0)
+      return runLauncherCli(argc, argv);
     if (std::strcmp(argv[1], "agent") == 0)
       return runAgentCli(argc, argv);
     if (std::strcmp(argv[1], "catalog") == 0)
@@ -157,6 +160,11 @@ int main(int argc, char *argv[]) {
       QStringLiteral("Result label for --sql-query."),
       QStringLiteral("label"));
   parser.addOption(sqlLabelOption);
+  const QCommandLineOption selectOption(
+      QStringLiteral("select"),
+      QStringLiteral("Open a file's parent folder and select the file."),
+      QStringLiteral("path"));
+  parser.addOption(selectOption);
   parser.addPositionalArgument(QStringLiteral("path"),
                                QStringLiteral("Directory to open."),
                                QStringLiteral("[path]"));
@@ -221,14 +229,23 @@ int main(int argc, char *argv[]) {
 
   Config config;
   QString startPath = QDir::homePath();
+  QString startupSelectName;
   const QStringList positional = parser.positionalArguments();
-  if (parser.isSet(sqlCwdOption))
+  if (parser.isSet(selectOption) && !parser.isSet(sqlQueryOption)) {
+    const QFileInfo selected(parser.value(selectOption));
+    startPath = selected.absolutePath();
+    startupSelectName = selected.fileName();
+  } else if (parser.isSet(sqlCwdOption))
     startPath = parser.value(sqlCwdOption);
   else if (!positional.isEmpty())
     startPath = positional.first();
   else if (!config.lastPath().isEmpty() &&
            !config.lastPath().startsWith(QLatin1String("search:")))
     startPath = config.lastPath();
+  const QString startupSelectPath =
+      startupSelectName.isEmpty()
+          ? QString()
+          : QDir(startPath).filePath(startupSelectName);
 
   DirectoryModel directoryModel;
   FileCatalog fileCatalog(&directoryModel);
@@ -236,7 +253,10 @@ int main(int argc, char *argv[]) {
   OmaflowBridge omaflow;
   SearchModel searchModel;
   directoryModel.setSearchModel(&searchModel);
-  directoryModel.setShowHidden(config.showHidden());
+  directoryModel.setShowHidden(
+      config.showHidden() ||
+      (!startupSelectName.isEmpty() &&
+       QFileInfo(QDir(startPath).filePath(startupSelectName)).isHidden()));
   FilterProxy filterProxy;
   filterProxy.setDirectoryModel(&directoryModel);
   filterProxy.setSortRoleName(config.sortRole());
@@ -289,7 +309,22 @@ int main(int argc, char *argv[]) {
     thumbs->setHandlerThumbnailers(extra);
   }
 
-  directoryModel.setPath(startPath);
+  QMetaObject::Connection startupSelectionConnection;
+  if (!startupSelectPath.isEmpty()) {
+    startupSelectionConnection = QObject::connect(
+        &directoryModel, &DirectoryModel::listingChanged, &selectionModel,
+        [&] {
+          if (directoryModel.listing())
+            return;
+          // Pending selection moves the directory cursor while rows stream in;
+          // route the final target through SelectionModel too so preview,
+          // actions, and visible selection chrome agree with the cursor.
+          selectionModel.selectPath(startupSelectPath, startupSelectName,
+                                    QFileInfo(startupSelectPath).isDir());
+          QObject::disconnect(startupSelectionConnection);
+        });
+  }
+  directoryModel.setPath(startPath, startupSelectName);
 
   QQmlApplicationEngine engine;
   engine.addImportPath(QCoreApplication::applicationDirPath() +
@@ -337,6 +372,8 @@ int main(int argc, char *argv[]) {
                                            &hostApi);
   engine.rootContext()->setContextProperty(QStringLiteral("selectionModel"),
                                            &selectionModel);
+  engine.rootContext()->setContextProperty(
+      QStringLiteral("startupSelectPath"), startupSelectPath);
   engine.rootContext()->setContextProperty(QStringLiteral("fileOpEngine"),
                                            &fileOpEngine);
   QObject::connect(&fileOpEngine, &FileOpEngine::errorStringChanged,

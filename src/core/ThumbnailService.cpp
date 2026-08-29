@@ -2374,6 +2374,12 @@ QString ThumbnailService::packedUrl(const QString &path, qint64 mtime,
   return ThumbCache::imageUrl(cachePathFor(path), mtime, sizePx);
 }
 
+QString ThumbnailService::cachedFileUrl(const QString &path, qint64 mtime,
+                                        int sizePx) {
+  return ThumbCache::instance().exportFileUrl(cachePathFor(path), mtime,
+                                               sizePx);
+}
+
 bool ThumbnailService::thumbnailDependsOnTheme(const QString &path,
                                                const QString &mime,
                                                bool isDir) {

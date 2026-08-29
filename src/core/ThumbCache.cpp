@@ -7,6 +7,9 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMutexLocker>
+#include <QSaveFile>
+#include <QStandardPaths>
+#include <QUrl>
 
 #include <sqlite3.h>
 
@@ -51,8 +54,8 @@ QByteArray readPngConcurrent(const QString &dbPath, const QString &key) {
       }
       path.clear();
       sqlite3 *next = nullptr;
-      const int rc = sqlite3_open_v2(
-          QFile::encodeName(nextPath).constData(), &next,
+      const int rc =
+          sqlite3_open_v2(QFile::encodeName(nextPath).constData(), &next,
           SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nullptr);
       if (rc != SQLITE_OK || !next) {
         if (next)
@@ -137,9 +140,9 @@ bool ThumbCache::ensureOpen() {
   QFile::setPermissions(homeDir(),
                         QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
   sqlite3 *db = nullptr;
-  const int rc = sqlite3_open_v2(
-      QFile::encodeName(path).constData(), &db,
-      SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+  const int rc = sqlite3_open_v2(QFile::encodeName(path).constData(), &db,
+                                 SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
+                                     SQLITE_OPEN_FULLMUTEX,
       nullptr);
   if (rc != SQLITE_OK || !db) {
     if (db)
@@ -304,6 +307,65 @@ QString ThumbCache::lookupUrl(const QString &path, qint64 mtime, int sizePx) {
                        : QStringLiteral("image://synchrothumb/") + key;
 }
 
+QString ThumbCache::exportFileUrl(const QString &path, qint64 mtime,
+                                  int sizePx) {
+  if (path.isEmpty() || mtime <= 0 || sizePx <= 0)
+    return {};
+  QString key;
+  QByteArray png;
+  {
+    QMutexLocker lock(&m_mutex);
+    if (!ensureOpen())
+      return {};
+    const int wanted = canonicalSize(sizePx);
+    sqlite3_stmt *st = nullptr;
+    if (sqlite3_prepare_v2(
+            m_db,
+            "SELECT key,png FROM thumbs WHERE path=? AND mtime=? "
+            "AND size_px>=? ORDER BY size_px ASC LIMIT 1;",
+            -1, &st, nullptr) != SQLITE_OK)
+      return {};
+    const QByteArray p = path.toUtf8();
+    sqlite3_bind_text(st, 1, p.constData(), p.size(), SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st, 2, mtime);
+    sqlite3_bind_int(st, 3, wanted);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+      const auto *keyText = sqlite3_column_text(st, 0);
+      const void *blob = sqlite3_column_blob(st, 1);
+      const int bytes = sqlite3_column_bytes(st, 1);
+      if (keyText && blob && bytes > 0) {
+        key = QString::fromUtf8(reinterpret_cast<const char *>(keyText));
+        png = QByteArray(static_cast<const char *>(blob), bytes);
+      }
+    }
+    sqlite3_finalize(st);
+    if (!key.isEmpty())
+      touchLocked(key);
+  }
+  if (key.isEmpty() || png.isEmpty())
+    return {};
+
+  const QString runtime =
+      QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+  if (runtime.isEmpty())
+    return {};
+  const QString dirPath = runtime + QStringLiteral("/synchro-launcher-thumbs");
+  if (!QDir().mkpath(dirPath))
+    return {};
+  QFile::setPermissions(dirPath,
+                        QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+  const QString filePath =
+      dirPath + QLatin1Char('/') + key + QStringLiteral(".png");
+  if (!QFileInfo::exists(filePath)) {
+    QSaveFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly) || file.write(png) != png.size() ||
+        !file.commit())
+      return {};
+    QFile::setPermissions(filePath, QFile::ReadOwner | QFile::WriteOwner);
+  }
+  return QUrl::fromLocalFile(filePath).toString(QUrl::FullyEncoded);
+}
+
 QByteArray ThumbCache::getPng(const QString &path, qint64 mtime, int sizePx) {
   QMutexLocker lock(&m_mutex);
   if (!ensureOpen())
@@ -385,9 +447,8 @@ void ThumbCache::evictLocked() {
       sqlite3_finalize(victim);
       break;
     }
-    const QString key =
-        QString::fromUtf8(reinterpret_cast<const char *>(
-                              sqlite3_column_text(victim, 0)));
+    const QString key = QString::fromUtf8(
+        reinterpret_cast<const char *>(sqlite3_column_text(victim, 0)));
     const qint64 bytes = sqlite3_column_int64(victim, 1);
     sqlite3_finalize(victim);
     sqlite3_stmt *del = nullptr;

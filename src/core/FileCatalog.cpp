@@ -4,8 +4,8 @@
 #include "FsnLayout.h"
 #include "ThumbnailService.h"
 
-#include <QDateTime>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -26,17 +26,24 @@
 #include <QStandardPaths>
 #include <QThread>
 
+#include <algorithm>
 #include <limits>
 #include <sqlite3.h>
 
 #include <utility>
 
 #include <sys/stat.h>
+#ifdef Q_OS_LINUX
+#include <signal.h>
+#include <sys/prctl.h>
+#endif
 
 namespace {
 
 constexpr int kDefaultMaxRows = 200;
 constexpr int kImageVisualVersion = 2;
+constexpr int kSearchIndexVersion = 1;
+constexpr int kSearchBackfillBatch = 2048;
 constexpr int kStrataPreviewChildLimit = 96;
 constexpr int kShadowSchemaVersion = 2;
 // Automatic refreshes are eligibility checks, not a promise to rebuild. The
@@ -146,11 +153,12 @@ QString fsnCategory(const QString &extension, bool isDir) {
       QStringLiteral("bash"), QStringLiteral("zsh"), QStringLiteral("fish"),
       QStringLiteral("lua"), QStringLiteral("sql"), QStringLiteral("qml")};
   static const QSet<QString> data = {
-      QStringLiteral("csv"), QStringLiteral("tsv"), QStringLiteral("json"),
-      QStringLiteral("jsonl"), QStringLiteral("parquet"),
-      QStringLiteral("arrow"), QStringLiteral("feather"),
-      QStringLiteral("orc"), QStringLiteral("db"),
-      QStringLiteral("sqlite"), QStringLiteral("duckdb")};
+      QStringLiteral("csv"),     QStringLiteral("tsv"),
+      QStringLiteral("json"),    QStringLiteral("jsonl"),
+      QStringLiteral("parquet"), QStringLiteral("arrow"),
+      QStringLiteral("feather"), QStringLiteral("orc"),
+      QStringLiteral("db"),      QStringLiteral("sqlite"),
+      QStringLiteral("duckdb")};
   static const QSet<QString> archives = {
       QStringLiteral("zip"), QStringLiteral("tar"), QStringLiteral("gz"),
       QStringLiteral("bz2"), QStringLiteral("xz"), QStringLiteral("zst"),
@@ -158,9 +166,8 @@ QString fsnCategory(const QString &extension, bool isDir) {
   static const QSet<QString> documents = {
       QStringLiteral("pdf"), QStringLiteral("doc"), QStringLiteral("docx"),
       QStringLiteral("odt"), QStringLiteral("rtf"), QStringLiteral("epub"),
-      QStringLiteral("txt"), QStringLiteral("md"),
-      QStringLiteral("markdown"), QStringLiteral("rst"),
-      QStringLiteral("log")};
+      QStringLiteral("txt"), QStringLiteral("md"),  QStringLiteral("markdown"),
+      QStringLiteral("rst"), QStringLiteral("log")};
   if (images.contains(ext))
     return QStringLiteral("image");
   if (videos.contains(ext))
@@ -296,8 +303,7 @@ bool bumpRevision(sqlite3 *db, const char *revisionKey,
   if (!db || !revisionKey || !changedAtKey)
     return false;
   sqlite3_stmt *revision = nullptr;
-  if (sqlite3_prepare_v2(
-          db,
+  if (sqlite3_prepare_v2(db,
           "INSERT INTO catalog_meta(key,value) VALUES(?,'1') "
           "ON CONFLICT(key) DO UPDATE SET value="
           "CAST(CAST(catalog_meta.value AS INTEGER)+1 AS TEXT);",
@@ -310,14 +316,14 @@ bool bumpRevision(sqlite3 *db, const char *revisionKey,
     return false;
 
   sqlite3_stmt *changed = nullptr;
-  if (sqlite3_prepare_v2(
-          db,
+  if (sqlite3_prepare_v2(db,
           "INSERT INTO catalog_meta(key,value) VALUES(?,?) "
           "ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
           -1, &changed, nullptr) != SQLITE_OK)
     return false;
   sqlite3_bind_text(changed, 1, changedAtKey, -1, SQLITE_STATIC);
-  const QByteArray now = QByteArray::number(QDateTime::currentMSecsSinceEpoch());
+  const QByteArray now =
+      QByteArray::number(QDateTime::currentMSecsSinceEpoch());
   sqlite3_bind_text(changed, 2, now.constData(), now.size(), SQLITE_TRANSIENT);
   const bool stamped = sqlite3_step(changed) == SQLITE_DONE;
   sqlite3_finalize(changed);
@@ -337,8 +343,7 @@ qint64 catalogMetaInteger(sqlite3 *db, const char *key) {
     return 0;
   sqlite3_stmt *st = nullptr;
   qint64 value = 0;
-  if (sqlite3_prepare_v2(
-          db,
+  if (sqlite3_prepare_v2(db,
           "SELECT CAST(value AS INTEGER) FROM catalog_meta "
           "WHERE key=?;",
           -1, &st, nullptr) == SQLITE_OK &&
@@ -352,6 +357,181 @@ qint64 catalogMetaInteger(sqlite3 *db, const char *key) {
 
 qint64 catalogRevision(sqlite3 *db) {
   return catalogMetaInteger(db, "catalog_revision");
+}
+
+bool setCatalogMetaInteger(sqlite3 *db, const char *key, qint64 value) {
+  if (!db || !key)
+    return false;
+  sqlite3_stmt *st = nullptr;
+  if (sqlite3_prepare_v2(db,
+                         "INSERT INTO catalog_meta(key,value) VALUES(?,?) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
+                         -1, &st, nullptr) != SQLITE_OK)
+    return false;
+  sqlite3_bind_text(st, 1, key, -1, SQLITE_STATIC);
+  const QByteArray encoded = QByteArray::number(value);
+  sqlite3_bind_text(st, 2, encoded.constData(), encoded.size(),
+                    SQLITE_TRANSIENT);
+  const bool ok = sqlite3_step(st) == SQLITE_DONE;
+  sqlite3_finalize(st);
+  return ok;
+}
+
+bool sqliteObjectExists(sqlite3 *db, const char *type, const char *name) {
+  if (!db || !type || !name)
+    return false;
+  sqlite3_stmt *st = nullptr;
+  if (sqlite3_prepare_v2(
+          db, "SELECT 1 FROM sqlite_master WHERE type=? AND name=? LIMIT 1;",
+          -1, &st, nullptr) != SQLITE_OK)
+    return false;
+  sqlite3_bind_text(st, 1, type, -1, SQLITE_STATIC);
+  sqlite3_bind_text(st, 2, name, -1, SQLITE_STATIC);
+  const bool found = sqlite3_step(st) == SQLITE_ROW;
+  sqlite3_finalize(st);
+  return found;
+}
+
+qint64 maxCatalogRowId(sqlite3 *db) {
+  sqlite3_stmt *st = nullptr;
+  qint64 rowid = 0;
+  if (db &&
+      sqlite3_prepare_v2(db, "SELECT coalesce(max(rowid),0) FROM files;", -1,
+                         &st, nullptr) == SQLITE_OK &&
+      sqlite3_step(st) == SQLITE_ROW)
+    rowid = sqlite3_column_int64(st, 0);
+  if (st)
+    sqlite3_finalize(st);
+  return rowid;
+}
+
+// The FTS table stores only trigrams and rowids. File metadata remains in the
+// canonical files table and is joined at lookup time. contentless_delete keeps
+// updates/deletes safe while a legacy catalog is still being backfilled.
+bool ensureSearchIndexSchema(sqlite3 *db) {
+  if (!db)
+    return false;
+  const bool current =
+      catalogMetaInteger(db, "search_index_version") == kSearchIndexVersion &&
+      sqliteObjectExists(db, "table", "file_name_fts") &&
+      sqliteObjectExists(db, "trigger", "files_search_ai") &&
+      sqliteObjectExists(db, "trigger", "files_search_ad") &&
+      sqliteObjectExists(db, "trigger", "files_search_au");
+  if (current)
+    return true;
+  if (!execSql(db, "BEGIN IMMEDIATE;"))
+    return false;
+  bool ok = true;
+  if (!current) {
+    ok = execSql(db,
+                 "DROP TRIGGER IF EXISTS files_search_ai;"
+                 "DROP TRIGGER IF EXISTS files_search_ad;"
+                 "DROP TRIGGER IF EXISTS files_search_au;"
+                 "DROP TABLE IF EXISTS file_name_fts;"
+                 "CREATE VIRTUAL TABLE file_name_fts USING fts5("
+                 "name,content='',contentless_delete=1,tokenize='trigram');");
+  }
+  if (ok) {
+    ok = execSql(
+        db,
+        "CREATE TRIGGER IF NOT EXISTS files_search_ai AFTER INSERT ON files "
+        "BEGIN INSERT INTO file_name_fts(rowid,name) "
+        "VALUES(new.rowid,new.name); END;"
+        "CREATE TRIGGER IF NOT EXISTS files_search_ad AFTER DELETE ON files "
+        "BEGIN DELETE FROM file_name_fts WHERE rowid=old.rowid; END;"
+        "CREATE TRIGGER IF NOT EXISTS files_search_au "
+        "AFTER UPDATE OF name ON files WHEN old.name IS NOT new.name "
+        "BEGIN DELETE FROM file_name_fts WHERE rowid=old.rowid; "
+        "INSERT INTO file_name_fts(rowid,name) VALUES(new.rowid,new.name); "
+        "END;");
+  }
+  if (ok && !current) {
+    const qint64 target = maxCatalogRowId(db);
+    ok = setCatalogMetaInteger(db, "search_index_version",
+                               kSearchIndexVersion) &&
+         setCatalogMetaInteger(db, "search_index_cursor", 0) &&
+         setCatalogMetaInteger(db, "search_index_target", target);
+  }
+  execSql(db, ok ? "COMMIT;" : "ROLLBACK;");
+  return ok;
+}
+
+bool backfillSearchIndexBatch(sqlite3 *db, int batchSize, bool *complete) {
+  if (complete)
+    *complete = false;
+  if (!db || !sqliteObjectExists(db, "table", "file_name_fts"))
+    return false;
+  const qint64 cursor = catalogMetaInteger(db, "search_index_cursor");
+  const qint64 target = catalogMetaInteger(db, "search_index_target");
+  if (cursor >= target) {
+    if (complete)
+      *complete = true;
+    return true;
+  }
+
+  if (!execSql(db, "BEGIN IMMEDIATE;"))
+    return false;
+  sqlite3_stmt *read = nullptr;
+  sqlite3_stmt *write = nullptr;
+  bool ok =
+      sqlite3_prepare_v2(
+          db,
+          "SELECT rowid,name FROM files WHERE rowid>? AND rowid<=? "
+          "ORDER BY rowid LIMIT ?;",
+          -1, &read, nullptr) == SQLITE_OK &&
+      sqlite3_prepare_v2(
+          db, "INSERT OR REPLACE INTO file_name_fts(rowid,name) VALUES(?,?);",
+          -1, &write, nullptr) == SQLITE_OK;
+  qint64 last = cursor;
+  if (ok) {
+    sqlite3_bind_int64(read, 1, cursor);
+    sqlite3_bind_int64(read, 2, target);
+    sqlite3_bind_int(read, 3, qMax(1, batchSize));
+    while (sqlite3_step(read) == SQLITE_ROW) {
+      last = sqlite3_column_int64(read, 0);
+      const auto *name = sqlite3_column_text(read, 1);
+      sqlite3_reset(write);
+      sqlite3_clear_bindings(write);
+      sqlite3_bind_int64(write, 1, last);
+      sqlite3_bind_text(write, 2,
+                        name ? reinterpret_cast<const char *>(name) : "", -1,
+                        SQLITE_TRANSIENT);
+      if (sqlite3_step(write) != SQLITE_DONE) {
+        ok = false;
+        break;
+      }
+    }
+  }
+  if (read)
+    sqlite3_finalize(read);
+  if (write)
+    sqlite3_finalize(write);
+  // Gaps at the end are deleted file rowids. Advancing to the fixed migration
+  // target is safe because all post-migration inserts are covered by triggers.
+  if (ok && last == cursor)
+    last = target;
+  if (ok)
+    ok = setCatalogMetaInteger(db, "search_index_cursor", last);
+  execSql(db, ok ? "COMMIT;" : "ROLLBACK;");
+  if (complete)
+    *complete = ok && last >= target;
+  return ok;
+}
+
+QVariantMap searchIndexStatus(sqlite3 *db) {
+  QVariantMap status;
+  const bool available = db && sqliteObjectExists(db, "table", "file_name_fts");
+  const qint64 cursor =
+      available ? catalogMetaInteger(db, "search_index_cursor") : 0;
+  const qint64 target =
+      available ? catalogMetaInteger(db, "search_index_target") : 0;
+  status.insert(QStringLiteral("available"), available);
+  status.insert(QStringLiteral("tokenizer"), QStringLiteral("fts5-trigram"));
+  status.insert(QStringLiteral("trigramMinimumCharacters"), 3);
+  status.insert(QStringLiteral("indexedThroughRowid"), cursor);
+  status.insert(QStringLiteral("targetRowid"), target);
+  status.insert(QStringLiteral("complete"), available && cursor >= target);
+  return status;
 }
 
 bool tableHasColumn(sqlite3 *db, const char *table, const char *column) {
@@ -493,6 +673,9 @@ sqlite3 *openCatalog(QString *error = nullptr) {
     sqlite3_close(db);
     return nullptr;
   }
+  // Search is an optional acceleration surface: a missing FTS5 module must
+  // never make the durable SQL catalog itself unavailable.
+  ensureSearchIndexSchema(db);
   QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner);
   return db;
 }
@@ -657,8 +840,7 @@ void bindText(sqlite3_stmt *st, int index, const QString &value) {
 
 bool upsertRows(sqlite3 *db, const QVector<CatalogRow> &rows,
                 const QString &scanRoot = QString(), qint64 seenAt = 0,
-                bool bumpTreeRevision = true,
-                int *changedRowsOut = nullptr) {
+                bool bumpTreeRevision = true, int *changedRowsOut = nullptr) {
   if (!db || rows.isEmpty())
     return true;
   static const char *liveSql =
@@ -1347,8 +1529,7 @@ QVariantMap readShadowStatus() {
       catalogMetaInteger(source, "facts_revision");
   const qint64 catalogChangedAt =
       catalogMetaInteger(source, "catalog_changed_at");
-  const qint64 factsChangedAt =
-      catalogMetaInteger(source, "facts_changed_at");
+  const qint64 factsChangedAt = catalogMetaInteger(source, "facts_changed_at");
   if (source)
     sqlite3_close(source);
   out.insert(QStringLiteral("currentRevision"), currentRevision);
@@ -1361,8 +1542,7 @@ QVariantMap readShadowStatus() {
   const QFileInfo shadow(path);
   if (!shadow.isFile() || shadow.size() <= 0)
     return out;
-  const QString duck =
-      QStandardPaths::findExecutable(QStringLiteral("duckdb"));
+  const QString duck = QStandardPaths::findExecutable(QStringLiteral("duckdb"));
   if (duck.isEmpty()) {
     out.insert(QStringLiteral("error"),
                QStringLiteral("duckdb is not installed"));
@@ -1372,8 +1552,7 @@ QVariantMap readShadowStatus() {
   QProcess process;
   process.setProcessChannelMode(QProcess::SeparateChannels);
   process.start(
-      duck,
-      {QStringLiteral("-readonly"), QStringLiteral("-json"), path,
+      duck, {QStringLiteral("-readonly"), QStringLiteral("-json"), path,
        QStringLiteral("-c"),
        QStringLiteral("SELECT * FROM _synchro_shadow_meta LIMIT 1;")});
   if (!process.waitForFinished(5000)) {
@@ -1466,8 +1645,7 @@ QVariantMap rebuildShadowInternal(bool force) {
     return out;
   }
 
-  const QString duck =
-      QStandardPaths::findExecutable(QStringLiteral("duckdb"));
+  const QString duck = QStandardPaths::findExecutable(QStringLiteral("duckdb"));
   if (duck.isEmpty()) {
     out.insert(QStringLiteral("error"),
                QStringLiteral("duckdb is not installed"));
@@ -1631,11 +1809,10 @@ QVariantMap runDuckQuery(QString sql, const QString &cwd,
     return out;
   }
 
-  const QString sourceFiles =
-      useShadow ? QStringLiteral("main._synchro_files")
+  const QString sourceFiles = useShadow ? QStringLiteral("main._synchro_files")
                 : QStringLiteral("catalog.files");
-  const QString sourceFacts =
-      useShadow ? QStringLiteral("main._synchro_file_facts")
+  const QString sourceFacts = useShadow
+                                  ? QStringLiteral("main._synchro_file_facts")
                 : QStringLiteral("catalog.file_facts");
   const QString queryDerived =
       useShadow
@@ -1647,8 +1824,7 @@ QVariantMap runDuckQuery(QString sql, const QString &cwd,
           : derivedProjection(CatalogSqlDialect::DuckDb);
   QString preamble;
   if (!useShadow)
-    preamble =
-        QStringLiteral("LOAD sqlite; ATTACH %1 AS catalog (TYPE sqlite, "
+    preamble = QStringLiteral("LOAD sqlite; ATTACH %1 AS catalog (TYPE sqlite, "
                        "READ_ONLY); ")
             .arg(sqlString(FileCatalog::dbPath()));
   preamble +=
@@ -1768,8 +1944,7 @@ QVariantMap runDuckQuery(QString sql, const QString &cwd,
     proc.kill();
     proc.waitForFinished(1000);
     if (useShadow) {
-      QVariantMap fallback =
-          runDuckQuery(sql, cwd, selection, maxRows, false);
+      QVariantMap fallback = runDuckQuery(sql, cwd, selection, maxRows, false);
       fallback.insert(QStringLiteral("shadowFallbackError"),
                       QStringLiteral("shadow query timed out"));
       return fallback;
@@ -1782,8 +1957,7 @@ QVariantMap runDuckQuery(QString sql, const QString &cwd,
     if (useShadow) {
       const QString shadowError =
           QString::fromUtf8(proc.readAllStandardError()).trimmed();
-      QVariantMap fallback =
-          runDuckQuery(sql, cwd, selection, maxRows, false);
+      QVariantMap fallback = runDuckQuery(sql, cwd, selection, maxRows, false);
       fallback.insert(QStringLiteral("shadowFallbackError"), shadowError);
       return fallback;
     }
@@ -1880,8 +2054,8 @@ QVariantMap runDuckQuery(QString sql, const QString &cwd,
     rows.append(row);
   }
   out.insert(QStringLiteral("ok"), true);
-  out.insert(QStringLiteral("engine"),
-             useShadow ? QStringLiteral("duckdb-shadow")
+  out.insert(QStringLiteral("engine"), useShadow
+                                           ? QStringLiteral("duckdb-shadow")
                        : QStringLiteral("duckdb-sqlite"));
   out.insert(QStringLiteral("columns"), columns);
   out.insert(QStringLiteral("rows"), rows);
@@ -1948,6 +2122,9 @@ FileCatalog::FileCatalog(DirectoryModel *model, QObject *parent)
   m_analysisPool.setMaxThreadCount(1);
   m_analysisPool.setExpiryTimeout(-1);
   m_analysisPool.setThreadPriority(QThread::LowPriority);
+  m_searchIndexPool.setMaxThreadCount(1);
+  m_searchIndexPool.setExpiryTimeout(-1);
+  m_searchIndexPool.setThreadPriority(QThread::LowPriority);
   m_snapshotTimer.setSingleShot(true);
   m_snapshotTimer.setInterval(90);
   connect(&m_snapshotTimer, &QTimer::timeout, this,
@@ -1972,6 +2149,28 @@ FileCatalog::FileCatalog(DirectoryModel *model, QObject *parent)
     });
   }
   restoreScanState();
+  const auto searchCancel = std::make_shared<std::atomic_bool>(false);
+  m_searchIndexCancel = searchCancel;
+  m_searchIndexPool.start([searchCancel] {
+    sqlite3 *db = openCatalog();
+    if (!db)
+      return;
+    bool complete = false;
+    while (!searchCancel->load() && !complete) {
+      QElapsedTimer batchTimer;
+      batchTimer.start();
+      if (!backfillSearchIndexBatch(db, kSearchBackfillBatch, &complete))
+        break;
+      if (!complete) {
+        // Keep migration deliberately below interactive work. The sleep scales
+        // with actual indexing cost, targeting roughly a 25% duty cycle.
+        const unsigned long pause = static_cast<unsigned long>(
+            qBound(qint64(20), batchTimer.elapsed() * 3, qint64(250)));
+        QThread::msleep(pause);
+      }
+    }
+    sqlite3_close(db);
+  });
   scheduleSnapshot();
   if (QCoreApplication::applicationName() == QLatin1String("synchro") &&
       !qEnvironmentVariableIsSet("SYNCHRO_DISABLE_SHADOW_REFRESH")) {
@@ -1987,11 +2186,14 @@ FileCatalog::~FileCatalog() {
     m_scanCancel->store(true);
   if (m_sceneCancel)
     m_sceneCancel->store(true);
+  if (m_searchIndexCancel)
+    m_searchIndexCancel->store(true);
   m_scanPool.waitForDone();
   m_writerPool.waitForDone();
   m_queryPool.waitForDone();
   m_scenePool.waitForDone();
   m_analysisPool.waitForDone();
+  m_searchIndexPool.waitForDone();
 }
 
 QString FileCatalog::dbPath() {
@@ -2019,6 +2221,393 @@ QVariantMap FileCatalog::shadowStatus() { return readShadowStatus(); }
 QVariantMap FileCatalog::querySync(const QString &sql, const QString &cwd,
                                    const QStringList &selection, int maxRows) {
   return runDuckQuery(sql, cwd, selection, maxRows);
+}
+
+QVariantMap FileCatalog::searchSync(const QString &rawQuery,
+                                    const QString &rawCwd,
+                                    const QStringList &pinnedPaths,
+                                    const QVariantList &savedQueries,
+                                    int maxRows) {
+  QElapsedTimer timer;
+  timer.start();
+  QVariantMap out;
+  const QString query = rawQuery.simplified().left(256);
+  const QString needle = query.toCaseFolded();
+  const QStringList terms = needle.split(
+      QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+  const QString cwd = normalizedPath(rawCwd);
+  const int limit = qBound(1, maxRows, 50);
+  out.insert(QStringLiteral("ok"), true);
+  out.insert(QStringLiteral("query"), query);
+  out.insert(QStringLiteral("cwd"), cwd);
+
+  sqlite3 *db = openCatalogReadOnly();
+  if (!db) {
+    out.insert(QStringLiteral("ok"), false);
+    out.insert(QStringLiteral("error"), QStringLiteral("catalog unavailable"));
+    return out;
+  }
+  sqlite3_busy_timeout(db, 120);
+  const QVariantMap indexStatus = searchIndexStatus(db);
+  out.insert(QStringLiteral("index"), indexStatus);
+
+  QVariantList rows;
+  QSet<QString> seen;
+  const auto matchScore = [&needle, &terms](const QString &name) {
+    const QString folded = name.toCaseFolded();
+    if (folded == needle)
+      return 0;
+    int score = folded.startsWith(needle) ? 80 : 200;
+    for (const QString &term : terms) {
+      const int at = folded.indexOf(term);
+      if (at < 0)
+        return 10000;
+      if (at == 0)
+        score -= 30;
+      else if (!folded.at(at - 1).isLetterOrNumber())
+        score -= 12;
+      score += qMin(at, 120);
+    }
+    return score;
+  };
+
+  // Saved queries are locations in their own right. Match their deliberate
+  // names, not arbitrary SQL text, and keep them ahead of ordinary catalog
+  // hits without letting unrelated bookmarks pollute the result set.
+  for (const QVariant &value : savedQueries) {
+    const QVariantMap bookmark = value.toMap();
+    const QString name = bookmark.value(QStringLiteral("name")).toString();
+    const int base = matchScore(name);
+    if (needle.isEmpty() || base >= 10000)
+      continue;
+    const QString id = bookmark.value(QStringLiteral("id")).toString();
+    QVariantMap row;
+    row.insert(QStringLiteral("id"), QStringLiteral("query:") + id);
+    row.insert(QStringLiteral("kind"), QStringLiteral("saved-query"));
+    row.insert(QStringLiteral("name"), name);
+    row.insert(QStringLiteral("cwd"), bookmark.value(QStringLiteral("cwd")));
+    row.insert(QStringLiteral("sql"), bookmark.value(QStringLiteral("sql")));
+    row.insert(QStringLiteral("bookmarkId"), id);
+    row.insert(QStringLiteral("bookmarked"), true);
+    row.insert(QStringLiteral("score"), base - 1200);
+    rows.append(row);
+    seen.insert(row.value(QStringLiteral("id")).toString());
+  }
+
+  QSet<QString> pins;
+  for (const QString &rawPin : pinnedPaths) {
+    const QString pin = normalizedPath(rawPin);
+    if (!pin.isEmpty())
+      pins.insert(pin);
+  }
+
+  const auto appendFileRow = [&](sqlite3_stmt *st, bool bookmarked) {
+    const auto textAt = [st](int column) {
+      const auto *text = sqlite3_column_text(st, column);
+      return text ? QString::fromUtf8(reinterpret_cast<const char *>(text))
+                  : QString();
+    };
+    const QString path = textAt(0);
+    const QString id = QStringLiteral("file:") + path;
+    if (path.isEmpty() || seen.contains(id))
+      return;
+    const QString parent = textAt(1);
+    const QString name = textAt(2);
+    const bool isDir = sqlite3_column_int(st, 4) != 0;
+    const bool hidden = sqlite3_column_int(st, 7) != 0;
+    int score = matchScore(name);
+    if (score >= 10000)
+      return;
+    if (bookmarked)
+      score -= 1000;
+    if (isDir)
+      score -= 20;
+    if (!cwd.isEmpty()) {
+      if (parent == cwd)
+        score -= 60;
+      else if (path.startsWith(cwd + QLatin1Char('/')))
+        score -= 25;
+    }
+    if (hidden)
+      score += 400;
+    if (path.contains(QLatin1String("/.git/")) ||
+        path.contains(QLatin1String("/node_modules/")) ||
+        path.contains(QLatin1String("/.cache/")))
+      score += 120;
+
+    QVariantMap row;
+    row.insert(QStringLiteral("id"), id);
+    row.insert(QStringLiteral("kind"),
+               isDir ? QStringLiteral("folder") : QStringLiteral("file"));
+    row.insert(QStringLiteral("name"), name);
+    row.insert(QStringLiteral("path"), path);
+    row.insert(QStringLiteral("parent"), parent);
+    row.insert(QStringLiteral("extension"), textAt(3));
+    row.insert(QStringLiteral("isDir"), isDir);
+    row.insert(QStringLiteral("size"), sqlite3_column_int64(st, 5));
+    row.insert(QStringLiteral("mtime"), sqlite3_column_int64(st, 6));
+    row.insert(QStringLiteral("hidden"), hidden);
+    row.insert(QStringLiteral("bookmarked"), bookmarked);
+    row.insert(QStringLiteral("score"), score);
+    rows.append(row);
+    seen.insert(id);
+  };
+
+  static const char *kColumns =
+      "SELECT f.path,f.parent,f.name,f.extension,f.is_dir,f.size,f.mtime,"
+      "f.is_hidden ";
+  // Pins are few and primary-key lookups are cheap. Fetch them independently
+  // so a popular substring cannot push a deliberately saved location out of
+  // the bounded FTS candidate window.
+  sqlite3_stmt *pinQuery = nullptr;
+  const QByteArray pinSql =
+      QByteArray(kColumns) + "FROM files f WHERE f.path=? LIMIT 1;";
+  if (!needle.isEmpty() &&
+      sqlite3_prepare_v2(db, pinSql.constData(), -1, &pinQuery, nullptr) ==
+          SQLITE_OK) {
+    int checked = 0;
+    for (const QString &pin : std::as_const(pins)) {
+      if (++checked > 256)
+        break;
+      sqlite3_reset(pinQuery);
+      sqlite3_clear_bindings(pinQuery);
+      bindText(pinQuery, 1, pin);
+      if (sqlite3_step(pinQuery) == SQLITE_ROW)
+        appendFileRow(pinQuery, true);
+    }
+  }
+  if (pinQuery)
+    sqlite3_finalize(pinQuery);
+
+  // Preserve deterministic high-confidence matches without asking FTS to
+  // rank a potentially enormous result set. Both probes use files_name and
+  // stop as soon as the bounded candidate window is full.
+  const auto appendIndexedNames = [&](const QByteArray &sql,
+                                      const QString &value, int cap) {
+    sqlite3_stmt *st = nullptr;
+    if (sqlite3_prepare_v2(db, sql.constData(), -1, &st, nullptr) != SQLITE_OK)
+      return;
+    bindText(st, 1, value);
+    sqlite3_bind_int(st, 2, cap);
+    while (sqlite3_step(st) == SQLITE_ROW) {
+      const auto *pathText = sqlite3_column_text(st, 0);
+      const QString path =
+          pathText ? QString::fromUtf8(reinterpret_cast<const char *>(pathText))
+                   : QString();
+      appendFileRow(st, pins.contains(path));
+    }
+    sqlite3_finalize(st);
+  };
+  if (!query.isEmpty()) {
+    appendIndexedNames(
+        QByteArray(kColumns) +
+            "FROM files f WHERE f.name=? COLLATE NOCASE LIMIT ?;",
+        query, qMax(16, limit * 2));
+    QString prefix = query;
+    prefix.replace(QLatin1Char('\\'), QLatin1String("\\\\"));
+    prefix.replace(QLatin1Char('%'), QLatin1String("\\%"));
+    prefix.replace(QLatin1Char('_'), QLatin1String("\\_"));
+    prefix.append(QLatin1Char('%'));
+    appendIndexedNames(
+        QByteArray(kColumns) +
+            "FROM files f WHERE f.name LIKE ? ESCAPE '\\' COLLATE NOCASE "
+            "LIMIT ?;",
+        prefix, qMax(32, limit * 4));
+  }
+
+  QStringList indexedTerms;
+  for (QString term : terms) {
+    if (term.size() < 3)
+      continue;
+    term.replace(QLatin1Char('"'), QLatin1String("\"\""));
+    indexedTerms.append(QLatin1Char('"') + term + QLatin1Char('"'));
+  }
+  if (!indexedTerms.isEmpty() &&
+      indexStatus.value(QStringLiteral("available")).toBool()) {
+    const QString expression = indexedTerms.join(QStringLiteral(" AND "));
+    const int candidateLimit = qBound(64, limit * 32, 2048);
+    const QByteArray searchSql =
+        QByteArray(kColumns) +
+        "FROM file_name_fts JOIN files f ON f.rowid=file_name_fts.rowid "
+        "WHERE file_name_fts MATCH ? LIMIT ?;";
+    sqlite3_stmt *search = nullptr;
+    if (sqlite3_prepare_v2(db, searchSql.constData(), -1, &search, nullptr) ==
+        SQLITE_OK) {
+      bindText(search, 1, expression);
+      sqlite3_bind_int(search, 2, candidateLimit);
+      while (sqlite3_step(search) == SQLITE_ROW) {
+        const auto *pathText = sqlite3_column_text(search, 0);
+        const QString path =
+            pathText
+                ? QString::fromUtf8(reinterpret_cast<const char *>(pathText))
+                : QString();
+        appendFileRow(search, pins.contains(path));
+      }
+      sqlite3_finalize(search);
+    } else {
+      out.insert(QStringLiteral("warning"),
+                 QString::fromUtf8(sqlite3_errmsg(db)));
+    }
+  }
+  sqlite3_close(db);
+
+  std::sort(rows.begin(), rows.end(), [](const QVariant &a, const QVariant &b) {
+    const QVariantMap left = a.toMap();
+    const QVariantMap right = b.toMap();
+    const int leftScore = left.value(QStringLiteral("score")).toInt();
+    const int rightScore = right.value(QStringLiteral("score")).toInt();
+    if (leftScore != rightScore)
+      return leftScore < rightScore;
+    const int nameOrder = QString::compare(
+        left.value(QStringLiteral("name")).toString(),
+        right.value(QStringLiteral("name")).toString(), Qt::CaseInsensitive);
+    if (nameOrder != 0)
+      return nameOrder < 0;
+    return left.value(QStringLiteral("id")).toString() <
+           right.value(QStringLiteral("id")).toString();
+  });
+  while (rows.size() > limit)
+    rows.removeLast();
+  for (QVariant &value : rows) {
+    QVariantMap row = value.toMap();
+    if (row.value(QStringLiteral("kind")).toString() !=
+        QLatin1String("saved-query")) {
+      const QString thumbnail = ThumbnailService::cachedFileUrl(
+          row.value(QStringLiteral("path")).toString(),
+          row.value(QStringLiteral("mtime")).toLongLong(), 64);
+      if (!thumbnail.isEmpty())
+        row.insert(QStringLiteral("thumbnail"), thumbnail);
+    }
+    value = row;
+  }
+  out.insert(QStringLiteral("rows"), rows);
+  out.insert(QStringLiteral("count"), rows.size());
+  out.insert(QStringLiteral("elapsedMs"), timer.elapsed());
+  return out;
+}
+
+QVariantMap FileCatalog::contentSearchSync(const QString &rawQuery,
+                                           const QString &rawCwd, int maxRows,
+                                           int timeoutMs) {
+  QElapsedTimer timer;
+  timer.start();
+  QVariantMap out;
+  QString query = rawQuery.trimmed().left(512);
+  if (query.size() >= 2 && ((query.startsWith(QLatin1Char('\'')) &&
+                             query.endsWith(QLatin1Char('\''))) ||
+                            (query.startsWith(QLatin1Char('"')) &&
+                             query.endsWith(QLatin1Char('"')))))
+    query = query.mid(1, query.size() - 2);
+  const QString cwd = normalizedPath(rawCwd);
+  const int limit = qBound(1, maxRows, 50);
+  const int deadline = qBound(250, timeoutMs, 30000);
+  out.insert(QStringLiteral("ok"), true);
+  out.insert(QStringLiteral("mode"), QStringLiteral("content"));
+  out.insert(QStringLiteral("query"), query);
+  out.insert(QStringLiteral("cwd"), cwd);
+
+  const QString root = cwd.isEmpty() ? normalizedPath(QDir::homePath()) : cwd;
+  if (query.isEmpty() || root.isEmpty() || !QFileInfo(root).isDir()) {
+    out.insert(QStringLiteral("ok"), false);
+    out.insert(QStringLiteral("error"),
+               QStringLiteral("invalid content search"));
+    return out;
+  }
+  const QString rg = QStandardPaths::findExecutable(QStringLiteral("rg"));
+  if (rg.isEmpty()) {
+    out.insert(QStringLiteral("ok"), false);
+    out.insert(QStringLiteral("error"), QStringLiteral("rg is not available"));
+    return out;
+  }
+
+  QProcess process;
+  process.setProgram(rg);
+  process.setWorkingDirectory(root);
+  process.setArguments(
+      {QStringLiteral("--color=never"), QStringLiteral("--no-heading"),
+       QStringLiteral("--files-with-matches"), QStringLiteral("--max-count"),
+       QStringLiteral("1"), QStringLiteral("--max-filesize"),
+       QStringLiteral("8M"), QStringLiteral("--glob"),
+       QStringLiteral("!.git/**"), QStringLiteral("--null"),
+       QStringLiteral("-F"), QStringLiteral("--"), query, root});
+  process.setProcessChannelMode(QProcess::SeparateChannels);
+#ifdef Q_OS_LINUX
+  process.setChildProcessModifier([] { prctl(PR_SET_PDEATHSIG, SIGTERM); });
+#endif
+  process.start();
+  if (!process.waitForStarted(750)) {
+    out.insert(QStringLiteral("ok"), false);
+    out.insert(QStringLiteral("error"),
+               QStringLiteral("content search failed to start"));
+    return out;
+  }
+
+  QByteArray buffer;
+  QStringList paths;
+  QSet<QString> seen;
+  const auto drain = [&] {
+    buffer += process.readAllStandardOutput();
+    while (paths.size() < limit) {
+      const qsizetype nul = buffer.indexOf('\0');
+      if (nul < 0)
+        break;
+      QByteArray raw = buffer.left(nul);
+      buffer.remove(0, nul + 1);
+      QString path = QFile::decodeName(raw);
+      if (!QFileInfo(path).isAbsolute())
+        path = QDir(root).filePath(path);
+      path = QDir::cleanPath(path);
+      if (!path.isEmpty() && !seen.contains(path)) {
+        seen.insert(path);
+        paths.append(path);
+      }
+    }
+  };
+  while (process.state() != QProcess::NotRunning && paths.size() < limit &&
+         timer.elapsed() < deadline) {
+    process.waitForReadyRead(40);
+    drain();
+  }
+  drain();
+  const bool timedOut =
+      timer.elapsed() >= deadline && process.state() != QProcess::NotRunning;
+  if (process.state() != QProcess::NotRunning) {
+    process.kill();
+    process.waitForFinished(500);
+  }
+
+  QVariantList rows;
+  for (int i = 0; i < paths.size(); ++i) {
+    const QFileInfo info(paths.at(i));
+    if (!info.exists() || !info.isFile())
+      continue;
+    QVariantMap row;
+    row.insert(QStringLiteral("id"),
+               QStringLiteral("content:") + info.absoluteFilePath());
+    row.insert(QStringLiteral("kind"), QStringLiteral("file"));
+    row.insert(QStringLiteral("matchType"), QStringLiteral("content"));
+    row.insert(QStringLiteral("name"), info.fileName());
+    row.insert(QStringLiteral("path"), info.absoluteFilePath());
+    row.insert(QStringLiteral("parent"), info.absolutePath());
+    row.insert(QStringLiteral("extension"), info.suffix().toLower());
+    row.insert(QStringLiteral("isDir"), false);
+    row.insert(QStringLiteral("size"), info.size());
+    const qint64 mtime = info.lastModified().toMSecsSinceEpoch();
+    row.insert(QStringLiteral("mtime"), mtime);
+    row.insert(QStringLiteral("hidden"), info.isHidden());
+    row.insert(QStringLiteral("bookmarked"), false);
+    row.insert(QStringLiteral("score"), i);
+    const QString thumbnail =
+        ThumbnailService::cachedFileUrl(info.absoluteFilePath(), mtime, 64);
+    if (!thumbnail.isEmpty())
+      row.insert(QStringLiteral("thumbnail"), thumbnail);
+    rows.append(row);
+  }
+  out.insert(QStringLiteral("rows"), rows);
+  out.insert(QStringLiteral("count"), rows.size());
+  out.insert(QStringLiteral("timedOut"), timedOut);
+  out.insert(QStringLiteral("elapsedMs"), timer.elapsed());
+  return out;
 }
 
 bool FileCatalog::validateReadOnlySql(const QString &sql, QString *error) {
@@ -2073,8 +2662,7 @@ QVariantMap FileCatalog::status() const {
 
 void FileCatalog::requestShadowRefresh() {
   if (QCoreApplication::applicationName() != QLatin1String("synchro") ||
-      qEnvironmentVariableIsSet("SYNCHRO_DISABLE_SHADOW_REFRESH") ||
-      m_indexing)
+      qEnvironmentVariableIsSet("SYNCHRO_DISABLE_SHADOW_REFRESH") || m_indexing)
     return;
   const qint64 now = QDateTime::currentMSecsSinceEpoch();
   if (m_lastShadowRefreshRequestAt > 0 &&
@@ -2093,13 +2681,11 @@ void FileCatalog::requestShadowRefresh() {
   const QFileInfo catalogWal(dbPath() + QStringLiteral("-wal"));
   if (catalogFile.exists())
     lastSourceChange =
-        qMax(lastSourceChange,
-             catalogFile.lastModified().toMSecsSinceEpoch());
+        qMax(lastSourceChange, catalogFile.lastModified().toMSecsSinceEpoch());
   if (catalogWal.exists())
     lastSourceChange =
         qMax(lastSourceChange, catalogWal.lastModified().toMSecsSinceEpoch());
-  if (lastSourceChange > 0 &&
-      now - lastSourceChange < kShadowQuietPeriodMs)
+  if (lastSourceChange > 0 && now - lastSourceChange < kShadowQuietPeriodMs)
     return;
 
   const QFileInfo activeShadow(shadowPath());
@@ -2114,13 +2700,13 @@ void FileCatalog::requestShadowRefresh() {
   m_lastShadowRefreshRequestAt = now;
   QString program = executable;
   QStringList arguments{QStringLiteral("catalog"), QStringLiteral("shadow"),
-                        QStringLiteral("rebuild"),
-                        QStringLiteral("--compact")};
+                        QStringLiteral("rebuild"), QStringLiteral("--compact")};
   const QString systemdRun =
       QStandardPaths::findExecutable(QStringLiteral("systemd-run"));
   if (!systemdRun.isEmpty()) {
     program = systemdRun;
-    QStringList broker{QStringLiteral("--user"), QStringLiteral("--collect"),
+    QStringList broker{QStringLiteral("--user"),
+                       QStringLiteral("--collect"),
                        QStringLiteral("--quiet"),
                        QStringLiteral("--service-type=exec"),
                        QStringLiteral("--property=Nice=15"),
@@ -2381,8 +2967,8 @@ quint64 FileCatalog::scene(const QString &rawRoot, const QString &view,
   return sceneExpanded(rawRoot, view, hidden, {});
 }
 
-quint64 FileCatalog::sceneExpanded(const QString &rawRoot,
-                                   const QString &view, bool hidden,
+quint64 FileCatalog::sceneExpanded(const QString &rawRoot, const QString &view,
+                                   bool hidden,
                                    const QStringList &rawExpandedPaths) {
   const quint64 request = ++m_nextRequest;
   if (m_sceneCancel)
@@ -2402,8 +2988,8 @@ quint64 FileCatalog::sceneExpanded(const QString &rawRoot,
           ? FsnLayout::StrataVView
           : FsnLayout::MapView;
   QPointer<FileCatalog> self(this);
-  m_scenePool.start(
-      [self, cancel, request, root, hidden, expandedPaths, depthCap, fsnView] {
+  m_scenePool.start([self, cancel, request, root, hidden, expandedPaths,
+                     depthCap, fsnView] {
         QVariantMap result;
         result.insert(QStringLiteral("source"), QStringLiteral("catalog"));
         result.insert(QStringLiteral("root"), root);
@@ -2428,8 +3014,7 @@ quint64 FileCatalog::sceneExpanded(const QString &rawRoot,
             sqlite3_progress_handler(
                 db, 2000,
                 [](void *context) {
-                  return static_cast<std::atomic_bool *>(context)->load() ? 1
-                                                                          : 0;
+              return static_cast<std::atomic_bool *>(context)->load() ? 1 : 0;
                 },
                 cancel.get());
             static const char *sql =
@@ -2471,8 +3056,8 @@ quint64 FileCatalog::sceneExpanded(const QString &rawRoot,
               int rootChildCount = 0;
               auto columnText = [](sqlite3_stmt *row, int column) {
                 const auto *text = sqlite3_column_text(row, column);
-                return text ? QString::fromUtf8(
-                                  reinterpret_cast<const char *>(text))
+            return text
+                       ? QString::fromUtf8(reinterpret_cast<const char *>(text))
                             : QString();
               };
               while (!parents.isEmpty() && !cancel->load()) {
@@ -2485,8 +3070,7 @@ quint64 FileCatalog::sceneExpanded(const QString &rawRoot,
                 int siblingCount = 0;
                 int admitted = 0;
                 while (!cancel->load() && sqlite3_step(st) == SQLITE_ROW) {
-                  if (current.previewOnly &&
-                      admitted >= kStrataPreviewChildLimit)
+              if (current.previewOnly && admitted >= kStrataPreviewChildLimit)
                     break;
                   FsnLayout::Item item;
                   item.path = columnText(st, 0);
@@ -2509,8 +3093,7 @@ quint64 FileCatalog::sceneExpanded(const QString &rawRoot,
                   item.ageBucket = fsnAgeBucket(item.mtime);
                   item.aggregate = item.isDir && item.childCount > 0;
                   item.expanded = expandedPaths.contains(item.path);
-                  item.previewChildren =
-                      fsnView == FsnLayout::StrataVView &&
+              item.previewChildren = fsnView == FsnLayout::StrataVView &&
                       current.depth == 0 && item.isDir;
                   if (current.depth == 0 && item.isDir && !item.isLink)
                     rootDirectories.append(items.size());
@@ -2544,8 +3127,7 @@ quint64 FileCatalog::sceneExpanded(const QString &rawRoot,
                   "COALESCE(SUM(CASE WHEN is_dir<>0 THEN 1 ELSE 0 END),0) "
                   "FROM files WHERE path>=? AND path<?;";
               if (!rootDirectories.isEmpty())
-                sqlite3_prepare_v2(db, rollupSql, -1, &rollupStatement,
-                                   nullptr);
+            sqlite3_prepare_v2(db, rollupSql, -1, &rollupStatement, nullptr);
               const QString cachePrefix = FileCatalog::dbPath() + QLatin1Char('\n');
               for (const int itemIndex : std::as_const(rootDirectories)) {
                 if (cancel->load())
@@ -2560,15 +3142,12 @@ quint64 FileCatalog::sceneExpanded(const QString &rawRoot,
                 } else if (rollupStatement) {
                   sqlite3_reset(rollupStatement);
                   sqlite3_clear_bindings(rollupStatement);
-                  bindText(rollupStatement, 1,
-                           item.path + QLatin1Char('/'));
-                  bindText(rollupStatement, 2,
-                           item.path + QLatin1Char('0'));
+              bindText(rollupStatement, 1, item.path + QLatin1Char('/'));
+              bindText(rollupStatement, 2, item.path + QLatin1Char('0'));
                   if (sqlite3_step(rollupStatement) == SQLITE_ROW) {
                     rollup.bytes = sqlite3_column_int64(rollupStatement, 0);
                     rollup.files = sqlite3_column_int(rollupStatement, 1);
-                    rollup.directories =
-                        sqlite3_column_int(rollupStatement, 2);
+                rollup.directories = sqlite3_column_int(rollupStatement, 2);
                     cacheSceneRollup(cacheKey, rollup);
                     ++rollupMisses;
                     haveRollup = true;
@@ -2578,8 +3157,7 @@ quint64 FileCatalog::sceneExpanded(const QString &rawRoot,
                   item.bytes = std::max(rollup.bytes, qint64(0));
                   item.fileCount = rollup.files;
                   item.dirCount = rollup.directories;
-                  item.aggregate =
-                      rollup.files > 0 || rollup.directories > 0;
+              item.aggregate = rollup.files > 0 || rollup.directories > 0;
                 }
               }
               if (rollupStatement)
@@ -2599,14 +3177,11 @@ quint64 FileCatalog::sceneExpanded(const QString &rawRoot,
                 result.insert(QStringLiteral("expandedCount"),
                               expandedPaths.size());
                 result.insert(QStringLiteral("rollupCacheHits"), rollupHits);
-                result.insert(QStringLiteral("rollupCacheMisses"),
-                              rollupMisses);
-                result.insert(QStringLiteral("rollupMs"),
-                              rollupTimer.elapsed());
+            result.insert(QStringLiteral("rollupCacheMisses"), rollupMisses);
+            result.insert(QStringLiteral("rollupMs"), rollupTimer.elapsed());
                 result.insert(QStringLiteral("rooftopPreviewLimit"),
                               kStrataPreviewChildLimit);
-                result.insert(QStringLiteral("collapsedCount"),
-                              collapsedCount);
+            result.insert(QStringLiteral("collapsedCount"), collapsedCount);
                 result.insert(QStringLiteral("omittedCount"), 0);
                 result.insert(QStringLiteral("truncated"), false);
               }

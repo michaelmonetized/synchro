@@ -7,9 +7,12 @@ required=(
   usr/bin/synchro
   usr/bin/omarchy-launch-synchro
   usr/bin/omarchy-launch-synchro-cwd
+  usr/bin/synchro-omarchy-menu-install
   usr/share/applications/org.omarchy.synchro.desktop
   usr/share/icons/hicolor/scalable/apps/org.omarchy.synchro.svg
   usr/share/synchro/agent-skills/synchro/SKILL.md
+  usr/share/synchro/omarchy-menu/SynchroSearch.qml
+  usr/share/synchro/omarchy-menu/omarchy-menu.patch
   usr/share/synchro/handlers/synchro.open.xdg/manifest.json
   usr/share/synchro/handlers/synchro.panel.sql/Panel.qml
   usr/share/synchro/handlers/synchro.preview.folder/Preview.qml

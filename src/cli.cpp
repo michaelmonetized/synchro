@@ -2,6 +2,7 @@
 
 #include "AgentBridge.h"
 #include "AgentIntegration.h"
+#include "Config.h"
 #include "FileCatalog.h"
 #include "HandlerInstall.h"
 #include "HandlerRegistry.h"
@@ -39,6 +40,13 @@ void queryUsage() {
   std::fprintf(stderr, "Usage: synchro query --sql <SELECT> [--cwd <folder>] "
                        "[--selection <path>]... [--limit <1-500>] [--compact]\n"
                        "       synchro query <SELECT> [same options]\n");
+}
+
+void launcherUsage() {
+  std::fprintf(stderr,
+               "Usage: synchro launcher search --query <text> [--cwd "
+               "<folder>] [--limit <1-50>] [--content] [--compact]\n"
+               "       synchro launcher search <text> [same options]\n");
 }
 
 void catalogUsage() {
@@ -682,6 +690,86 @@ int runQueryCli(int argc, char **argv) {
     return 2;
   }
   const QVariantMap result = FileCatalog::querySync(sql, cwd, selection, limit);
+  QByteArray encoded =
+      QJsonDocument(QJsonObject::fromVariantMap(result))
+          .toJson(compact ? QJsonDocument::Compact : QJsonDocument::Indented);
+  if (compact)
+    encoded.append('\n');
+  std::fwrite(encoded.constData(), 1, static_cast<size_t>(encoded.size()),
+              stdout);
+  return result.value(QStringLiteral("ok")).toBool() ? 0 : 1;
+}
+
+int runLauncherCli(int argc, char **argv) {
+  Q_UNUSED(argc);
+  Q_UNUSED(argv);
+  const QStringList args = QCoreApplication::arguments().mid(2);
+  if (args.isEmpty() || args.first() != QLatin1String("search")) {
+    launcherUsage();
+    return 2;
+  }
+  QString query;
+  QString cwd = QDir::currentPath();
+  int limit = 8;
+  bool compact = false;
+  bool content = false;
+  for (int i = 1; i < args.size(); ++i) {
+    const QString arg = args.at(i);
+    auto next = [&](const char *option) -> QString {
+      if (i + 1 >= args.size()) {
+        std::fprintf(stderr, "synchro: %s needs a value\n", option);
+        return {};
+      }
+      return args.at(++i);
+    };
+    if (arg == QLatin1String("--query")) {
+      query = next("--query");
+      if (query.isNull())
+        return 2;
+    } else if (arg == QLatin1String("--cwd")) {
+      cwd = next("--cwd");
+      if (cwd.isNull())
+        return 2;
+    } else if (arg == QLatin1String("--limit")) {
+      bool ok = false;
+      const QString value = next("--limit");
+      if (value.isNull())
+        return 2;
+      limit = value.toInt(&ok);
+      if (!ok || limit < 1 || limit > 50) {
+        std::fprintf(stderr, "synchro: --limit must be between 1 and 50\n");
+        return 2;
+      }
+    } else if (arg == QLatin1String("--compact")) {
+      compact = true;
+    } else if (arg == QLatin1String("--content")) {
+      content = true;
+    } else if (arg == QLatin1String("--json")) {
+      // JSON is the only output format.
+    } else if (arg == QLatin1String("-h") || arg == QLatin1String("--help")) {
+      launcherUsage();
+      return 0;
+    } else if (arg.startsWith(QLatin1Char('-'))) {
+      std::fprintf(stderr, "synchro: unknown launcher option %s\n",
+                   qPrintable(arg));
+      launcherUsage();
+      return 2;
+    } else if (query.isEmpty()) {
+      query = arg;
+    } else {
+      query += QLatin1Char(' ');
+      query += arg;
+    }
+  }
+  if (query.trimmed().isEmpty()) {
+    launcherUsage();
+    return 2;
+  }
+  Config config;
+  const QVariantMap result =
+      content ? FileCatalog::contentSearchSync(query, cwd, limit)
+              : FileCatalog::searchSync(query, cwd, config.pins(),
+                                        config.sqlBookmarks(), limit);
   QByteArray encoded =
       QJsonDocument(QJsonObject::fromVariantMap(result))
           .toJson(compact ? QJsonDocument::Compact : QJsonDocument::Indented);

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Synchro.Theme
 
 Item {
@@ -19,10 +20,22 @@ Item {
 
     readonly property int crumbH: Theme.controlHeight + Theme.spaceMD
     readonly property int tabH: Theme.controlHeight
+    readonly property int brandMarkHeight: Theme.space(24)
+    readonly property int brandMarkWidth: Math.round(root.brandMarkHeight * 120 / 88)
+    readonly property int brandWordmarkHeight: Theme.space(17)
+    readonly property int brandWordmarkWidth: Math.round(root.brandWordmarkHeight * 337 / 78)
+    readonly property int brandGap: Theme.spaceSM
+    readonly property int brandFullWidth: root.brandMarkWidth + root.brandGap +
+                                           root.brandWordmarkWidth
+    readonly property bool showBrandWordmark: root.brandFits(root.brandFullWidth,
+                                                              Theme.space(176))
+    readonly property bool showBrandMark: root.showBrandWordmark ||
+                                          root.brandFits(root.brandMarkWidth,
+                                                         Theme.space(120))
     readonly property bool disksInline: {
         if (!root.hasDisks || diskRow.width <= 0 || crumbLine.width <= 0)
             return false
-        var need = brand.implicitWidth + Theme.space(20) + crumbRow.width +
+        var need = navControls.implicitWidth + Theme.space(20) + crumbRow.width +
                    Theme.space(24) + diskRow.width
         return crumbLine.width >= need
     }
@@ -33,6 +46,21 @@ Item {
 
     function scrollCrumbsToEnd() {
         crumbFlick.contentX = Math.max(0, crumbRow.width - crumbFlick.width)
+    }
+
+    function brandFits(candidateWidth, minimumCrumbWidth) {
+        if (crumbLine.width <= 0 || navControls.width <= 0)
+            return false
+
+        var candidateLeft = (crumbLine.width - candidateWidth) / 2
+        var candidateRight = candidateLeft + candidateWidth
+        var crumbStart = navControls.x + navControls.width + Theme.spaceLG
+        var rightLimit = crumbLine.width - Theme.space(8)
+        if (root.disksInline)
+            rightLimit -= diskStrip.width + Theme.spaceSM
+
+        return candidateLeft >= crumbStart + minimumCrumbWidth &&
+               candidateRight <= rightLimit
     }
 
     function ensureTabVisible(item, flick) {
@@ -200,7 +228,7 @@ Item {
         z: 1
 
         Row {
-            id: brand
+            id: navControls
             anchors.left: parent.left
             anchors.leftMargin: Theme.spaceLG
             anchors.verticalCenter: parent.verticalCenter
@@ -242,12 +270,14 @@ Item {
 
         Flickable {
             id: crumbFlick
-            anchors.left: brand.right
+            anchors.left: navControls.right
             anchors.leftMargin: Theme.spaceLG
-            anchors.right: parent.right
-            anchors.rightMargin: root.disksInline
-                                 ? diskStrip.width + Theme.space(8)
-                                 : Theme.space(8)
+            anchors.right: synchroBrand.visible ? synchroBrand.left : parent.right
+            anchors.rightMargin: synchroBrand.visible
+                                 ? Theme.spaceLG
+                                 : (root.disksInline
+                                    ? diskStrip.width + Theme.space(8)
+                                    : Theme.space(8))
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             clip: true
@@ -349,6 +379,69 @@ Item {
             }
 
             onContentWidthChanged: Qt.callLater(root.scrollCrumbsToEnd)
+        }
+
+        Item {
+            id: synchroBrand
+            objectName: "synchroBrand"
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.verticalCenter: parent.verticalCenter
+            width: root.showBrandWordmark ? root.brandFullWidth : root.brandMarkWidth
+            height: root.brandMarkHeight
+            visible: root.showBrandMark
+            z: 4
+
+            Row {
+                anchors.centerIn: parent
+                spacing: root.brandGap
+
+                Item {
+                    width: root.brandMarkWidth
+                    height: root.brandMarkHeight
+
+                    Image {
+                        id: brandMarkSource
+                        anchors.fill: parent
+                        source: "qrc:/synchro/brand/synchro-mark.svg"
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true
+                        mipmap: true
+                        visible: false
+                    }
+
+                    MultiEffect {
+                        anchors.fill: parent
+                        source: brandMarkSource
+                        colorization: 1
+                        colorizationColor: Theme.accent
+                    }
+                }
+
+                Item {
+                    width: root.showBrandWordmark ? root.brandWordmarkWidth : 0
+                    height: root.brandMarkHeight
+                    visible: root.showBrandWordmark
+
+                    Image {
+                        id: brandWordmarkSource
+                        anchors.centerIn: parent
+                        width: root.brandWordmarkWidth
+                        height: root.brandWordmarkHeight
+                        source: "qrc:/synchro/brand/synchro-wordmark.svg"
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true
+                        mipmap: true
+                        visible: false
+                    }
+
+                    MultiEffect {
+                        anchors.fill: brandWordmarkSource
+                        source: brandWordmarkSource
+                        colorization: 1
+                        colorizationColor: Theme.brightForeground
+                    }
+                }
+            }
         }
     }
 

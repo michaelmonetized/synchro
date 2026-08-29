@@ -45,9 +45,10 @@ synchro
 Once the listing is live, installation will simply be `yay -S synchro-git`.
 
 The package installs the application, built-in handlers, agent skill source,
-desktop entry, icon, Omarchy launchers, and the opt-in FileChooser portal
-descriptor. It does not change your Hyprland bindings, folder MIME default, or
-portal preference. Those remain explicit user choices described below.
+desktop entry, icon, Omarchy launchers, the opt-in Super+Space provider assets,
+and the opt-in FileChooser portal descriptor. It does not change your Hyprland
+bindings, folder MIME default, Omarchy menu, or portal preference. Those remain
+explicit user choices described below.
 
 Synchro currently uses Qt's private RHI API for its accelerated spatial views.
 That is acceptable for the deliberately narrow Omarchy 4.0.x target, but it
@@ -64,6 +65,7 @@ cmake --build build
 ```
 
 `--new-window` is accepted and is the default (new process).
+`--select /path/to/file` opens the containing folder with that file selected.
 
 Optional develop install (binary + launchers on `~/.local/bin`, portal/D-Bus
 files under `~/.local/share`):
@@ -233,6 +235,37 @@ receive the promoted generation. A cross-process lock keeps multiple Synchro
 windows from duplicating the build, and query failures fall back to the SQLite
 bridge. Inspect or force this cache with
 `synchro catalog shadow status` and `synchro catalog shadow rebuild --force`.
+
+Filename quick-open uses a separate contentless SQLite FTS5 trigram index.
+Catalog inserts, renames, and deletes update it in the same transaction; an
+existing catalog is backfilled once by a low-priority worker with a throttled
+duty cycle, so migration does not become another full-speed foreground scan.
+Queries of three or more characters support true basename substrings. Saved
+SQL locations and pinned folders that match are ranked ahead of ordinary
+files, while hidden/cache/build-tree matches are demoted. The headless JSON
+contract intended for launcher integrations is:
+
+```bash
+synchro launcher search --query "test pdf" --cwd "$PWD" --limit 8 --compact
+synchro launcher search --content --query "import re" --cwd "$HOME" --limit 8 --compact
+```
+
+On Omarchy 4.0, enable that index in the normal **Super+Space** menu with:
+
+```bash
+synchro-omarchy-menu-install
+```
+
+The installer uses Omarchy's supported local-clone mechanism rather than
+editing `/usr/share/omarchy`. Normal applications and commands stay first;
+after a 110 ms debounce, matching saved SQL locations, pinned folders, files,
+and directories appear in a separate **FILES & FOLDERS** section. Prefix the
+query with `/` for an explicit file-only search. Filename terms are combined
+with AND semantics. Prefix with `//` for bounded literal in-file search using
+the same ripgrep pathway as Synchro's content search. Existing warm thumbnails
+appear as result icons without generating cold previews. The clone is reversible:
+disable `<username>.menu` and re-enable `omarchy.menu` from Omarchy's plugin
+manager to return to the stock menu.
 
 **Omaflow.** `:flow` opens the optional Omaflow companion as another workspace
 panel. Synchro discovers the installed Omarchy plugin from its manifest, then

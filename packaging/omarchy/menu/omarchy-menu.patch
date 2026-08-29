@@ -1,0 +1,266 @@
+--- a/Menu.qml
++++ b/Menu.qml
+@@ -74,13 +74,18 @@
+   property var providersLoaded: ({})
+   property var providerQueue: []
+   property int providerRevision: 0
++  property var synchroActions: ({})
+ 
+   // Shared application engine (entries, hidden filters, icons, launch,
+   // removal), owned by the shell and also used by the standalone launcher.
+   readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
+   property bool deleteConfirmOpen: false
+   property var deleteTarget: null
+-  onOpenedChanged: if (!opened) { deleteConfirmOpen = false; deleteTarget = null }
++  onOpenedChanged: if (!opened) {
++    deleteConfirmOpen = false
++    deleteTarget = null
++    synchroSearch.cancel()
++  }
+   // Bound to the central [menu] section in shell.toml via Color.qml.
+   // Each color already includes its alpha companion (composed in the
+   // singleton), so consumers can drop them straight into a Rectangle.
+@@ -106,6 +111,7 @@
+   property int rowPeek: Math.round(baseRowHeight * 0.55)
+   property int rowSpacing: Style.spacing.xs
+   property int dividerHeight: Style.space(17)
++  property int providerHeaderHeight: Style.space(24)
+   property bool searchDivider: false
+   property int layoutSerial: 0
+   property int cardWidth: Math.min(root.dmenuActive ? Style.space(root.dmenuWidth) : ((root.activeMenu === "trigger.capture.screenrecord" || root.activeMenu === "style.font") ? Style.space(520) : Style.space(300)), panel.width - Style.gapsOut * 2)
+@@ -189,6 +195,7 @@
+       var row = displayModel.get(i)
+       if (i > 0) total += root.rowSpacing
+       if (row.section === "drilldown" && previousSection !== "drilldown") total += root.dividerHeight
++      if (row.section === "synchro" && previousSection !== "synchro") total += root.providerHeaderHeight
+       total += root.rowHeightForDetail(row.detail)
+       previousSection = row.section
+       totals.push(total)
+@@ -572,9 +579,13 @@
+     root.activeMenu = active
+     var rows = []
+     var query = root.filterText.trim()
++    var contentSynchro = query.indexOf("//") === 0
++    var explicitSynchro = !contentSynchro && query.charAt(0) === "/"
++    var synchroQuery = contentSynchro ? query.substring(2).trim()
++                                      : (explicitSynchro ? query.substring(1).trim() : query)
+     root.searchDivider = false
+ 
+-    if (query) {
++    if (query && !explicitSynchro && !contentSynchro) {
+       var currentRows = []
+       var drilldownRows = []
+ 
+@@ -602,7 +613,7 @@
+         for (var d = 0; d < drilldownRows.length; d++) drilldownRows[d].section = "drilldown"
+       }
+       rows = currentRows.concat(drilldownRows)
+-    } else {
++    } else if (!query) {
+       for (var j = 0; j < root.itemOrder.length; j++) {
+         var child = root.item(root.itemOrder[j])
+         if (!child || child.parent !== active) continue
+@@ -627,6 +638,44 @@
+       }
+     }
+ 
++    root.synchroActions = ({})
++    if (query && root.activeMenu === "root"
++        && synchroSearch.query === synchroQuery
++        && synchroSearch.explicitMode === explicitSynchro
++        && synchroSearch.contentMode === contentSynchro) {
++      var nextSynchroActions = ({})
++      var fileRows = synchroSearch.rows || []
++      var visibleFileRows = (explicitSynchro || contentSynchro)
++                          ? fileRows.length : Math.min(3, fileRows.length)
++      var renderedFileRows = []
++      for (var f = 0; f < visibleFileRows; f++) {
++        var hit = fileRows[f]
++        var hitId = "synchro." + f
++        nextSynchroActions[hitId] = hit
++        renderedFileRows.push({
++          itemId: hitId,
++          kind: "synchro",
++          icon: synchroSearch.iconFor(hit),
++          iconFont: "",
++          appIcon: String(hit.thumbnail || ""),
++          appId: "",
++          label: String(hit.name || hit.path || "Indexed result"),
++          target: String(hit.path || ""),
++          detail: synchroSearch.detailFor(hit),
++          path: String(hit.path || hit.cwd || ""),
++          childCount: 0,
++          action: "",
++          provider: "",
++          score: Number(hit.score || 0),
++          section: "synchro"
++        })
++      }
++      var insertAt = (explicitSynchro || contentSynchro)
++                   ? rows.length : Math.min(5, rows.length)
++      rows = rows.slice(0, insertAt).concat(renderedFileRows, rows.slice(insertAt))
++      root.synchroActions = nextSynchroActions
++    }
++
+     for (var k = 0; k < rows.length; k++) displayModel.append(rows[k])
+     layoutSerial += 1
+ 
+@@ -681,6 +730,8 @@
+     root.cursorActive = root.mode !== "input"
+     root.disarmPointer()
+     if (!root.dmenuActive && root.filterText.trim()) root.loadProvidersForSearch()
++    if (!root.dmenuActive && root.activeMenu === "root") synchroSearch.schedule(root.filterText)
++    else synchroSearch.cancel()
+     root.rebuildDisplay()
+   }
+ 
+@@ -714,7 +765,7 @@
+     return true
+   }
+ 
+-  function activateIndex(index, fromPointer) {
++  function activateIndex(index, fromPointer, execute) {
+     if (root.deleteConfirmOpen) return
+     if (root.dmenuActive) {
+       if (root.mode === "input") {
+@@ -730,7 +781,10 @@
+     if (index < 0 || index >= displayModel.count) return
+ 
+     var row = displayModel.get(index)
+-    if (row.kind === "menu" || row.kind === "link") {
++    if (row.kind === "synchro") {
++      var hit = root.synchroActions[row.itemId]
++      if (synchroSearch.activate(hit, !!execute)) root.cancel()
++    } else if (row.kind === "menu" || row.kind === "link") {
+       root.setActiveMenu(row.target || row.itemId, true, fromPointer)
+     } else if (row.kind === "app") {
+       var appId = row.appId
+@@ -839,6 +893,14 @@
+   }
+   ListModel { id: displayModel }
+ 
++  SynchroSearch {
++    id: synchroSearch
++    onChanged: {
++      if (root.opened && !root.dmenuActive && root.activeMenu === "root")
++        root.rebuildDisplay()
++    }
++  }
++
+   // ----------------------------------------------------------- route surface
+   //
+   // The menu is opened through the standard plugin lifecycle:
+@@ -1104,10 +1166,12 @@
+             root.select(6)
+             event.accepted = true
+           } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Right) {
++            var executeResult = (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) &&
++                                !!(event.modifiers & Qt.ControlModifier)
+             if (root.dmenuActive) {
+               if (root.mode === "input") root.applyDmenuSelection(root.filterText)
+-              else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0)
+-            } else if (root.cursorActive) root.activateIndex(root.selectedIndex)
++              else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0, false, executeResult)
++            } else if (root.cursorActive) root.activateIndex(root.selectedIndex, false, executeResult)
+             else if (displayModel.count > 0) root.cursorActive = true
+             event.accepted = true
+           } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
+@@ -1182,10 +1246,12 @@
+               required property string section
+ 
+               width: ListView.view.width
+-              height: section === "drilldown" ? root.dividerHeight : 0
+-              visible: section === "drilldown"
++              height: section === "synchro" ? root.providerHeaderHeight
++                    : (section === "drilldown" ? root.dividerHeight : 0)
++              visible: section === "drilldown" || section === "synchro"
+ 
+               Rectangle {
++                visible: section === "drilldown"
+                 anchors.left: parent.left
+                 anchors.leftMargin: Style.space(4)
+                 anchors.right: parent.right
+@@ -1194,6 +1260,33 @@
+                 height: Style.spacing.hairline
+                 color: Util.alpha(root.foreground, 0.2)
+               }
++
++              Row {
++                visible: section === "synchro"
++                anchors.left: parent.left
++                anchors.leftMargin: Style.space(10)
++                anchors.right: parent.right
++                anchors.rightMargin: Style.space(8)
++                anchors.verticalCenter: parent.verticalCenter
++                spacing: Style.space(8)
++
++                Text {
++                  text: synchroSearch.sectionLabel()
++                  color: root.foreground
++                  opacity: 0.5
++                  font.family: root.fontFamily
++                  font.pixelSize: Style.font.caption
++                  font.weight: Font.DemiBold
++                  font.letterSpacing: Style.space(1)
++                }
++
++                Rectangle {
++                  width: parent.width - parent.children[0].width - parent.spacing
++                  height: Style.spacing.hairline
++                  color: Util.alpha(root.foreground, 0.16)
++                  anchors.verticalCenter: parent.verticalCenter
++                }
++              }
+             }
+ 
+             delegate: BorderSurface {
+@@ -1214,7 +1307,8 @@
+ 
+               readonly property bool hasCursor: root.cursorActive && row.index === root.selectedIndex
+               readonly property bool isApp: row.kind === "app"
+-              readonly property bool hasIcon: row.icon.length > 0 || row.isApp
++              readonly property bool hasSynchroThumbnail: row.kind === "synchro" && row.appIcon.length > 0
++              readonly property bool hasIcon: row.icon.length > 0 || row.isApp || row.hasSynchroThumbnail
+ 
+               width: ListView.view.width
+               height: root.rowHeightForDetail(row.detail)
+@@ -1235,7 +1329,7 @@
+ 
+               Text {
+                 id: iconText
+-                visible: row.hasIcon && !row.isApp
++                visible: row.hasIcon && !row.isApp && !row.hasSynchroThumbnail
+                 text: row.icon
+                 color: row.hasCursor ? root.selectedText : root.foreground
+                 font.family: row.iconFont.length > 0 ? row.iconFont : root.fontFamily
+@@ -1250,7 +1344,7 @@
+ 
+               Image {
+                 id: appIconImage
+-                visible: row.isApp
++                visible: row.isApp || row.hasSynchroThumbnail
+                 width: Style.font.iconLarge
+                 height: Style.font.iconLarge
+                 fillMode: Image.PreserveAspectFit
+@@ -1258,7 +1352,8 @@
+                 // PNG icons upscaled and blurry on HiDPI displays.
+                 sourceSize.width: width * Screen.devicePixelRatio
+                 sourceSize.height: height * Screen.devicePixelRatio
+-                source: row.isApp && root.appLibrary ? root.appLibrary.iconSource(row.appIcon) : ""
++                source: row.hasSynchroThumbnail ? row.appIcon
++                      : (row.isApp && root.appLibrary ? root.appLibrary.iconSource(row.appIcon) : "")
+                 asynchronous: true
+                 anchors.left: parent.left
+                 anchors.leftMargin: root.rowReservedBorderLeft + Style.space(8) + (Style.space(36) - width) / 2
+@@ -1399,7 +1494,10 @@
+             }
+ 
+             Text {
+-              text: root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet"
++              text: synchroSearch.busy
++                    ? (synchroSearch.contentMode ? "Searching file contents…"
++                                                 : "Searching indexed files…")
++                    : (root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet")
+               color: root.foreground
+               opacity: 0.7
+               font.family: root.fontFamily

@@ -15,6 +15,9 @@ ListView {
     // Companion surfaces can reuse the complete table without letting its
     // private DirectoryModel navigate independently of the main browser.
     property bool externalActivation: false
+    property bool centerInitialSelection: false
+    property string initialSelectionPath: ""
+    property bool initialSelectionRevealed: false
     readonly property int selectionEpoch: selection ? selection.epoch : 0
     readonly property int thumbSizePx: 128
     readonly property bool dndLive: dndEnabled && fileOps && fileModel &&
@@ -347,6 +350,25 @@ ListView {
             list.fileModel.requestVisibleThumbs(first, last, list.thumbSizePx)
     }
 
+    function syncStartupSelectionThumbnails() {
+        if (!list.rows || list.rows.currentIndex < 0 || list.count <= 0)
+            return
+        var rowHeight = 24
+        if (list.count > 0 && list.contentHeight > 0)
+            rowHeight = Math.max(8, list.contentHeight / list.count)
+        var visibleRows = Math.max(1, Math.ceil(list.height / rowHeight))
+        var runway = Math.ceil(visibleRows / 2) + 16
+        var first = Math.max(0, list.rows.currentIndex - runway)
+        var last = Math.min(list.count - 1,
+                            list.rows.currentIndex + runway)
+        if (list.filterProxy)
+            list.filterProxy.requestVisibleThumbs(first, last,
+                                                  list.thumbSizePx)
+        else
+            list.fileModel.requestVisibleThumbs(first, last,
+                                                list.thumbSizePx)
+    }
+
     Timer {
         id: thumbSync
         interval: 16
@@ -361,7 +383,11 @@ ListView {
     onHeightChanged: thumbSync.restart()
     onCountChanged: thumbSync.restart()
     onVisibleChanged: if (visible) thumbSync.restart()
-    Component.onCompleted: thumbSync.restart()
+    Component.onCompleted: {
+        thumbSync.restart()
+        if (list.centerInitialSelection)
+            initialReveal.restart()
+    }
 
     delegate: Item {
         id: row
@@ -782,8 +808,63 @@ ListView {
     Connections {
         target: list.rows
         function onCurrentIndexChanged() {
-            if (list.rows && list.rows.currentIndex >= 0)
+            if (!list.rows || list.rows.currentIndex < 0)
+                return
+            if (list.centerInitialSelection && !list.initialSelectionRevealed) {
+                initialReveal.restart()
+            } else {
                 list.positionViewAtIndex(list.rows.currentIndex, ListView.Contain)
+            }
+        }
+        function onCountChanged() {
+            if (list.centerInitialSelection && !list.initialSelectionRevealed)
+                initialReveal.restart()
         }
     }
+
+    Timer {
+        id: initialReveal
+        interval: 32
+        repeat: false
+        onTriggered: {
+            if (!list.centerInitialSelection || list.initialSelectionRevealed ||
+                    !list.rows || list.rows.currentIndex < 0)
+                return
+            if (list.initialSelectionPath.length && list.selection &&
+                    list.selection.cursorPath() !== list.initialSelectionPath)
+                return
+            list.positionViewAtIndex(list.rows.currentIndex, ListView.Center)
+            // Programmatic positioning may settle after contentYChanged; make
+            // the thumbnail runway follow the final painted rows explicitly.
+            postRevealThumbSync.restart()
+            // Rows can continue arriving and re-sort around the selected file.
+            // Keep the startup target centered until the listing settles.
+            list.initialSelectionRevealed = !list.fileModel ||
+                                            !list.fileModel.listing
+        }
+    }
+
+    Timer {
+        id: postRevealThumbSync
+        interval: 64
+        repeat: false
+        onTriggered: list.syncStartupSelectionThumbnails()
+    }
+
+    Connections {
+        target: list.fileModel
+        function onListingChanged() {
+            if (list.centerInitialSelection && !list.initialSelectionRevealed)
+                initialReveal.restart()
+        }
+    }
+
+    Connections {
+        target: list.selection
+        function onEpochChanged() {
+            if (list.centerInitialSelection && !list.initialSelectionRevealed)
+                initialReveal.restart()
+        }
+    }
+
 }

@@ -39,6 +39,18 @@ public:
   static QVariantMap querySync(const QString &sql, const QString &cwd,
                                const QStringList &selection = {},
                                int maxRows = 200);
+  // Low-latency launcher lookup backed by the incremental SQLite trigram
+  // index. Pins and saved SQL locations are supplied by the caller so the
+  // catalog remains independent of a particular Config instance.
+  static QVariantMap searchSync(const QString &query, const QString &cwd = {},
+                                const QStringList &pinnedPaths = {},
+                                const QVariantList &savedQueries = {},
+                                int maxRows = 8);
+  // Literal in-file lookup matching the app's content-search contract. It is
+  // bounded, cancellable by killing the caller, and never mutates the catalog.
+  static QVariantMap contentSearchSync(const QString &query,
+                                       const QString &cwd = {}, int maxRows = 8,
+                                       int timeoutMs = 5000);
   // Cheap syntax/safety validation for handoff surfaces that should not open
   // the multi-gigabyte catalog merely to decide whether a query may launch.
   static bool validateReadOnlySql(const QString &sql, QString *error = nullptr);
@@ -107,8 +119,10 @@ private:
   QThreadPool m_queryPool;
   QThreadPool m_scenePool;
   QThreadPool m_analysisPool;
+  QThreadPool m_searchIndexPool;
   std::shared_ptr<std::atomic_bool> m_scanCancel;
   std::shared_ptr<std::atomic_bool> m_sceneCancel;
+  std::shared_ptr<std::atomic_bool> m_searchIndexCancel;
   quint64 m_scanGeneration = 0;
   quint64 m_nextRequest = 0;
   bool m_indexing = false;
