@@ -303,7 +303,7 @@ void HandlerActionsTest::actionMatchesIncludesCopyAs() {
   for (const auto &m : hits)
     ids.append(m.id);
   QVERIFY(ids.contains(QStringLiteral("synchro.action.copy-as")));
-  QVERIFY(ids.contains(QStringLiteral("synchro.action.open-with")));
+  QVERIFY(ids.contains(QStringLiteral("synchro.action.rename")));
   QVERIFY(ids.contains(QStringLiteral("synchro.action.trash")));
   QVERIFY(!ids.contains(QStringLiteral("synchro.action.eject")));
 }

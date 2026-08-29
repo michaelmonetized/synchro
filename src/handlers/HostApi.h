@@ -223,6 +223,7 @@ public:
                                       int offset = 0, int limit = 40);
   Q_INVOKABLE bool openFile(const QString &path, const QString &mime);
   Q_INVOKABLE bool runOpen(const QString &handlerId);
+  Q_INVOKABLE bool renameDoTarget(const QString &newName);
   Q_INVOKABLE bool runTerminal();
   Q_INVOKABLE bool runTrash();
   Q_INVOKABLE bool restoreTrash();
@@ -438,6 +439,7 @@ private:
     QString group;
     QString provider;
     QString providerId;
+    QString icon;
     QString effect;
     bool hasParams = false;
   };

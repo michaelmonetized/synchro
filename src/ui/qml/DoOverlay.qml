@@ -229,12 +229,21 @@ Item {
                             anchors.leftMargin: Theme.space(14)
                             anchors.verticalCenter: parent.verticalCenter
                             width: Theme.space(18)
+                            visible: !(actionRow.modelData.icon || "").length
                             text: actionRow.modelData.runtime === "omaflow" ? "↯" :
                                   (actionRow.modelData.effect === "destructive" ? "!" : "›")
                             color: actionRow.modelData.effect === "destructive" ? Theme.urgent : Theme.accent
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontTitle
                             font.bold: true
+                        }
+                        AppIcon {
+                            anchors.centerIn: actionGlyph
+                            width: Theme.space(18)
+                            height: width
+                            iconSize: Math.round(width)
+                            name: actionRow.modelData.icon || ""
+                            visible: name.length > 0
                         }
                         Column {
                             anchors.left: actionGlyph.right

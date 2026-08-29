@@ -33,6 +33,7 @@
 #include <QClipboard>
 #include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QFont>
@@ -41,16 +42,21 @@
 #include <QImageReader>
 #include <QJsonArray>
 #include <QMetaObject>
+#include <QMimeDatabase>
 #include <QObject>
+#include <QProcess>
 #include <QQuickItem>
 #include <QQuickTextDocument>
+#include <QSettings>
 #include <QSyntaxHighlighter>
 #include <QTextCharFormat>
 #include <QTextDocument>
+#include <QTimer>
 #include <QtConcurrent>
 
 #include <algorithm>
 #include <cstdio>
+#include <memory>
 #include <utility>
 
 namespace {
@@ -126,6 +132,172 @@ private:
   QTextCharFormat m_comment;
   QTextCharFormat m_normal;
 };
+
+struct DesktopOpenApp {
+  QString id;
+  QString desktopFile;
+  QString name;
+  QString comment;
+  QString icon;
+  bool preferred = false;
+};
+
+QStringList splitDesktopList(const QVariant &value) {
+  QStringList out = value.toStringList();
+  if (out.size() <= 1)
+    out = value.toString().split(QLatin1Char(';'), Qt::SkipEmptyParts);
+  for (QString &entry : out)
+    entry = entry.trimmed();
+  out.removeAll(QString());
+  return out;
+}
+
+QStringList desktopDataRoots() {
+  if (qEnvironmentVariableIsSet("SYNCHRO_DESKTOP_APP_DIRS"))
+    return qEnvironmentVariable("SYNCHRO_DESKTOP_APP_DIRS")
+        .split(QLatin1Char(':'), Qt::SkipEmptyParts);
+  QStringList roots;
+  const QString local = qEnvironmentVariable(
+      "XDG_DATA_HOME", QDir::home().filePath(QStringLiteral(".local/share")));
+  roots.append(QDir(local).filePath(QStringLiteral("applications")));
+  const QString system = qEnvironmentVariable(
+      "XDG_DATA_DIRS", QStringLiteral("/usr/local/share:/usr/share"));
+  for (const QString &root : system.split(QLatin1Char(':'), Qt::SkipEmptyParts))
+    roots.append(QDir(root).filePath(QStringLiteral("applications")));
+  roots.removeDuplicates();
+  return roots;
+}
+
+QStringList mimeAppsFiles(const QStringList &dataRoots) {
+  if (qEnvironmentVariableIsSet("SYNCHRO_MIMEAPPS_FILES"))
+    return qEnvironmentVariable("SYNCHRO_MIMEAPPS_FILES")
+        .split(QLatin1Char(':'), Qt::SkipEmptyParts);
+  QStringList files;
+  const QString configHome = qEnvironmentVariable(
+      "XDG_CONFIG_HOME", QDir::home().filePath(QStringLiteral(".config")));
+  files.append(QDir(configHome).filePath(QStringLiteral("mimeapps.list")));
+  const QString configDirs =
+      qEnvironmentVariable("XDG_CONFIG_DIRS", QStringLiteral("/etc/xdg"));
+  for (const QString &root :
+       configDirs.split(QLatin1Char(':'), Qt::SkipEmptyParts))
+    files.append(QDir(root).filePath(QStringLiteral("mimeapps.list")));
+  for (const QString &root : dataRoots)
+    files.append(QDir(root).filePath(QStringLiteral("mimeapps.list")));
+  files.removeDuplicates();
+  return files;
+}
+
+QString preferredDesktopId(const QString &mime, const QStringList &dataRoots) {
+  for (const QString &path : mimeAppsFiles(dataRoots)) {
+    if (!QFileInfo::exists(path))
+      continue;
+    QSettings settings(path, QSettings::IniFormat);
+    const QStringList ids = splitDesktopList(
+        settings.value(QStringLiteral("Default Applications/") + mime));
+    if (!ids.isEmpty())
+      return ids.constFirst();
+  }
+  return {};
+}
+
+QString desktopId(const QString &root, const QString &path) {
+  QString id = QDir(root).relativeFilePath(path);
+  id.replace(QLatin1Char('/'), QLatin1Char('-'));
+  return id;
+}
+
+QVector<DesktopOpenApp> desktopAppsFor(const QVector<Manifest::Item> &items) {
+  if (items.isEmpty())
+    return {};
+  const QString mime = items.constFirst().mime;
+  if (mime.isEmpty())
+    return {};
+  for (const Manifest::Item &item : items) {
+    if (item.mime != mime)
+      return {};
+  }
+
+  const QStringList roots = desktopDataRoots();
+  QStringList acceptedMimes{mime};
+  const QMimeType type = QMimeDatabase().mimeTypeForName(mime);
+  if (type.isValid())
+    acceptedMimes.append(type.allAncestors());
+  acceptedMimes.removeDuplicates();
+  QString preferred;
+  for (const QString &candidate : std::as_const(acceptedMimes)) {
+    preferred = preferredDesktopId(candidate, roots);
+    if (!preferred.isEmpty())
+      break;
+  }
+  QSet<QString> seen;
+  QVector<DesktopOpenApp> apps;
+  for (const QString &root : roots) {
+    if (!QFileInfo(root).isDir())
+      continue;
+    QDirIterator it(root, {QStringLiteral("*.desktop")}, QDir::Files,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+      const QString path = it.next();
+      const QString id = desktopId(root, path);
+      if (id.isEmpty() || seen.contains(id))
+        continue;
+      seen.insert(id);
+      QSettings entry(path, QSettings::IniFormat);
+      const QString group = QStringLiteral("Desktop Entry/");
+      // NoDisplay keeps an app out of launchers, not out of an explicit
+      // Open With chooser. Omarchy's swayimg/mpv entries rely on this.
+      if (entry.value(group + QStringLiteral("Type")).toString() !=
+              QLatin1String("Application") ||
+          entry.value(group + QStringLiteral("Hidden"), false).toBool())
+        continue;
+      const QStringList mimes =
+          splitDesktopList(entry.value(group + QStringLiteral("MimeType")));
+      bool matches = false;
+      for (const QString &candidate : std::as_const(acceptedMimes)) {
+        if (mimes.contains(candidate)) {
+          matches = true;
+          break;
+        }
+      }
+      if (!matches)
+        continue;
+      const QString tryExec =
+          entry.value(group + QStringLiteral("TryExec")).toString().trimmed();
+      if (!tryExec.isEmpty() &&
+          QStandardPaths::findExecutable(tryExec).isEmpty())
+        continue;
+      DesktopOpenApp app;
+      app.id = id;
+      app.desktopFile = path;
+      app.name = entry.value(group + QStringLiteral("Name")).toString();
+      app.comment = entry.value(group + QStringLiteral("Comment")).toString();
+      app.icon = entry.value(group + QStringLiteral("Icon")).toString();
+      app.preferred = id == preferred;
+      if (!app.name.isEmpty())
+        apps.append(app);
+    }
+  }
+  std::sort(apps.begin(), apps.end(),
+            [](const DesktopOpenApp &a, const DesktopOpenApp &b) {
+              if (a.preferred != b.preferred)
+                return a.preferred;
+              return a.name.localeAwareCompare(b.name) < 0;
+            });
+  if (apps.size() > 24)
+    apps.resize(24);
+  return apps;
+}
+
+QString aetherExecutable() {
+  if (qEnvironmentVariableIsSet("SYNCHRO_AETHER_BIN"))
+    return qEnvironmentVariable("SYNCHRO_AETHER_BIN");
+  return QStandardPaths::findExecutable(QStringLiteral("aether"));
+}
+
+bool isSingleImage(const QVector<Manifest::Item> &items) {
+  return items.size() == 1 && !items.constFirst().isDir &&
+         items.constFirst().mime.startsWith(QLatin1String("image/"));
+}
 
 } // namespace
 
@@ -396,8 +568,7 @@ Manifest::Item HostApi::inlineCurrentItem() const {
   // Extension matching is the same cheap path used by the initial listing;
   // MimeMap only sniffs content for extensionless files, which we deliberately
   // leave as a generic card here rather than blocking a cursor move.
-  if (item.mime.isEmpty() && m_mime &&
-      !QFileInfo(path).suffix().isEmpty())
+  if (item.mime.isEmpty() && m_mime && !QFileInfo(path).suffix().isEmpty())
     item.mime = m_mime->mimeForFile(path);
   return item;
 }
@@ -550,13 +721,11 @@ void HostApi::refreshInlinePreview() {
   previewStat.insert(QStringLiteral("isDir"), item.isDir);
   if (previewStat.value(QStringLiteral("name")).toString().isEmpty())
     previewStat.insert(QStringLiteral("name"), previewInfo.fileName());
-  if (!item.isDir &&
-      previewStat.value(QStringLiteral("size")).toLongLong() < 0)
+  if (!item.isDir && previewStat.value(QStringLiteral("size")).toLongLong() < 0)
     previewStat.insert(QStringLiteral("size"), previewInfo.size());
   if (previewStat.value(QStringLiteral("mtime")).toLongLong() <= 0)
-    previewStat.insert(
-        QStringLiteral("mtime"),
-        previewInfo.lastModified().toMSecsSinceEpoch());
+    previewStat.insert(QStringLiteral("mtime"),
+                       previewInfo.lastModified().toMSecsSinceEpoch());
 
   const QVariantMap sqlMeta = item.isDir && DirectoryModel::isSqlPath(item.path)
                                   ? m_model->sqlRowMetadata(item.path)
@@ -586,9 +755,8 @@ void HostApi::refreshInlinePreview() {
       if (rec.enabled && inlineKind.startsWith(QLatin1String("core-"))) {
         mode = inlineKind.mid(5);
         handlerId = rec.manifest.id;
-      } else if (rec.enabled &&
-                 (inlineKind == QLatin1String("quick-app") ||
-                  inlineKind == QLatin1String("safe"))) {
+      } else if (rec.enabled && (inlineKind == QLatin1String("quick-app") ||
+                                 inlineKind == QLatin1String("safe"))) {
         mode = QStringLiteral("rich");
         handlerId = rec.manifest.id;
       }
@@ -645,7 +813,8 @@ void HostApi::refreshInlinePreview() {
   // their source immediately; videos gain the expected poster once ready.
   if ((mode == QLatin1String("image") || mode == QLatin1String("video")) &&
       m_inlinePreviewStat.value(QStringLiteral("thumbnail"))
-          .toString().isEmpty() &&
+          .toString()
+          .isEmpty() &&
       !m_inlineThumbPending.contains(item.path)) {
     if (ThumbnailService *thumbs = m_model->thumbnailService()) {
       const qint64 mtime =
@@ -2173,6 +2342,28 @@ bool HostApi::runOpen(const QString &handlerId) {
   return true;
 }
 
+bool HostApi::renameDoTarget(const QString &newName) {
+  m_error.clear();
+  if (!m_ops) {
+    m_error = QStringLiteral("file operations are not available");
+    return false;
+  }
+  if (m_doItems.size() != 1 || m_doItems.constFirst().path.isEmpty()) {
+    m_error = QStringLiteral("rename needs one selected item");
+    return false;
+  }
+  if (newName == QFileInfo(m_doItems.constFirst().path).fileName())
+    return true;
+  m_ops->renamePath(m_doItems.constFirst().path, newName);
+  if (!m_ops->busy()) {
+    m_error = m_ops->errorString().isEmpty()
+                  ? QStringLiteral("rename did not start")
+                  : m_ops->errorString();
+    return false;
+  }
+  return true;
+}
+
 bool HostApi::runTerminal() {
   m_error.clear();
   close();
@@ -2344,6 +2535,7 @@ QVariantList HostApi::doVerbs() const {
     row.insert(QStringLiteral("group"), v.group);
     row.insert(QStringLiteral("provider"), v.provider);
     row.insert(QStringLiteral("providerId"), v.providerId);
+    row.insert(QStringLiteral("icon"), v.icon);
     row.insert(QStringLiteral("effect"), v.effect);
     row.insert(QStringLiteral("hasParams"), v.hasParams);
     out.append(row);
@@ -2446,6 +2638,37 @@ void HostApi::rebuildDoVerbs() {
     else
       open.description = QStringLiteral("Open each selected file.");
     m_doVerbs.append(open);
+
+    if (isSingleImage(items) && !aetherExecutable().isEmpty()) {
+      DoVerb aether;
+      aether.id = QStringLiteral("synchro.app.aether");
+      aether.name = QStringLiteral("Open in Aether");
+      aether.description = QStringLiteral(
+          "Load this image into Omarchy's visual theme workshop.");
+      aether.runtime = QStringLiteral("aether");
+      aether.group = QStringLiteral("open with");
+      aether.provider = QStringLiteral("Aether");
+      aether.icon = QStringLiteral("aether");
+      aether.effect = QStringLiteral("read");
+      m_doVerbs.append(aether);
+    }
+
+    for (const DesktopOpenApp &app : desktopAppsFor(items)) {
+      DoVerb desktop;
+      desktop.id = QStringLiteral("synchro.desktop.%1").arg(app.id);
+      desktop.name = QStringLiteral("Open in %1").arg(app.name);
+      desktop.description = app.comment.isEmpty()
+                                ? QStringLiteral("Open with %1.").arg(app.name)
+                                : app.comment;
+      desktop.runtime = QStringLiteral("desktop");
+      desktop.group = app.preferred ? QStringLiteral("default app")
+                                    : QStringLiteral("open with");
+      desktop.provider = QStringLiteral("APP");
+      desktop.providerId = app.desktopFile;
+      desktop.icon = app.icon;
+      desktop.effect = QStringLiteral("read");
+      m_doVerbs.append(desktop);
+    }
   }
 
   const QVector<HandlerRegistry::Match> actions =
@@ -2457,15 +2680,16 @@ void HostApi::rebuildDoVerbs() {
       return;
     if (m.id == QLatin1String("synchro.action.omaflow"))
       return;
+    if (m.id == QLatin1String("synchro.action.rename") &&
+        (virt || !m_ops || items.size() != 1))
+      return;
     DoVerb v;
     v.id = m.id;
     v.name = m.manifest.name;
     v.description = m.manifest.description;
     v.runtime = m.manifest.runtime(QStringLiteral("action"));
     v.provider = QStringLiteral("Synchro");
-    v.group = m.id == QLatin1String("synchro.action.open-with")
-                  ? QStringLiteral("open")
-                  : QStringLiteral("action");
+    v.group = QStringLiteral("action");
     v.hasParams =
         HandlerActions::classify(m.manifest, QStringLiteral("action")) ==
         HandlerActions::Kind::Qml;
@@ -2478,10 +2702,6 @@ void HostApi::rebuildDoVerbs() {
       v.effect = QStringLiteral("read");
     m_doVerbs.append(v);
   };
-  for (const auto &m : actions) {
-    if (m.id == QLatin1String("synchro.action.open-with"))
-      appendAction(m);
-  }
   for (const QVariant &value : flowMatches) {
     const QVariantMap flow = value.toMap();
     const QString ruleId = flow.value(QStringLiteral("id")).toString();
@@ -2961,6 +3181,62 @@ bool HostApi::runDoVerb() {
   const DoVerb v = m_doVerbs.at(m_doIndex);
   if (v.id == QLatin1String("synchro.do.open"))
     return commitDoItems();
+  if (v.runtime == QLatin1String("desktop")) {
+    const QString gio = QStandardPaths::findExecutable(QStringLiteral("gio"));
+    if (gio.isEmpty() || v.providerId.isEmpty()) {
+      m_error = QStringLiteral("desktop application launcher is unavailable");
+      return false;
+    }
+    QStringList args{QStringLiteral("launch"), v.providerId};
+    for (const Manifest::Item &item : std::as_const(m_doItems))
+      args.append(item.path);
+    if (!QProcess::startDetached(gio, args)) {
+      m_error = QStringLiteral("could not launch %1").arg(v.name);
+      return false;
+    }
+    closeAction();
+    return true;
+  }
+  if (v.runtime == QLatin1String("aether")) {
+    const QString executable = aetherExecutable();
+    if (executable.isEmpty() || !isSingleImage(m_doItems)) {
+      m_error = QStringLiteral("Aether is unavailable for this selection");
+      return false;
+    }
+    const QString path = m_doItems.constFirst().path;
+    const QString configHome = qEnvironmentVariable(
+        "XDG_CONFIG_HOME", QDir::home().filePath(QStringLiteral(".config")));
+    const QString socket =
+        QDir(configHome).filePath(QStringLiteral("aether/aether.sock"));
+    if (QFileInfo::exists(socket)) {
+      if (!QProcess::startDetached(executable,
+                                   {QStringLiteral("extract"), path})) {
+        m_error = QStringLiteral("could not send image to Aether");
+        return false;
+      }
+    } else {
+      if (!QProcess::startDetached(executable, {})) {
+        m_error = QStringLiteral("could not launch Aether");
+        return false;
+      }
+      auto *poll = new QTimer(this);
+      poll->setInterval(100);
+      auto attempts = std::make_shared<int>(0);
+      connect(poll, &QTimer::timeout, this,
+              [poll, attempts, socket, executable, path] {
+                ++*attempts;
+                if (!QFileInfo::exists(socket) && *attempts < 50)
+                  return;
+                poll->stop();
+                poll->deleteLater();
+                QProcess::startDetached(executable,
+                                        {QStringLiteral("extract"), path});
+              });
+      poll->start();
+    }
+    closeAction();
+    return true;
+  }
   if (v.runtime == QLatin1String("omaflow")) {
     const bool confirm = v.effect == QLatin1String("modify") ||
                          v.effect == QLatin1String("destructive") ||

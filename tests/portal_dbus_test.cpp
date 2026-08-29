@@ -996,6 +996,8 @@ void PortalDbusTest::chooserPathBarTabsAboveField() {
   auto *crumbs = window->findChild<QQuickItem *>(QStringLiteral("pathCrumbs"));
   auto *tabs = window->findChild<QQuickItem *>(QStringLiteral("locationTabs"));
   auto *disks = window->findChild<QQuickItem *>(QStringLiteral("diskTabs"));
+  auto *compactVolumes =
+      window->findChild<QQuickItem *>(QStringLiteral("compactVolumes"));
   auto *field =
       window->findChild<QQuickItem *>(QStringLiteral("chooserCommandField"));
   QVERIFY(bar);
@@ -1005,10 +1007,10 @@ void PortalDbusTest::chooserPathBarTabsAboveField() {
   QVERIFY(crumbs->y() + crumbs->height() <= tabs->y() + 1);
   QVERIFY(bar->y() + bar->height() <= field->y() + 1);
   QVERIFY(tabs->y() + tabs->height() <= field->y() + 1);
-  QVERIFY2(disks && disks->isVisible() && disks->width() > 8,
-           "disk strip must paint (volumes + mounts), not collapse to width 0");
-  QVERIFY(disks->y() + disks->height() <= tabs->y() + 1);
-  QVERIFY(disks->y() + 1 >= crumbs->y());
+  QVERIFY(disks);
+  QVERIFY(compactVolumes);
+  QVERIFY2(!disks->isVisible() && compactVolumes->isVisible(),
+           "compact chooser must replace the stacked disk rail with Volumes");
   QVERIFY2(crumbs->width() > window->width() * 0.45,
            "crumb row must keep the path");
   session->cancel();

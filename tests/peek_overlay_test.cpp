@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "DirectoryModel.h"
 #include "FileCatalog.h"
+#include "FileOpEngine.h"
 #include "FilterProxy.h"
 #include "HandlerLoader.h"
 #include "HandlerRegistry.h"
@@ -113,6 +114,13 @@ bool writePng(const QString &path) {
     return false;
   return f.write(reinterpret_cast<const char *>(kPng), sizeof(kPng)) ==
          qint64(sizeof(kPng));
+}
+
+bool writeTextFile(const QString &path, const QByteArray &body) {
+  QFile f(path);
+  if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    return false;
+  return f.write(body) == body.size();
 }
 
 } // namespace
@@ -848,7 +856,6 @@ void PeekOverlayTest::ctrlKClosesOpenWithOverlay() {
   registry.setConfigPath(tmp.filePath(QStringLiteral("handlers.json")));
   registry.setScanEnv(false);
   registry.scan();
-  QVERIFY(registry.contains(QStringLiteral("synchro.action.open-with")));
   HandlerLoader loader;
   XdgOpen xdg;
 
@@ -1445,32 +1452,31 @@ void PeekOverlayTest::standaloneLookFollowsSelectionAndMigrates() {
   // listing on the opposite side.
   const QPointF leftDrop =
       dropZones->mapToScene(QPointF(4, dropZones->height() / 2));
-  QVERIFY(QMetaObject::invokeMethod(
-      look, "dockDragStarted", Q_ARG(double, leftDrop.x()),
-      Q_ARG(double, leftDrop.y())));
-  QVERIFY(QMetaObject::invokeMethod(
-      look, "dockDragMoved", Q_ARG(double, leftDrop.x()),
-      Q_ARG(double, leftDrop.y())));
+  QVERIFY(QMetaObject::invokeMethod(look, "dockDragStarted",
+                                    Q_ARG(double, leftDrop.x()),
+                                    Q_ARG(double, leftDrop.y())));
+  QVERIFY(QMetaObject::invokeMethod(look, "dockDragMoved",
+                                    Q_ARG(double, leftDrop.x()),
+                                    Q_ARG(double, leftDrop.y())));
   QTRY_VERIFY_WITH_TIMEOUT(window->property("panelDragging").toBool(), 1000);
-  QVERIFY(QMetaObject::invokeMethod(
-      look, "dockDragFinished", Q_ARG(double, leftDrop.x()),
-      Q_ARG(double, leftDrop.y())));
+  QVERIFY(QMetaObject::invokeMethod(look, "dockDragFinished",
+                                    Q_ARG(double, leftDrop.x()),
+                                    Q_ARG(double, leftDrop.y())));
   QTRY_COMPARE_WITH_TIMEOUT(config.lookSide(), QStringLiteral("left"), 1000);
-  QTRY_VERIFY_WITH_TIMEOUT(look->x() < 1 &&
-                               listingLoader->x() >= look->width() - 1,
-                           1000);
+  QTRY_VERIFY_WITH_TIMEOUT(
+      look->x() < 1 && listingLoader->x() >= look->width() - 1, 1000);
 
   const QPointF topDrop =
       dropZones->mapToScene(QPointF(dropZones->width() / 2, 4));
-  QVERIFY(QMetaObject::invokeMethod(
-      look, "dockDragStarted", Q_ARG(double, topDrop.x()),
-      Q_ARG(double, topDrop.y())));
-  QVERIFY(QMetaObject::invokeMethod(
-      look, "dockDragMoved", Q_ARG(double, topDrop.x()),
-      Q_ARG(double, topDrop.y())));
-  QVERIFY(QMetaObject::invokeMethod(
-      look, "dockDragFinished", Q_ARG(double, topDrop.x()),
-      Q_ARG(double, topDrop.y())));
+  QVERIFY(QMetaObject::invokeMethod(look, "dockDragStarted",
+                                    Q_ARG(double, topDrop.x()),
+                                    Q_ARG(double, topDrop.y())));
+  QVERIFY(QMetaObject::invokeMethod(look, "dockDragMoved",
+                                    Q_ARG(double, topDrop.x()),
+                                    Q_ARG(double, topDrop.y())));
+  QVERIFY(QMetaObject::invokeMethod(look, "dockDragFinished",
+                                    Q_ARG(double, topDrop.x()),
+                                    Q_ARG(double, topDrop.y())));
   QTRY_COMPARE_WITH_TIMEOUT(config.lookSide(), QStringLiteral("top"), 1000);
   QTRY_VERIFY_WITH_TIMEOUT(look->width() >= window->width() - 1 &&
                                listingLoader->y() >=
@@ -1525,8 +1531,8 @@ void PeekOverlayTest::standaloneLookFollowsSelectionAndMigrates() {
   auto *fsnView = window->findChild<QQuickItem *>(QStringLiteral("fileFsn"));
   QVERIFY(fsnView);
   QVERIFY(QMetaObject::invokeMethod(
-      fsnView, "selectPath", Q_ARG(QVariant, nested3d),
-      Q_ARG(QVariant, false), Q_ARG(QVariant, 0), Q_ARG(QVariant, false),
+      fsnView, "selectPath", Q_ARG(QVariant, nested3d), Q_ARG(QVariant, false),
+      Q_ARG(QVariant, 0), Q_ARG(QVariant, false),
       Q_ARG(QVariant, QStringLiteral("inside.txt")), Q_ARG(QVariant, 7)));
   QTRY_COMPARE_WITH_TIMEOUT(host.inlinePreviewPath(), nested3d, 2000);
   QCOMPARE(selection.selectedPaths(), QStringList{nested3d});
@@ -1547,8 +1553,8 @@ void PeekOverlayTest::standaloneLookFollowsSelectionAndMigrates() {
                             2000);
   QCOMPARE(host.inlinePreviewStat().value(QStringLiteral("mime")).toString(),
            QStringLiteral("image/png"));
-  QVERIFY(!host.inlinePreviewStat().value(QStringLiteral("uri")).toUrl()
-               .isEmpty());
+  QVERIFY(
+      !host.inlinePreviewStat().value(QStringLiteral("uri")).toUrl().isEmpty());
 
   const QString nestedVideo =
       tmp.filePath(QStringLiteral("folder/media/inside.mp4"));
@@ -1567,8 +1573,8 @@ void PeekOverlayTest::standaloneLookFollowsSelectionAndMigrates() {
                             2000);
   QCOMPARE(host.inlinePreviewStat().value(QStringLiteral("mime")).toString(),
            QStringLiteral("video/mp4"));
-  QVERIFY(QDir(tmp.filePath(QStringLiteral("folder/media")))
-              .removeRecursively());
+  QVERIFY(
+      QDir(tmp.filePath(QStringLiteral("folder/media"))).removeRecursively());
 
   selection.click(noteRow);
   QCOMPARE(selection.selectedPaths(),
@@ -2081,9 +2087,8 @@ void PeekOverlayTest::folderPeekFileBackKeepsListingAndScroll() {
   list->forceActiveFocus();
   QVERIFY(QTest::qWaitFor([&] { return list->hasActiveFocus(); }, 1000));
 
-  QVERIFY(
-      keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier,
-                         QStringLiteral(" ")));
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier,
+                             QStringLiteral(" ")));
   QVERIFY(hostApi.folderPeek());
   QVERIFY(QTest::qWaitFor(
       [&] {
@@ -2500,9 +2505,8 @@ void PeekOverlayTest::rootFilePeekShowsIndexAndQCloses() {
   window->show();
   QVERIFY(QTest::qWaitForWindowExposed(window));
 
-  QVERIFY(
-      keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier,
-                         QStringLiteral(" ")));
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier,
+                             QStringLiteral(" ")));
   QVERIFY(hostApi.isOpen());
   QVERIFY(!hostApi.folderPeek());
   QCOMPARE(hostApi.peekProxy(), static_cast<QObject *>(&proxy));
@@ -2576,9 +2580,8 @@ void PeekOverlayTest::gridPeekIndexUsesThumbs() {
   window->show();
   QVERIFY(QTest::qWaitForWindowExposed(window));
 
-  QVERIFY(
-      keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier,
-                         QStringLiteral(" ")));
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier,
+                             QStringLiteral(" ")));
   QVERIFY(hostApi.isOpen());
   QVERIFY(hostApi.gridMode());
 
@@ -2664,9 +2667,8 @@ void PeekOverlayTest::emptyFolderShowsHintInRootAndPeek() {
   const int row = findProxy(proxy, QStringLiteral("hollow"));
   QVERIFY(row >= 0);
   proxy.setCurrentIndex(row);
-  QVERIFY(
-      keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier,
-                         QStringLiteral(" ")));
+  QVERIFY(keys.handleListKey(Qt::Key_Space, Qt::ShiftModifier,
+                             QStringLiteral(" ")));
   QVERIFY(hostApi.isOpen());
   QVERIFY(hostApi.folderPeek());
   QVERIFY(QTest::qWaitFor(
@@ -2839,12 +2841,10 @@ void PeekOverlayTest::doLayerVerbsKeysAndCopyAs() {
     ids.append(m.value(QStringLiteral("id")).toString());
   }
   QVERIFY(ids.contains(QStringLiteral("synchro.do.open")));
-  QVERIFY(ids.contains(QStringLiteral("synchro.action.open-with")));
+  QVERIFY(!ids.contains(QStringLiteral("synchro.action.open-with")));
   QVERIFY(ids.contains(QStringLiteral("synchro.action.copy-as")));
   QVERIFY(ids.contains(QStringLiteral("synchro.action.trash")));
   QCOMPARE(ids.constFirst(), QStringLiteral("synchro.do.open"));
-  QVERIFY(ids.indexOf(QStringLiteral("synchro.action.open-with")) <
-          ids.indexOf(QStringLiteral("synchro.action.copy-as")));
   QCOMPARE(hostApi.doIndex(), 0);
   QCOMPARE(hostApi.doBriefTitle(), QStringLiteral("Open"));
   QVERIFY(!hostApi.doHasParams());
@@ -2857,8 +2857,6 @@ void PeekOverlayTest::doLayerVerbsKeysAndCopyAs() {
   QVERIFY(keys.handleListKey(Qt::Key_S, Qt::NoModifier, QStringLiteral("s")));
   QCOMPARE(proxy.currentIndex(), listing);
   QCOMPARE(hostApi.doIndex(), 1);
-  QVERIFY(hostApi.doHasParams());
-  QVERIFY(hostApi.actionItem());
 
   QVERIFY(hostApi.openDoLayer(QStringLiteral("synchro.action.copy-as")));
   QCOMPARE(hostApi.doBriefTitle(), QStringLiteral("Copy path"));
@@ -2984,11 +2982,34 @@ void PeekOverlayTest::doLayerOffersOnlyMatchingOmaflows() {
 
 void PeekOverlayTest::doLayerOverlaySplitChrome() {
   ScopedEnvironment homeGuard("SYNCHRO_HOME");
+  ScopedEnvironment desktopGuard("SYNCHRO_DESKTOP_APP_DIRS");
+  ScopedEnvironment mimeAppsGuard("SYNCHRO_MIMEAPPS_FILES");
+  ScopedEnvironment aetherGuard("SYNCHRO_AETHER_BIN");
   QTemporaryDir home;
   QTemporaryDir tmp;
+  QTemporaryDir desktopData;
   QVERIFY(home.isValid());
   QVERIFY(tmp.isValid());
+  QVERIFY(desktopData.isValid());
   qputenv("SYNCHRO_HOME", QFile::encodeName(home.path()));
+  const QString applications =
+      desktopData.filePath(QStringLiteral("applications"));
+  QVERIFY(QDir().mkpath(applications));
+  const QString painterDesktop =
+      QDir(applications).filePath(QStringLiteral("test-painter.desktop"));
+  QVERIFY(writeTextFile(
+      painterDesktop,
+      QByteArrayLiteral("[Desktop Entry]\nType=Application\n"
+                        "Name=Test Painter\nIcon=image-x-generic\n"
+                        "Exec=/bin/true %F\nMimeType=image/png;\n")));
+  const QString mimeApps =
+      desktopData.filePath(QStringLiteral("mimeapps.list"));
+  QVERIFY(writeTextFile(
+      mimeApps, QByteArrayLiteral("[Default Applications]\n"
+                                  "image/png=test-painter.desktop;\n")));
+  qputenv("SYNCHRO_DESKTOP_APP_DIRS", QFile::encodeName(applications));
+  qputenv("SYNCHRO_MIMEAPPS_FILES", QFile::encodeName(mimeApps));
+  qputenv("SYNCHRO_AETHER_BIN", QByteArrayLiteral("/bin/true"));
   QVERIFY(writePng(tmp.filePath(QStringLiteral("a.png"))));
 
   DirectoryModel model;
@@ -3021,6 +3042,9 @@ void PeekOverlayTest::doLayerOverlaySplitChrome() {
   ThumbImageProvider::install(&engine);
   HostApi hostApi(&model, &proxy, &nav, &registry, &loader, &xdg, &mimeMap,
                   &engine);
+  FileOpEngine fileOps;
+  fileOps.setDirectoryModel(&model);
+  hostApi.setFileOps(&fileOps);
   hostApi.setFileCatalog(&catalog);
   keys.setPeekHost(&hostApi);
   QObject::connect(&keys, &KeyMachine::openWithRequested, &hostApi,
@@ -3041,21 +3065,31 @@ void PeekOverlayTest::doLayerOverlaySplitChrome() {
   window->show();
   QVERIFY(QTest::qWaitForWindowExposed(window));
 
-  QVERIFY2(hostApi.openDoLayer(QStringLiteral("synchro.action.open-with")),
+  QVERIFY2(hostApi.openDoLayer(QStringLiteral("synchro.action.rename")),
            qPrintable(hostApi.lastError()));
+  const QVariantList verbs = hostApi.doVerbs();
+  QCOMPARE(verbs.at(1).toMap().value(QStringLiteral("id")).toString(),
+           QStringLiteral("synchro.app.aether"));
+  QCOMPARE(verbs.at(2).toMap().value(QStringLiteral("name")).toString(),
+           QStringLiteral("Open in Test Painter"));
+  QCOMPARE(verbs.at(2).toMap().value(QStringLiteral("group")).toString(),
+           QStringLiteral("default app"));
   QVERIFY(QTest::qWaitFor([&] { return hostApi.actionOpen(); }, 2000));
   auto *frame = window->findChild<QQuickItem *>(QStringLiteral("doOverlay"));
   QVERIFY(frame);
   QVERIFY(frame->isVisible());
   auto *brief = window->findChild<QQuickItem *>(QStringLiteral("doBriefTitle"));
   QVERIFY(brief);
-  QCOMPARE(brief->property("text").toString(), QStringLiteral("Open with…"));
+  QCOMPARE(brief->property("text").toString(), QStringLiteral("Rename"));
   QVERIFY2(hostApi.doHasParams(), qPrintable(hostApi.lastError()));
   auto *params = hostApi.actionItem();
   QVERIFY2(params, qPrintable(hostApi.lastError().isEmpty()
                                   ? QStringLiteral("no mounted params QML")
                                   : hostApi.lastError()));
-  QVERIFY(params->findChild<QQuickItem *>(QStringLiteral("openWithList")));
+  auto *renameInput =
+      params->findChild<QQuickItem *>(QStringLiteral("doRenameInput"));
+  QVERIFY(renameInput);
+  QTRY_VERIFY_WITH_TIMEOUT(renameInput->hasActiveFocus(), 1000);
   auto *surface =
       window->findChild<QQuickItem *>(QStringLiteral("doParamSurface"));
   QVERIFY(surface);
@@ -3083,6 +3117,13 @@ void PeekOverlayTest::doLayerOverlaySplitChrome() {
                .value(QStringLiteral("palette"))
                .toList()
                .isEmpty());
+  renameInput->setProperty("text", QStringLiteral("renamed.png"));
+  QVariant renamed;
+  QVERIFY(QMetaObject::invokeMethod(params, "commit", Qt::DirectConnection,
+                                    Q_RETURN_ARG(QVariant, renamed)));
+  QVERIFY(renamed.toBool());
+  QTRY_VERIFY_WITH_TIMEOUT(!fileOps.busy(), 3000);
+  QVERIFY(QFileInfo::exists(tmp.filePath(QStringLiteral("renamed.png"))));
 }
 
 void PeekOverlayTest::doLayerShowsFilePreviewAndFolderGrid() {
@@ -3261,8 +3302,8 @@ void PeekOverlayTest::scrollChromeTracksAndMovesLongListings() {
                        QStringLiteral("/qml"));
   QQmlComponent component(&engine);
   const QUrl base = QUrl::fromLocalFile(
-      QFileInfo(QStringLiteral(SYNCHRO_MAIN_QML))
-          .absolutePath() + QStringLiteral("/ScrollChromeHarness.qml"));
+      QFileInfo(QStringLiteral(SYNCHRO_MAIN_QML)).absolutePath() +
+      QStringLiteral("/ScrollChromeHarness.qml"));
   component.setData(R"QML(
 import QtQuick
 import "."
@@ -3292,14 +3333,16 @@ Item {
   std::unique_ptr<QObject> instance(component.create());
   QVERIFY2(instance, qPrintable(component.errorString()));
 
-  auto *listing = instance->findChild<QQuickItem *>(
-      QStringLiteral("scrollTestListing"));
-  auto *chrome = instance->findChild<QQuickItem *>(
-      QStringLiteral("scrollTestChrome"));
-  auto *track = instance->findChild<QQuickItem *>(QStringLiteral("scrollTrack"));
-  auto *thumb = instance->findChild<QQuickItem *>(QStringLiteral("scrollThumb"));
-  auto *hit = instance->findChild<QQuickItem *>(
-      QStringLiteral("scrollTrackHitTarget"));
+  auto *listing =
+      instance->findChild<QQuickItem *>(QStringLiteral("scrollTestListing"));
+  auto *chrome =
+      instance->findChild<QQuickItem *>(QStringLiteral("scrollTestChrome"));
+  auto *track =
+      instance->findChild<QQuickItem *>(QStringLiteral("scrollTrack"));
+  auto *thumb =
+      instance->findChild<QQuickItem *>(QStringLiteral("scrollThumb"));
+  auto *hit =
+      instance->findChild<QQuickItem *>(QStringLiteral("scrollTrackHitTarget"));
   QVERIFY(listing);
   QVERIFY(chrome);
   QVERIFY(track);
@@ -3354,14 +3397,34 @@ void PeekOverlayTest::pathBarTabsSitAboveCommandField() {
   auto *crumbs = window->findChild<QQuickItem *>(QStringLiteral("pathCrumbs"));
   auto *tabs = window->findChild<QQuickItem *>(QStringLiteral("locationTabs"));
   auto *field = window->findChild<QQuickItem *>(QStringLiteral("commandField"));
+  auto *kind = window->findChild<QQuickItem *>(QStringLiteral("kindChips"));
+  auto *views = window->findChild<QQuickItem *>(QStringLiteral("viewControl"));
+  auto *look =
+      window->findChild<QQuickItem *>(QStringLiteral("browserLookToggle"));
   QVERIFY(bar);
   QVERIFY(crumbs);
   QVERIFY(tabs);
   QVERIFY(field);
+  QVERIFY(kind);
+  QVERIFY(views);
+  QVERIFY(look);
   QVERIFY(crumbs->y() + crumbs->height() <= tabs->y() + 1);
   QVERIFY(bar->y() + bar->height() <= field->y() + 1);
   QVERIFY(tabs->y() + tabs->height() <= field->y() + 1);
   QVERIFY(crumbs->width() > window->width() * 0.6);
+  QVERIFY(bar->property("compactTabs").toBool());
+  QVERIFY(field->property("compactChrome").toBool());
+  QVERIFY(field->property("tightChrome").toBool());
+  QVERIFY(!kind->isVisible());
+  QVERIFY(views->isVisible());
+  QCOMPARE(views->property("options").toList().size(), 2);
+  QVERIFY(look->isVisible());
+
+  window->resize(1100, 500);
+  QTRY_VERIFY_WITH_TIMEOUT(!bar->property("compactTabs").toBool(), 1000);
+  QTRY_VERIFY_WITH_TIMEOUT(!field->property("compactChrome").toBool(), 1000);
+  QVERIFY(kind->isVisible());
+  QCOMPARE(views->property("options").toList().size(), 4);
 }
 
 void PeekOverlayTest::fileGridCellsFillWidth() {
@@ -3471,8 +3534,7 @@ void PeekOverlayTest::gridArrowsTrackRenderedGeometryAcrossRelayout() {
   engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
                                            &proxy);
   engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
-  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"),
-                                           &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
   engine.rootContext()->setContextProperty(QStringLiteral("selectionModel"),
                                            &selection);
   engine.rootContext()->setContextProperty(QStringLiteral("appConfig"),
@@ -3503,8 +3565,7 @@ void PeekOverlayTest::gridArrowsTrackRenderedGeometryAcrossRelayout() {
   auto moveDownFrom = [&](int row) {
     keys.moveGridCursorTo(row);
     int expected = -1;
-    QTRY_VERIFY_WITH_TIMEOUT((expected = renderedTarget(row, 0, 1)) >= 0,
-                             1000);
+    QTRY_VERIFY_WITH_TIMEOUT((expected = renderedTarget(row, 0, 1)) >= 0, 1000);
     grid->forceActiveFocus();
     QVERIFY(QTest::qWaitFor([&] { return grid->hasActiveFocus(); }, 1000));
     QTest::keyClick(window, Qt::Key_Down);
@@ -3570,8 +3631,7 @@ void PeekOverlayTest::locationCloseConsumesClick() {
   engine.rootContext()->setContextProperty(QStringLiteral("filterProxy"),
                                            &proxy);
   engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
-  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"),
-                                           &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
   engine.rootContext()->setContextProperty(QStringLiteral("locationChips"),
                                            &chips);
   engine.rootContext()->setContextProperty(QStringLiteral("appConfig"),
@@ -3587,13 +3647,15 @@ void PeekOverlayTest::locationCloseConsumesClick() {
 
   const QString originalPath = QFileInfo(model.path()).canonicalFilePath();
   QQuickItem *pinRemove = nullptr;
-  QTRY_VERIFY_WITH_TIMEOUT([&] {
-    const auto hits = visualNamed(
-        window->contentItem(),
-        QStringLiteral("remove:") + LocationChips::pinId(pinned));
-    pinRemove = hits.isEmpty() ? nullptr : hits.first();
-    return pinRemove != nullptr;
-  }(), 1000);
+  QTRY_VERIFY_WITH_TIMEOUT(
+      [&] {
+        const auto hits = visualNamed(window->contentItem(),
+                                      QStringLiteral("remove:") +
+                                          LocationChips::pinId(pinned));
+        pinRemove = hits.isEmpty() ? nullptr : hits.first();
+        return pinRemove != nullptr;
+      }(),
+      1000);
   QPointF scene = pinRemove->mapToScene(
       QPointF(pinRemove->width() / 2, pinRemove->height() / 2));
   QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, scene.toPoint());
@@ -3602,19 +3664,36 @@ void PeekOverlayTest::locationCloseConsumesClick() {
 
   QSignalSpy bookmarkActivated(&chips, &LocationChips::sqlBookmarkActivated);
   QQuickItem *bookmarkRemove = nullptr;
-  QTRY_VERIFY_WITH_TIMEOUT([&] {
-    const auto hits = visualNamed(
-        window->contentItem(), QStringLiteral("remove:") +
-                                   LocationChips::sqlBookmarkId(bookmarkId));
-    bookmarkRemove = hits.isEmpty() ? nullptr : hits.first();
-    return bookmarkRemove != nullptr;
-  }(), 1000);
+  QTRY_VERIFY_WITH_TIMEOUT(
+      [&] {
+        const auto hits =
+            visualNamed(window->contentItem(),
+                        QStringLiteral("remove:") +
+                            LocationChips::sqlBookmarkId(bookmarkId));
+        bookmarkRemove = hits.isEmpty() ? nullptr : hits.first();
+        return bookmarkRemove != nullptr;
+      }(),
+      1000);
   scene = bookmarkRemove->mapToScene(
       QPointF(bookmarkRemove->width() / 2, bookmarkRemove->height() / 2));
   QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, scene.toPoint());
   QTRY_VERIFY_WITH_TIMEOUT(config.sqlBookmarks().isEmpty(), 1000);
   QCOMPARE(bookmarkActivated.count(), 0);
   QCOMPARE(QFileInfo(model.path()).canonicalFilePath(), originalPath);
+
+  // A compact window replaces the entire stacked disk rail with one Volumes
+  // affordance, preserving the route without spending another row of chrome.
+  window->resize(480, 480);
+  auto *pathBar = window->findChild<QQuickItem *>(QStringLiteral("pathBar"));
+  auto *diskTabs = window->findChild<QQuickItem *>(QStringLiteral("diskTabs"));
+  auto *compactVolumes =
+      window->findChild<QQuickItem *>(QStringLiteral("compactVolumes"));
+  QVERIFY(pathBar);
+  QVERIFY(diskTabs);
+  QVERIFY(compactVolumes);
+  QTRY_VERIFY_WITH_TIMEOUT(pathBar->property("compactDisks").toBool(), 1000);
+  QVERIFY(!diskTabs->isVisible());
+  QVERIFY(compactVolumes->isVisible());
 }
 
 void PeekOverlayTest::searchGridCellsMatchRows() {

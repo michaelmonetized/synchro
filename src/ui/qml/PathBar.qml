@@ -17,6 +17,8 @@ Item {
     readonly property var volumesChip: root.locationChips ? root.locationChips.volumesChip : ({})
     readonly property bool hasDisks: (root.diskChips && root.diskChips.length > 0) ||
                                      !!(root.volumesChip && root.volumesChip.id)
+    readonly property bool compactTabs: width < Theme.space(760)
+    readonly property bool compactDisks: root.hasDisks && root.compactTabs
 
     readonly property int crumbH: Theme.controlHeight + Theme.spaceMD
     readonly property int tabH: Theme.controlHeight
@@ -33,7 +35,8 @@ Item {
                                           root.brandFits(root.brandMarkWidth,
                                                          Theme.space(120))
     readonly property bool disksInline: {
-        if (!root.hasDisks || diskRow.width <= 0 || crumbLine.width <= 0)
+        if (!root.hasDisks || root.compactDisks || diskRow.width <= 0 ||
+                crumbLine.width <= 0)
             return false
         var need = navControls.implicitWidth + Theme.space(20) + crumbRow.width +
                    Theme.space(24) + diskRow.width
@@ -41,7 +44,8 @@ Item {
     }
 
     implicitHeight: crumbLine.height +
-                    (root.hasDisks && !root.disksInline ? diskStrip.height : 0) +
+                    (root.hasDisks && !root.disksInline && !root.compactDisks
+                     ? diskStrip.height : 0) +
                     tabLine.height
 
     function scrollCrumbsToEnd() {
@@ -58,6 +62,8 @@ Item {
         var rightLimit = crumbLine.width - Theme.space(8)
         if (root.disksInline)
             rightLimit -= diskStrip.width + Theme.spaceSM
+        else if (root.compactDisks)
+            rightLimit -= Theme.controlHeight + Theme.spaceLG
 
         return candidateLeft >= crumbStart + minimumCrumbWidth &&
                candidateRight <= rightLimit
@@ -105,6 +111,15 @@ Item {
         return "folder-symbolic"
     }
 
+    function openVolumes() {
+        if (root.locationChips && root.volumesChip && root.volumesChip.id) {
+            root.locationChips.activate(root.volumesChip.id)
+            return
+        }
+        if (root.navStack)
+            root.navStack.navigate("volumes://")
+    }
+
     Rectangle {
         anchors.fill: parent
         color: Theme.darkBackground
@@ -119,6 +134,8 @@ Item {
         property bool titleTab: false
         property bool removable: false
         property var flick: null
+        readonly property bool labelVisible: !root.compactTabs ||
+                                             tab.current || tab.titleTab
         signal activated()
         signal removeRequested()
 
@@ -160,6 +177,8 @@ Item {
 
             Text {
                 id: tabLabel
+                objectName: "locationLabel:" + tab.tabId
+                visible: tab.labelVisible
                 anchors.verticalCenter: parent.verticalCenter
                 text: tab.label
                 color: tab.current || tabHover.hovered ? Theme.brightForeground
@@ -173,7 +192,7 @@ Item {
             Text {
                 id: removeGlyph
                 objectName: "remove:" + tab.tabId
-                visible: tab.removable
+                visible: tab.removable && (!root.compactTabs || tab.current)
                 opacity: tabHover.hovered ? 1 : 0
                 text: "×"
                 color: Theme.muted
@@ -194,6 +213,14 @@ Item {
 
         HoverHandler {
             id: tabHover
+        }
+
+        ToolTip {
+            shown: tabHover.hovered && !tab.labelVisible
+            label: tab.removable
+                   ? tab.label + "  ·  middle-click to unpin"
+                   : tab.label
+            anchorItem: tab
         }
 
         MouseArea {
@@ -275,9 +302,11 @@ Item {
             anchors.right: synchroBrand.visible ? synchroBrand.left : parent.right
             anchors.rightMargin: synchroBrand.visible
                                  ? Theme.spaceLG
+                                 : (compactVolumes.visible
+                                    ? Theme.controlHeight + Theme.spaceLG
                                  : (root.disksInline
                                     ? diskStrip.width + Theme.space(8)
-                                    : Theme.space(8))
+                                    : Theme.space(8)))
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             clip: true
@@ -443,12 +472,30 @@ Item {
                 }
             }
         }
+
+
+        ChromeButton {
+            id: compactVolumes
+            objectName: "compactVolumes"
+            visible: root.compactDisks
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.spaceLG
+            anchors.verticalCenter: parent.verticalCenter
+            width: Theme.controlHeight
+            height: Theme.controlHeight
+            compact: true
+            iconName: "drive-harddisk-symbolic"
+            fallbackGlyph: "◉"
+            checked: !!(root.volumesChip && root.volumesChip.active)
+            toolTip: "Volumes"
+            onTriggered: root.openVolumes()
+        }
     }
 
     Item {
         id: diskStrip
         objectName: "diskTabs"
-        visible: root.hasDisks
+        visible: root.hasDisks && !root.compactDisks
         z: 2
         implicitWidth: diskRow.width
         height: root.disksInline ? root.crumbH : root.tabH
@@ -655,7 +702,7 @@ Item {
         },
         State {
             name: "disksStacked"
-            when: root.hasDisks && !root.disksInline
+            when: root.hasDisks && !root.disksInline && !root.compactDisks
             AnchorChanges {
                 target: diskStrip
                 anchors.top: crumbLine.bottom
@@ -668,8 +715,8 @@ Item {
             }
         },
         State {
-            name: "noDisks"
-            when: !root.hasDisks
+            name: "noDisksOrCompact"
+            when: !root.hasDisks || root.compactDisks
             AnchorChanges {
                 target: tabLine
                 anchors.top: crumbLine.bottom
@@ -677,7 +724,13 @@ Item {
         }
     ]
 
-    onSegmentsChanged: Qt.callLater(root.scrollCrumbsToEnd)
-    onPlaceChipsChanged: Qt.callLater(function () { root.clampFlick(tabFlick) })
-    onDiskChipsChanged: Qt.callLater(function () { root.clampFlick(diskFlick) })
+    onSegmentsChanged: Qt.callLater(function () {
+        if (root) root.scrollCrumbsToEnd()
+    })
+    onPlaceChipsChanged: Qt.callLater(function () {
+        if (root) root.clampFlick(tabFlick)
+    })
+    onDiskChipsChanged: Qt.callLater(function () {
+        if (root) root.clampFlick(diskFlick)
+    })
 }

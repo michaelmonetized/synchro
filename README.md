@@ -150,8 +150,10 @@ double-click in Peek is the same commit as the root listing.
 **Do-layer.** Ctrl+Enter and right-click open the same sticky surface. Actions
 on the left, look box on the right (file preview, or a large folder mosaic).
 If the action has QML params, they mount under the look box — format picks,
-open-with list, whatever the handler shipped. `W`/`S` change verbs. `A`/`D`
-hop verbs ↔ params (or the preview). Enter runs. Esc / Q leave.
+rename editor, whatever the handler shipped. Compatible XDG applications are
+listed directly as actions, with the configured default first; images also get
+an Omarchy-native **Open in Aether** action. `W`/`S` change verbs. `A`/`D` hop
+verbs ↔ params (or the preview). Enter runs. Esc / Q leave.
 
 ## Extend it
 
@@ -480,7 +482,8 @@ and a Synchro manifest, not a Nautilus Python extension.
 | `synchro.open.xdg` | open | `xdg-open` fallback |
 | `synchro.open.omawrite` | open | Markdown → Omawrite |
 | `synchro.open.omacut` | open | Video → Omacut |
-| `synchro.action.open-with` | action | App picker, mounted as do-layer params |
+| XDG desktop applications | action | Matching apps are enumerated directly in the Action Deck |
+| `synchro.action.rename` | action | Inline, extension-aware rename editor |
 | `synchro.action.copy-as` | action | Copy path / URI / name (QML params) |
 | `synchro.action.trash` | action | Core trash verb |
 | `synchro.action.terminal` | action | `xdg-terminal-exec --dir=%d` |

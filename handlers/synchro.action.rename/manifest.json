@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.action.rename",
+  "name": "Rename",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Rename this item without leaving the Action Deck.",
+  "kinds": ["action"],
+  "priority": 65,
+  "match": {
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {
+    "action": "Params.qml"
+  },
+  "action": {
+    "runtime": "inprocess",
+    "title": "Rename"
+  }
+}

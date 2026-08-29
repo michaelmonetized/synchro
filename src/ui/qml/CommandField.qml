@@ -29,6 +29,33 @@ Item {
                                        keyMachine.mode !== "field-filter" &&
                                        keyMachine.mode !== "field-command" &&
                                        keyMachine.mode !== "field-jump"
+    // The command rail keeps the input and ordinary 2D views first. Rich
+    // labels, 3D modes, type filters, and agent entry progressively disclose
+    // as room appears instead of squeezing the field or wrapping chrome.
+    readonly property bool compactChrome: width < Theme.space(760)
+    readonly property bool tightChrome: width < Theme.space(620)
+    readonly property bool roomyChrome: width >= Theme.space(920)
+    readonly property var visibleViews: compactChrome
+                                        ? [
+                                            { id: "list", label: "List",
+                                              icon: "view-list-symbolic", glyph: "☷",
+                                              tip: "List view  ·  Ctrl+1" },
+                                            { id: "grid", label: "Grid",
+                                              icon: "view-grid-symbolic", glyph: "▦",
+                                              tip: "Grid view  ·  Ctrl+2" }
+                                          ]
+                                        : [
+                                            { id: "list", label: "List",
+                                              icon: "view-list-symbolic", glyph: "☷",
+                                              tip: "List view  ·  Ctrl+1" },
+                                            { id: "grid", label: "Grid",
+                                              icon: "view-grid-symbolic", glyph: "▦",
+                                              tip: "Grid view  ·  Ctrl+2" },
+                                            { id: "tree", label: "StrataV", glyph: "Y",
+                                              tip: "StrataV 3D landscape  ·  Ctrl+M" },
+                                            { id: "map", label: "MapV", glyph: "▱",
+                                              tip: "MapV 3D view  ·  M from StrataV" }
+                                          ]
 
     implicitHeight: Theme.controlHeight + Theme.spaceLG * 2
 
@@ -105,9 +132,9 @@ Item {
         SegmentedControl {
             id: kindChips
             objectName: "kindChips"
-            visible: root.viewToggle && !!root.filterProxy &&
+            visible: !root.tightChrome && root.viewToggle && !!root.filterProxy &&
                      !(root.keyMachine && root.keyMachine.fsnMode)
-            showLabels: root.width >= Theme.space(700)
+            showLabels: root.roomyChrome
             currentId: root.filterProxy ? root.filterProxy.kindFilter : "all"
             options: [
                 { id: "all", label: "All", glyph: "◆", tip: "Show files and folders" },
@@ -124,24 +151,15 @@ Item {
             visible: root.viewToggle
             showLabels: false
             currentId: root.currentViewId()
-            options: [
-                { id: "list", label: "List", icon: "view-list-symbolic", glyph: "☷",
-                  tip: "List view  ·  V" },
-                { id: "grid", label: "Grid", icon: "view-grid-symbolic", glyph: "▦",
-                  tip: "Grid view  ·  V" },
-                { id: "tree", label: "StrataV", glyph: "Y",
-                  tip: "StrataV 3D landscape  ·  Ctrl+M" },
-                { id: "map", label: "MapV", glyph: "▱",
-                  tip: "MapV 3D view  ·  M from StrataV" }
-            ]
+            options: root.visibleViews
             onActivated: function(id) { root.activateView(id) }
         }
 
         ChromeButton {
             objectName: "browserAgentFind"
-            visible: root.agentAvailable && root.viewToggle
+            visible: !root.tightChrome && root.agentAvailable && root.viewToggle
             height: Theme.controlHeight
-            label: root.width >= Theme.space(760) ? "Find" : ""
+            label: root.roomyChrome ? "Find" : ""
             fallbackGlyph: "✦"
             toolTip: "Find files with Omarchy's default agent  ·  :ask"
             onTriggered: root.agentRequested()
@@ -151,7 +169,7 @@ Item {
             objectName: "browserLookToggle"
             visible: root.lookAvailable && root.viewToggle
             height: Theme.controlHeight
-            label: root.width >= Theme.space(660) ? "Look" : ""
+            label: root.roomyChrome ? "Look" : ""
             iconName: "xsi-preview-symbolic"
             fallbackGlyph: "◫"
             checked: root.lookOpen
@@ -166,7 +184,7 @@ Item {
 
         Rectangle {
             id: modePill
-            visible: root.modeLabel().length > 0
+            visible: root.roomyChrome && root.modeLabel().length > 0
             height: Theme.controlHeight
             width: Math.min(Theme.space(210), modeText.implicitWidth + Theme.controlPaddingX * 2)
             color: Theme.focusFill

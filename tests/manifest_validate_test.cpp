@@ -112,11 +112,11 @@ void ManifestValidateTest::firstPartyActionHandlersValid() {
            QStringLiteral("trash"));
   QVERIFY(trash.manifest.execLine(QStringLiteral("action")).isEmpty());
 
-  const auto openWith = validateManifestDir(
-      QDir(root).filePath(QStringLiteral("synchro.action.open-with")), true);
-  QVERIFY2(openWith.ok, qPrintable(openWith.errors.join(QLatin1Char(';'))));
-  QCOMPARE(openWith.manifest.entryPoints.value(QStringLiteral("action")),
-           QStringLiteral("Palette.qml"));
+  const auto rename = validateManifestDir(
+      QDir(root).filePath(QStringLiteral("synchro.action.rename")), true);
+  QVERIFY2(rename.ok, qPrintable(rename.errors.join(QLatin1Char(';'))));
+  QCOMPARE(rename.manifest.entryPoints.value(QStringLiteral("action")),
+           QStringLiteral("Params.qml"));
 
   const auto copyAs = validateManifestDir(
       QDir(root).filePath(QStringLiteral("synchro.action.copy-as")), true);
@@ -171,10 +171,9 @@ void ManifestValidateTest::firstPartyPreviewHandlersValid() {
                          "synchro.preview.pdf", "synchro.preview.image",
                          "synchro.preview.video", "synchro.preview.folder",
                          "synchro.preview.parquet", "synchro.preview.sqlite",
-                         "synchro.preview.duckdb",
-                         "synchro.preview.archive"}) {
-    const auto v = validateManifestDir(QDir(root).filePath(QLatin1String(id)),
-                                       true);
+                         "synchro.preview.duckdb", "synchro.preview.archive"}) {
+    const auto v =
+        validateManifestDir(QDir(root).filePath(QLatin1String(id)), true);
     QVERIFY2(v.ok, qPrintable(v.errors.join(QLatin1Char(';'))));
     QVERIFY(v.manifest.hasKind(QStringLiteral("preview")));
   }
@@ -235,17 +234,17 @@ void ManifestValidateTest::firstPartyPanelTerminalValid() {
 void ManifestValidateTest::actionCoreRequiresVerb() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
-  const QString dir = writeHandler(
-      tmp, QStringLiteral("acme.core"),
-      QByteArrayLiteral("{\n"
-                        "  \"schemaVersion\": 1,\n"
-                        "  \"id\": \"acme.core\",\n"
-                        "  \"name\": \"C\",\n"
-                        "  \"version\": \"1\",\n"
-                        "  \"kinds\": [\"action\"],\n"
-                        "  \"entryPoints\": {},\n"
-                        "  \"action\": { \"runtime\": \"core\" }\n"
-                        "}\n"));
+  const QString dir =
+      writeHandler(tmp, QStringLiteral("acme.core"),
+                   QByteArrayLiteral("{\n"
+                                     "  \"schemaVersion\": 1,\n"
+                                     "  \"id\": \"acme.core\",\n"
+                                     "  \"name\": \"C\",\n"
+                                     "  \"version\": \"1\",\n"
+                                     "  \"kinds\": [\"action\"],\n"
+                                     "  \"entryPoints\": {},\n"
+                                     "  \"action\": { \"runtime\": \"core\" }\n"
+                                     "}\n"));
   const auto v = validateManifestDir(dir, false);
   QVERIFY(!v.ok);
   QVERIFY(v.errors.join(QLatin1Char(' ')).contains(QStringLiteral("verb")));
@@ -254,28 +253,30 @@ void ManifestValidateTest::actionCoreRequiresVerb() {
 void ManifestValidateTest::schemaVersionMustBeNumberOne() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
-  const QString dir = writeHandler(
-      tmp, QStringLiteral("acme.one"),
-      QByteArrayLiteral("{\n"
-                        "  \"schemaVersion\": \"1\",\n"
-                        "  \"id\": \"acme.one\",\n"
-                        "  \"name\": \"One\",\n"
-                        "  \"version\": \"1\",\n"
-                        "  \"kinds\": [\"open\"],\n"
-                        "  \"entryPoints\": {},\n"
-                        "  \"open\": { \"exec\": \"true %f\" }\n"
-                        "}\n"));
+  const QString dir =
+      writeHandler(tmp, QStringLiteral("acme.one"),
+                   QByteArrayLiteral("{\n"
+                                     "  \"schemaVersion\": \"1\",\n"
+                                     "  \"id\": \"acme.one\",\n"
+                                     "  \"name\": \"One\",\n"
+                                     "  \"version\": \"1\",\n"
+                                     "  \"kinds\": [\"open\"],\n"
+                                     "  \"entryPoints\": {},\n"
+                                     "  \"open\": { \"exec\": \"true %f\" }\n"
+                                     "}\n"));
   const auto v = validateManifestDir(dir, false);
   QVERIFY(!v.ok);
-  QVERIFY(v.errors.join(QLatin1Char(' ')).contains(QStringLiteral("schemaVersion")));
+  QVERIFY(v.errors.join(QLatin1Char(' '))
+              .contains(QStringLiteral("schemaVersion")));
 }
 
 void ManifestValidateTest::requiredFields() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
-  const QString dir = writeHandler(
-      tmp, QStringLiteral("acme.missing"),
-      QByteArrayLiteral("{ \"schemaVersion\": 1, \"id\": \"acme.missing\" }\n"));
+  const QString dir =
+      writeHandler(tmp, QStringLiteral("acme.missing"),
+                   QByteArrayLiteral(
+                       "{ \"schemaVersion\": 1, \"id\": \"acme.missing\" }\n"));
   const auto v = validateManifestDir(dir, false);
   QVERIFY(!v.ok);
   QVERIFY(v.errors.join(QLatin1Char(' ')).contains(QStringLiteral("name")));
@@ -366,7 +367,8 @@ void ManifestValidateTest::missingEntryPointFile() {
                         "}\n"));
   const auto v = validateManifestDir(dir, false);
   QVERIFY(!v.ok);
-  QVERIFY(v.errors.join(QLatin1Char(' ')).contains(QStringLiteral("not found")));
+  QVERIFY(
+      v.errors.join(QLatin1Char(' ')).contains(QStringLiteral("not found")));
 }
 
 void ManifestValidateTest::replaceListingRejected() {
@@ -395,42 +397,45 @@ void ManifestValidateTest::locationRuntimes() {
   QVERIFY(tmp.isValid());
   const QString pathOk = writeHandler(
       tmp, QStringLiteral("acme.home"),
-      QByteArrayLiteral("{\n"
-                        "  \"schemaVersion\": 1,\n"
-                        "  \"id\": \"acme.home\",\n"
-                        "  \"name\": \"Home\",\n"
-                        "  \"version\": \"1\",\n"
-                        "  \"kinds\": [\"location\"],\n"
-                        "  \"entryPoints\": {},\n"
-                        "  \"location\": { \"runtime\": \"path\", \"path\": \"$HOME\" }\n"
-                        "}\n"));
+      QByteArrayLiteral(
+          "{\n"
+          "  \"schemaVersion\": 1,\n"
+          "  \"id\": \"acme.home\",\n"
+          "  \"name\": \"Home\",\n"
+          "  \"version\": \"1\",\n"
+          "  \"kinds\": [\"location\"],\n"
+          "  \"entryPoints\": {},\n"
+          "  \"location\": { \"runtime\": \"path\", \"path\": \"$HOME\" }\n"
+          "}\n"));
   QVERIFY2(validateManifestDir(pathOk, false).ok,
            qPrintable(validateManifestDir(pathOk, false).errors.join(';')));
 
   const QString coreOk = writeHandler(
       tmp, QStringLiteral("acme.trash"),
-      QByteArrayLiteral("{\n"
-                        "  \"schemaVersion\": 1,\n"
-                        "  \"id\": \"acme.trash\",\n"
-                        "  \"name\": \"Trash\",\n"
-                        "  \"version\": \"1\",\n"
-                        "  \"kinds\": [\"location\"],\n"
-                        "  \"entryPoints\": {},\n"
-                        "  \"location\": { \"runtime\": \"core\", \"adapter\": \"trash\" }\n"
-                        "}\n"));
+      QByteArrayLiteral(
+          "{\n"
+          "  \"schemaVersion\": 1,\n"
+          "  \"id\": \"acme.trash\",\n"
+          "  \"name\": \"Trash\",\n"
+          "  \"version\": \"1\",\n"
+          "  \"kinds\": [\"location\"],\n"
+          "  \"entryPoints\": {},\n"
+          "  \"location\": { \"runtime\": \"core\", \"adapter\": \"trash\" }\n"
+          "}\n"));
   QVERIFY(validateManifestDir(coreOk, false).ok);
 
   const QString badCore = writeHandler(
       tmp, QStringLiteral("acme.badcore"),
-      QByteArrayLiteral("{\n"
-                        "  \"schemaVersion\": 1,\n"
-                        "  \"id\": \"acme.badcore\",\n"
-                        "  \"name\": \"X\",\n"
-                        "  \"version\": \"1\",\n"
-                        "  \"kinds\": [\"location\"],\n"
-                        "  \"entryPoints\": {},\n"
-                        "  \"location\": { \"runtime\": \"core\", \"adapter\": \"nope\" }\n"
-                        "}\n"));
+      QByteArrayLiteral(
+          "{\n"
+          "  \"schemaVersion\": 1,\n"
+          "  \"id\": \"acme.badcore\",\n"
+          "  \"name\": \"X\",\n"
+          "  \"version\": \"1\",\n"
+          "  \"kinds\": [\"location\"],\n"
+          "  \"entryPoints\": {},\n"
+          "  \"location\": { \"runtime\": \"core\", \"adapter\": \"nope\" }\n"
+          "}\n"));
   QVERIFY(!validateManifestDir(badCore, false).ok);
 
   const QString chrome = writeHandler(
@@ -450,16 +455,16 @@ void ManifestValidateTest::locationRuntimes() {
 void ManifestValidateTest::previewRequiresEntryPoint() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
-  const QString dir = writeHandler(
-      tmp, QStringLiteral("acme.prev"),
-      QByteArrayLiteral("{\n"
-                        "  \"schemaVersion\": 1,\n"
-                        "  \"id\": \"acme.prev\",\n"
-                        "  \"name\": \"P\",\n"
-                        "  \"version\": \"1\",\n"
-                        "  \"kinds\": [\"preview\"],\n"
-                        "  \"entryPoints\": {}\n"
-                        "}\n"));
+  const QString dir =
+      writeHandler(tmp, QStringLiteral("acme.prev"),
+                   QByteArrayLiteral("{\n"
+                                     "  \"schemaVersion\": 1,\n"
+                                     "  \"id\": \"acme.prev\",\n"
+                                     "  \"name\": \"P\",\n"
+                                     "  \"version\": \"1\",\n"
+                                     "  \"kinds\": [\"preview\"],\n"
+                                     "  \"entryPoints\": {}\n"
+                                     "}\n"));
   QVERIFY(!validateManifestDir(dir, false).ok);
 }
 
@@ -468,15 +473,16 @@ void ManifestValidateTest::openExecOnlyOk() {
   QVERIFY(tmp.isValid());
   const QString dir = writeHandler(
       tmp, QStringLiteral("acme.open"),
-      QByteArrayLiteral("{\n"
-                        "  \"schemaVersion\": 1,\n"
-                        "  \"id\": \"acme.open\",\n"
-                        "  \"name\": \"O\",\n"
-                        "  \"version\": \"1\",\n"
-                        "  \"kinds\": [\"open\"],\n"
-                        "  \"entryPoints\": {},\n"
-                        "  \"open\": { \"runtime\": \"exec\", \"exec\": \"true %f\" }\n"
-                        "}\n"));
+      QByteArrayLiteral(
+          "{\n"
+          "  \"schemaVersion\": 1,\n"
+          "  \"id\": \"acme.open\",\n"
+          "  \"name\": \"O\",\n"
+          "  \"version\": \"1\",\n"
+          "  \"kinds\": [\"open\"],\n"
+          "  \"entryPoints\": {},\n"
+          "  \"open\": { \"runtime\": \"exec\", \"exec\": \"true %f\" }\n"
+          "}\n"));
   QVERIFY2(validateManifestDir(dir, false).ok,
            qPrintable(validateManifestDir(dir, false).errors.join(';')));
 }
@@ -484,19 +490,18 @@ void ManifestValidateTest::openExecOnlyOk() {
 void ManifestValidateTest::symlinkRejected() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
-  const QString dir = writeHandler(
-      tmp, QStringLiteral("acme.link"),
-      QByteArrayLiteral("{\n"
-                        "  \"schemaVersion\": 1,\n"
-                        "  \"id\": \"acme.link\",\n"
-                        "  \"name\": \"L\",\n"
-                        "  \"version\": \"1\",\n"
-                        "  \"kinds\": [\"open\"],\n"
-                        "  \"entryPoints\": {},\n"
-                        "  \"open\": { \"exec\": \"true %f\" }\n"
-                        "}\n"));
-  QVERIFY(QFile::link(QStringLiteral("/tmp"),
-                      dir + QStringLiteral("/oops")));
+  const QString dir =
+      writeHandler(tmp, QStringLiteral("acme.link"),
+                   QByteArrayLiteral("{\n"
+                                     "  \"schemaVersion\": 1,\n"
+                                     "  \"id\": \"acme.link\",\n"
+                                     "  \"name\": \"L\",\n"
+                                     "  \"version\": \"1\",\n"
+                                     "  \"kinds\": [\"open\"],\n"
+                                     "  \"entryPoints\": {},\n"
+                                     "  \"open\": { \"exec\": \"true %f\" }\n"
+                                     "}\n"));
+  QVERIFY(QFile::link(QStringLiteral("/tmp"), dir + QStringLiteral("/oops")));
   QVERIFY(!validateManifestDir(dir, false).ok);
 }
 
@@ -514,14 +519,15 @@ void ManifestValidateTest::gitSymlinkEntryPointRejected() {
                     QByteArrayLiteral("import QtQuick\nItem {}\n")));
   const QString dir = writeHandler(
       tmp, QStringLiteral("acme.gitpeek"),
-      QByteArrayLiteral("{\n"
-                        "  \"schemaVersion\": 1,\n"
-                        "  \"id\": \"acme.gitpeek\",\n"
-                        "  \"name\": \"G\",\n"
-                        "  \"version\": \"1\",\n"
-                        "  \"kinds\": [\"preview\"],\n"
-                        "  \"entryPoints\": { \"preview\": \".git/Preview.qml\" }\n"
-                        "}\n"));
+      QByteArrayLiteral(
+          "{\n"
+          "  \"schemaVersion\": 1,\n"
+          "  \"id\": \"acme.gitpeek\",\n"
+          "  \"name\": \"G\",\n"
+          "  \"version\": \"1\",\n"
+          "  \"kinds\": [\"preview\"],\n"
+          "  \"entryPoints\": { \"preview\": \".git/Preview.qml\" }\n"
+          "}\n"));
   QVERIFY(QFile::link(outside, dir + QStringLiteral("/.git")));
   const auto v = validateManifestDir(dir, false);
   QVERIFY(!v.ok);
