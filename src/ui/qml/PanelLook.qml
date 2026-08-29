@@ -65,6 +65,10 @@ Item {
     property bool videoActivated: false
     property string videoIdentity: ""
     signal collapseRequested()
+    signal dockDragStarted(real sceneX, real sceneY)
+    signal dockDragMoved(real sceneX, real sceneY)
+    signal dockDragFinished(real sceneX, real sceneY)
+    signal dockDragCanceled()
 
     objectName: "panelLook"
     clip: true
@@ -269,21 +273,80 @@ Item {
         height: Theme.controlHeight
         color: Theme.darkBackground
 
-        Text {
+        Rectangle {
+            id: lookDragPill
+            objectName: "lookDragPill"
             anchors.left: parent.left
             anchors.leftMargin: Theme.spaceLG
             anchors.verticalCenter: parent.verticalCenter
-            text: "LOOK"
-            color: Theme.accent
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontCaption
-            font.bold: true
-            font.letterSpacing: 1
+            width: lookDragLabel.implicitWidth + Theme.space(14)
+            height: Theme.space(22)
+            radius: height / 2
+            color: lookDragArea.containsMouse || lookDragArea.dragLive
+                   ? Theme.hoverFill : Theme.normalFill
+            border.color: lookDragArea.containsMouse || lookDragArea.dragLive
+                          ? Theme.accent : Theme.normalBorder
+            border.width: 1
+
+            Text {
+                id: lookDragLabel
+                anchors.centerIn: parent
+                text: "LOOK"
+                color: Theme.accent
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontCaption
+                font.bold: true
+                font.letterSpacing: 1
+            }
+
+            MouseArea {
+                id: lookDragArea
+                objectName: "lookDragHandle"
+                anchors.fill: parent
+                hoverEnabled: true
+                preventStealing: true
+                cursorShape: Qt.SizeAllCursor
+                property real pressSceneX: 0
+                property real pressSceneY: 0
+                property bool dragLive: false
+
+                onPressed: function(mouse) {
+                    var p = mapToItem(null, mouse.x, mouse.y)
+                    pressSceneX = p.x
+                    pressSceneY = p.y
+                    dragLive = false
+                }
+                onPositionChanged: function(mouse) {
+                    if (!pressed)
+                        return
+                    var p = mapToItem(null, mouse.x, mouse.y)
+                    if (!dragLive &&
+                            Math.hypot(p.x - pressSceneX,
+                                       p.y - pressSceneY) > 8) {
+                        dragLive = true
+                        root.dockDragStarted(p.x, p.y)
+                    }
+                    if (dragLive)
+                        root.dockDragMoved(p.x, p.y)
+                }
+                onReleased: function(mouse) {
+                    if (!dragLive)
+                        return
+                    var p = mapToItem(null, mouse.x, mouse.y)
+                    dragLive = false
+                    root.dockDragFinished(p.x, p.y)
+                }
+                onCanceled: {
+                    if (dragLive)
+                        root.dockDragCanceled()
+                    dragLive = false
+                }
+            }
         }
 
         Text {
-            anchors.left: parent.left
-            anchors.leftMargin: Theme.space(58)
+            anchors.left: lookDragPill.right
+            anchors.leftMargin: Theme.spaceMD
             anchors.right: actions.left
             anchors.rightMargin: Theme.spaceLG
             anchors.verticalCenter: parent.verticalCenter

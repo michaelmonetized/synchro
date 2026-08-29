@@ -18,6 +18,7 @@ ListView {
     property bool centerInitialSelection: false
     property string initialSelectionPath: ""
     property bool initialSelectionRevealed: false
+    property real filterRestoreContentY: 0
     readonly property int selectionEpoch: selection ? selection.epoch : 0
     readonly property int thumbSizePx: 128
     readonly property bool dndLive: dndEnabled && fileOps && fileModel &&
@@ -330,6 +331,8 @@ ListView {
 
     ScrollChrome {
         flick: list
+        itemCount: list.count
+        wheelStep: list.rowInner * 4
     }
 
     function syncThumbnails() {
@@ -490,18 +493,18 @@ ListView {
             height: list.rowInner
 
         Rectangle {
+            objectName: "listSelectionChrome"
             anchors.fill: parent
-            visible: list.showCursorChrome && row.ListView.isCurrentItem &&
-                     row.picked
+            anchors.leftMargin: list.contentInset
+            anchors.rightMargin: list.contentInset
+            visible: row.picked
             color: Theme.selectedFill
-            opacity: list.cursorDim ? 0.45 : 1
-        }
-
-        Rectangle {
-            anchors.fill: parent
-            visible: list.showCursorChrome && row.picked && !row.ListView.isCurrentItem
-            color: Theme.selectedFill
-            opacity: 0.45
+            opacity: list.showCursorChrome && row.ListView.isCurrentItem
+                     ? (list.cursorDim ? 0.55 : 1)
+                     : 0.5
+            border.color: Theme.accent
+            border.width: 1
+            radius: Theme.radius
         }
 
         Rectangle {
@@ -722,7 +725,7 @@ ListView {
                     else if (mouse.modifiers & Qt.ShiftModifier)
                         list.selection.shiftClick(row.index)
                     else
-                        list.selection.click(row.index)
+                        list.selection.leftClick(row.index)
                     return
                 }
                 if (list.filterProxy)
@@ -742,67 +745,26 @@ ListView {
         if (list.keyMachine &&
                 list.keyMachine.handleListKey(event.key, event.modifiers, event.text)) {
             event.accepted = true
-            return
-        }
-        if (!list.fileModel)
-            return
-        var alt = event.modifiers & Qt.AltModifier
-        var ctrl = event.modifiers & Qt.ControlModifier
-        var meta = event.modifiers & Qt.MetaModifier
-        var shift = event.modifiers & Qt.ShiftModifier
-        var chord = ctrl || meta
-        if (event.key === Qt.Key_J || event.key === Qt.Key_Down) {
-            if (alt || chord)
-                return
-            if (list.filterProxy)
-                list.filterProxy.moveCursor(1)
-            else
-                list.fileModel.moveCursor(1)
-            event.accepted = true
-        } else if (event.key === Qt.Key_K || event.key === Qt.Key_Up) {
-            if (alt || chord)
-                return
-            if (list.filterProxy)
-                list.filterProxy.moveCursor(-1)
-            else
-                list.fileModel.moveCursor(-1)
-            event.accepted = true
-        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (alt || chord)
-                return
-            list.activateRow(list.currentIndex)
-            event.accepted = true
-        } else if ((event.key === Qt.Key_L || event.key === Qt.Key_Right) &&
-                   !alt && !chord && !shift) {
-            list.activateRow(list.currentIndex)
-            event.accepted = true
-        } else if ((event.key === Qt.Key_H || event.key === Qt.Key_Backspace ||
-                    event.key === Qt.Key_Left) &&
-                   !alt && !chord && !shift) {
-            if (list.navStack)
-                list.navStack.goUp()
-            event.accepted = true
-        } else if (event.key === Qt.Key_Left && alt && !chord) {
-            if (list.navStack)
-                list.navStack.goBack()
-            event.accepted = true
-        } else if (event.key === Qt.Key_Right && alt && !chord) {
-            if (list.navStack)
-                list.navStack.goForward()
-            event.accepted = true
-        } else if (event.key === Qt.Key_Period && !alt && !chord && !shift) {
-            list.fileModel.showHidden = !list.fileModel.showHidden
-            event.accepted = true
-        } else if (event.key === Qt.Key_V && event.modifiers === Qt.NoModifier) {
-            list.viewToggleRequested()
-            event.accepted = true
         }
     }
 
     onActiveFocusChanged: {
-        if (activeFocus && list.keyMachine && list.keyMachine.fieldFocused &&
-                list.keyMachine.mode !== "field-search")
+        if (activeFocus && list.keyMachine && !list.keyMachine.listFocused)
             list.keyMachine.focusList()
+    }
+
+    Connections {
+        target: list.keyMachine
+        function onLocalFilterStarted() {
+            list.filterRestoreContentY = list.contentY
+        }
+        function onLocalFilterCanceled() {
+            Qt.callLater(function() {
+                list.contentY = Math.max(list.originY,
+                    Math.min(list.filterRestoreContentY,
+                             list.originY + Math.max(0, list.contentHeight - list.height)))
+            })
+        }
     }
 
     Connections {

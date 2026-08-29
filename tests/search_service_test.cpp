@@ -62,7 +62,7 @@ private slots:
   void hiddenToggle();
   void cancelStopsProcess();
   void fieldSearchModeAndEnterKeepsResults();
-  void tabHopsSearchAndListing();
+  void questionOpensSearchAndEnterRunsIt();
   void spaceSeparatedQueryIsFuzzy();
   void escCancels();
   void contentPrefixIsNotNameSearch();
@@ -272,7 +272,7 @@ void SearchServiceTest::fieldSearchModeAndEnterKeepsResults() {
   QCOMPARE(canon(dir.path()), canon(root));
 }
 
-void SearchServiceTest::tabHopsSearchAndListing() {
+void SearchServiceTest::questionOpensSearchAndEnterRunsIt() {
   if (SearchService::executable().isEmpty())
     QSKIP("fd is not available");
 
@@ -293,25 +293,26 @@ void SearchServiceTest::tabHopsSearchAndListing() {
   dir.setPath(tmp.path());
   QVERIFY(waitListing(dir));
 
-  QVERIFY(keys.handleListKey(Qt::Key_Tab, Qt::NoModifier, QString()));
+  QVERIFY(keys.handleListKey(Qt::Key_Question, Qt::NoModifier,
+                             QStringLiteral("?")));
   QCOMPARE(keys.mode(), QStringLiteral("field-search"));
   QCOMPARE(keys.fieldText(), QStringLiteral("?"));
 
   keys.setFieldText(QStringLiteral("?synchro_tab_hit"));
-  QVERIFY(keys.handleFieldKey(Qt::Key_Tab, Qt::NoModifier));
+  QVERIFY(keys.handleFieldKey(Qt::Key_Return, Qt::NoModifier));
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
   QVERIFY(waitSearch(search));
   QCOMPARE(dir.path(), QStringLiteral("search://"));
   QVERIFY(findName(dir, QStringLiteral("synchro_tab_hit.txt")) >= 0);
   QVERIFY(findName(dir, QStringLiteral("other.txt")) < 0);
 
-  QVERIFY(keys.handleListKey(Qt::Key_Tab, Qt::NoModifier, QString()));
+  keys.focusSearch();
   QCOMPARE(keys.mode(), QStringLiteral("field-search"));
   QCOMPARE(keys.fieldText(), QStringLiteral("?synchro_tab_hit"));
   QCOMPARE(dir.path(), QStringLiteral("search://"));
 
   QSignalSpy reset(&search, &QAbstractItemModel::modelAboutToBeReset);
-  QVERIFY(keys.handleFieldKey(Qt::Key_Tab, Qt::NoModifier));
+  keys.focusList();
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
   QCOMPARE(reset.count(), 0);
   QVERIFY(findName(dir, QStringLiteral("synchro_tab_hit.txt")) >= 0);
@@ -886,7 +887,7 @@ void SearchServiceTest::revealLeavesSearch() {
   const int row = findName(dir, QStringLiteral("synchro_reveal.txt"));
   QVERIFY(row >= 0);
   dir.setCurrentIndex(row);
-  QVERIFY(keys.handleListKey(Qt::Key_G, Qt::NoModifier, QStringLiteral("g")));
+  QVERIFY(keys.handleListKey(Qt::Key_G, Qt::ControlModifier, QString()));
   QVERIFY(waitListing(dir));
   QCOMPARE(canon(dir.path()), canon(tmp.filePath(QStringLiteral("sub"))));
   QCOMPARE(dir.currentName(), QStringLiteral("synchro_reveal.txt"));
@@ -1023,11 +1024,11 @@ void SearchServiceTest::searchGridDownFollowsGroups() {
   keys.setGridMode(true);
   keys.setGridStride(6);
   proxy.setCurrentIndex(0);
-  QVERIFY(keys.handleListKey(Qt::Key_S, Qt::NoModifier, QStringLiteral("s")));
+  QVERIFY(keys.handleListKey(Qt::Key_Down, Qt::NoModifier, QString()));
   QCOMPARE(proxy.currentIndex(), 1);
-  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
+  QVERIFY(keys.handleListKey(Qt::Key_Down, Qt::NoModifier, QString()));
   QCOMPARE(proxy.currentIndex(), 2);
-  QVERIFY(keys.handleListKey(Qt::Key_W, Qt::NoModifier, QStringLiteral("w")));
+  QVERIFY(keys.handleListKey(Qt::Key_Up, Qt::NoModifier, QString()));
   QCOMPARE(proxy.currentIndex(), 1);
 
   const QString wide = tmp.filePath(QStringLiteral("wide"));

@@ -160,13 +160,13 @@ private slots:
   void bareSrcFiltersDoesNotNavigate();
   void slashAndCtrlKEnterFieldFilter();
   void ctrlLEntersFieldJumpWithPathSelected();
-  void enterFilterKeepsFilterReturnsToList();
+  void enterFilterOpensSelectedResult();
   void enterOnSrcSlashNavigates();
   void pathSigilRules();
   void missingPrefixWithSlashStillFilters();
   void escSingleStepPop();
-  void typeToSeekHighlightsFirstMatch();
-  void verbsDoNotTypeToSeek();
+  void typingStartsLocalFilterAndEscapeRestoresSelection();
+  void printableLettersAreNotModalVerbs();
   void gridNavigationPreservesVisualColumn();
   void fieldFilterTypesVerbsAsText();
   void filterIsCaseInsensitiveSubstring();
@@ -178,7 +178,7 @@ private slots:
   void spaceLookModePreservesShiftPeek();
   void mainQmlSlashThenSrcFilters();
   void mainQmlAgentResultUsesCurrentWindow();
-  void tRequestsTerminal();
+  void plainTStartsFilter();
   void ctrlReturnRequestsOpenWith();
   void focusFilterClosesActionOverlay();
   void paletteResolvePrefersBuiltins();
@@ -195,7 +195,7 @@ private slots:
   void enterRecentEmptyStatus();
   void enterRecentJumpsToLast();
   void enterHelpOpensOverlay();
-  void tabTogglesSearchFromList();
+  void questionStartsSearchFromList();
   void enterSortChangesRoleAndFlips();
   void naturalSortOrdersDirsFirst();
   void typeLabelsForColumns();
@@ -206,10 +206,11 @@ private slots:
   void agentSearchCommand();
   void flowPanelCommand();
   void escCommandSingleStep();
-  void colonDoesNotReplaceListVerbs();
+  void colonTakesPriorityOverPrintableFilter();
   void unknownAndAmbiguousStayInField();
   void actionHandlerByIdAndTitle();
-  void vTogglesGridFromList();
+  void plainVStartsFilter();
+  void ctrlNumberSwitchesViews();
   void successfulCommandClearsStatus();
   void mainQmlColonEntersCommand();
   void mainQmlGridClickAfterColonPops();
@@ -314,7 +315,7 @@ void CommandFieldTest::ctrlLEntersFieldJumpWithPathSelected() {
   QVERIFY(proxy.filter().isEmpty());
 }
 
-void CommandFieldTest::enterFilterKeepsFilterReturnsToList() {
+void CommandFieldTest::enterFilterOpensSelectedResult() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("src")));
@@ -328,17 +329,14 @@ void CommandFieldTest::enterFilterKeepsFilterReturnsToList() {
 
   model.setPath(tmp.path());
   QVERIFY(waitListingDone(model));
-  const QString root = model.path();
-
   keys.focusFilter();
   keys.setFieldText(QStringLiteral("src"));
   QVERIFY(keys.handleFieldKey(Qt::Key_Return, Qt::NoModifier));
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
-  QCOMPARE(keys.fieldText(), QStringLiteral("src"));
-  QCOMPARE(proxy.filter(), QStringLiteral("src"));
-  QCOMPARE(canon(model.path()), canon(root));
-  QVERIFY(findProxy(proxy, QStringLiteral("README.md")) < 0);
-  QVERIFY(findProxy(proxy, QStringLiteral("src")) >= 0);
+  QVERIFY(waitListingDone(model));
+  QCOMPARE(canon(model.path()), canon(tmp.filePath(QStringLiteral("src"))));
+  QVERIFY(keys.fieldText().isEmpty());
+  QVERIFY(proxy.filter().isEmpty());
 }
 
 void CommandFieldTest::enterOnSrcSlashNavigates() {
@@ -440,16 +438,13 @@ void CommandFieldTest::escSingleStepPop() {
   QVERIFY(proxy.rowCount() < model.rowCount());
   QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
   QVERIFY(keys.fieldText().isEmpty());
-  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
   QVERIFY(proxy.filter().isEmpty());
   QVERIFY(findProxy(proxy, QStringLiteral("README.md")) >= 0);
 
-  QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
-  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
-
   keys.focusFilter();
-  keys.setFieldText(QStringLiteral("src"));
-  keys.acceptField();
+  keys.setFieldText(QStringLiteral("README"));
+  keys.focusList();
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
   QVERIFY(!proxy.filter().isEmpty());
   QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
@@ -458,7 +453,7 @@ void CommandFieldTest::escSingleStepPop() {
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
 }
 
-void CommandFieldTest::typeToSeekHighlightsFirstMatch() {
+void CommandFieldTest::typingStartsLocalFilterAndEscapeRestoresSelection() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   QVERIFY(writeFile(tmp.filePath(QStringLiteral("aaa.txt"))));
@@ -474,13 +469,22 @@ void CommandFieldTest::typeToSeekHighlightsFirstMatch() {
   model.setPath(tmp.path());
   QVERIFY(waitListingDone(model));
   QVERIFY(findProxy(proxy, QStringLiteral("mxy_only")) >= 0);
+  proxy.setCurrentIndex(findProxy(proxy, QStringLiteral("aaa.txt")));
+  QCOMPARE(proxy.currentName(), QStringLiteral("aaa.txt"));
 
   QVERIFY(keys.handleListKey(Qt::Key_M, Qt::NoModifier, QStringLiteral("m")));
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+  QCOMPARE(keys.fieldText(), QStringLiteral("m"));
+  QCOMPARE(proxy.rowCount(), 1);
   QCOMPARE(proxy.currentName(), QStringLiteral("mxy_only"));
+  QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(keys.fieldText().isEmpty());
+  QCOMPARE(proxy.rowCount(), 3);
+  QCOMPARE(proxy.currentName(), QStringLiteral("aaa.txt"));
 }
 
-void CommandFieldTest::verbsDoNotTypeToSeek() {
+void CommandFieldTest::printableLettersAreNotModalVerbs() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   QVERIFY(writeFile(tmp.filePath(QStringLiteral("aaa.txt"))));
@@ -497,11 +501,11 @@ void CommandFieldTest::verbsDoNotTypeToSeek() {
   model.setPath(tmp.path());
   QVERIFY(waitListingDone(model));
   QVERIFY(proxy.rowCount() >= 4);
-  proxy.setCurrentIndex(0);
-  const int before = proxy.currentIndex();
   QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
-  QCOMPARE(proxy.currentIndex(), qMin(before + 1, proxy.rowCount() - 1));
-  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+  QCOMPARE(keys.fieldText(), QStringLiteral("j"));
+  QCOMPARE(proxy.rowCount(), 1);
+  QCOMPARE(proxy.currentName(), QStringLiteral("jjj.txt"));
 }
 
 void CommandFieldTest::gridNavigationPreservesVisualColumn() {
@@ -526,23 +530,15 @@ void CommandFieldTest::gridNavigationPreservesVisualColumn() {
   // The final row contains only columns zero and one. Moving down from visual
   // column three stays on that row instead of clamping diagonally by index.
   proxy.setCurrentIndex(7);
-  QVERIFY(keys.handleListKey(Qt::Key_S, Qt::NoModifier, QStringLiteral("s")));
+  QVERIFY(keys.handleListKey(Qt::Key_Down, Qt::NoModifier, QString()));
   QCOMPARE(proxy.currentIndex(), 9);
-  QVERIFY(keys.handleListKey(Qt::Key_W, Qt::NoModifier, QStringLiteral("w")));
+  QVERIFY(keys.handleListKey(Qt::Key_Up, Qt::NoModifier, QString()));
   QCOMPARE(proxy.currentIndex(), 5);
-
-  // Horizontal movement never wraps into the adjacent visual row.
-  proxy.setCurrentIndex(4);
-  QVERIFY(keys.handleListKey(Qt::Key_A, Qt::NoModifier, QStringLiteral("a")));
-  QCOMPARE(proxy.currentIndex(), 4);
-  proxy.setCurrentIndex(7);
-  QVERIFY(keys.handleListKey(Qt::Key_D, Qt::NoModifier, QStringLiteral("d")));
-  QCOMPARE(proxy.currentIndex(), 7);
 
   // A relayout immediately changes vertical adjacency.
   keys.setGridStride(3);
   proxy.setCurrentIndex(5);
-  QVERIFY(keys.handleListKey(Qt::Key_S, Qt::NoModifier, QStringLiteral("s")));
+  QVERIFY(keys.handleListKey(Qt::Key_Down, Qt::NoModifier, QString()));
   QCOMPARE(proxy.currentIndex(), 8);
 }
 
@@ -647,7 +643,7 @@ void CommandFieldTest::goBackRestoresFilter() {
 
   keys.focusFilter();
   keys.setFieldText(QStringLiteral("src"));
-  keys.acceptField();
+  keys.focusList();
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
   QCOMPARE(proxy.filter(), QStringLiteral("src"));
   const int row = findProxy(proxy, QStringLiteral("src"));
@@ -913,15 +909,15 @@ void CommandFieldTest::mainQmlAgentResultUsesCurrentWindow() {
            QStringLiteral("/tmp"));
 }
 
-void CommandFieldTest::tRequestsTerminal() {
+void CommandFieldTest::plainTStartsFilter() {
   DirectoryModel model;
   FilterProxy proxy;
   proxy.setDirectoryModel(&model);
   NavStack nav(&model);
   KeyMachine keys(&model, &proxy, &nav);
-  QSignalSpy spy(&keys, &KeyMachine::terminalRequested);
   QVERIFY(keys.handleListKey(Qt::Key_T, Qt::NoModifier, QStringLiteral("t")));
-  QCOMPARE(spy.count(), 1);
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+  QCOMPARE(keys.fieldText(), QStringLiteral("t"));
 }
 
 void CommandFieldTest::ctrlReturnRequestsOpenWith() {
@@ -1113,7 +1109,7 @@ void CommandFieldTest::enterFsnAndEscReturns() {
   keys.acceptField();
   QVERIFY(keys.fsnMode());
 
-  QVERIFY(keys.handleListKey(Qt::Key_V, Qt::NoModifier, QStringLiteral("v")));
+  QVERIFY(keys.handleListKey(Qt::Key_M, Qt::ControlModifier, QString()));
   QVERIFY(!keys.fsnMode());
   QVERIFY(keys.gridMode());
 
@@ -1290,7 +1286,7 @@ void CommandFieldTest::enterHelpOpensOverlay() {
   QVERIFY(keys.helpText().contains(QStringLiteral(":trash")));
   QVERIFY(keys.helpText().contains(QStringLiteral(":sort")));
   QVERIFY(keys.helpText().contains(QStringLiteral(":pin")));
-  QVERIFY(keys.helpText().contains(QStringLiteral("Tab")));
+  QVERIFY(keys.helpText().contains(QStringLiteral("Arrow keys")));
 
   QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
   QVERIFY(!keys.helpOpen());
@@ -1301,17 +1297,18 @@ void CommandFieldTest::enterHelpOpensOverlay() {
   QVERIFY(keys.helpOpen());
 }
 
-void CommandFieldTest::tabTogglesSearchFromList() {
+void CommandFieldTest::questionStartsSearchFromList() {
   DirectoryModel model;
   FilterProxy proxy;
   proxy.setDirectoryModel(&model);
   NavStack nav(&model);
   KeyMachine keys(&model, &proxy, &nav);
 
-  QVERIFY(keys.handleListKey(Qt::Key_Tab, Qt::NoModifier, QString()));
+  QVERIFY(keys.handleListKey(Qt::Key_Question, Qt::NoModifier,
+                             QStringLiteral("?")));
   QCOMPARE(keys.mode(), QStringLiteral("field-search"));
   QCOMPARE(keys.fieldText(), QStringLiteral("?"));
-  QVERIFY(keys.handleFieldKey(Qt::Key_Tab, Qt::NoModifier));
+  QVERIFY(keys.handleFieldKey(Qt::Key_Escape, Qt::NoModifier));
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
   QVERIFY(keys.fieldText().isEmpty());
 }
@@ -1339,7 +1336,7 @@ void CommandFieldTest::escCommandSingleStep() {
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
 }
 
-void CommandFieldTest::colonDoesNotReplaceListVerbs() {
+void CommandFieldTest::colonTakesPriorityOverPrintableFilter() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   QVERIFY(writeFile(tmp.filePath(QStringLiteral("aaa.txt"))));
@@ -1353,17 +1350,11 @@ void CommandFieldTest::colonDoesNotReplaceListVerbs() {
 
   model.setPath(tmp.path());
   QVERIFY(waitListingDone(model));
-  proxy.setCurrentIndex(0);
-  const int before = proxy.currentIndex();
-  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
-  QCOMPARE(proxy.currentIndex(), qMin(before + 1, proxy.rowCount() - 1));
-  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
-
-  const int mid = proxy.currentIndex();
   QVERIFY(keys.handleListKey(Qt::Key_Colon, Qt::ShiftModifier,
                              QStringLiteral(":")));
   QCOMPARE(keys.mode(), QStringLiteral("field-command"));
-  QCOMPARE(proxy.currentIndex(), mid);
+  QCOMPARE(keys.fieldText(), QStringLiteral(":"));
+  QVERIFY(proxy.filter().isEmpty());
 }
 
 void CommandFieldTest::unknownAndAmbiguousStayInField() {
@@ -1428,7 +1419,7 @@ void CommandFieldTest::actionHandlerByIdAndTitle() {
   QCOMPARE(model.path(), QStringLiteral("trash://"));
 }
 
-void CommandFieldTest::vTogglesGridFromList() {
+void CommandFieldTest::plainVStartsFilter() {
   DirectoryModel model;
   FilterProxy proxy;
   proxy.setDirectoryModel(&model);
@@ -1437,9 +1428,28 @@ void CommandFieldTest::vTogglesGridFromList() {
 
   QVERIFY(!keys.gridMode());
   QVERIFY(keys.handleListKey(Qt::Key_V, Qt::NoModifier, QStringLiteral("v")));
+  QVERIFY(!keys.gridMode());
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+  QCOMPARE(keys.fieldText(), QStringLiteral("v"));
+}
+
+void CommandFieldTest::ctrlNumberSwitchesViews() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  QVERIFY(!keys.gridMode());
+  QVERIFY(keys.handleListKey(Qt::Key_2, Qt::ControlModifier, QString()));
   QVERIFY(keys.gridMode());
-  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
-  QVERIFY(keys.handleListKey(Qt::Key_V, Qt::NoModifier, QStringLiteral("v")));
+  QVERIFY(keys.handleListKey(Qt::Key_1, Qt::ControlModifier, QString()));
+  QVERIFY(!keys.gridMode());
+
+  keys.focusFilter();
+  QVERIFY(keys.handleFieldKey(Qt::Key_2, Qt::ControlModifier));
+  QVERIFY(keys.gridMode());
+  QVERIFY(keys.handleFieldKey(Qt::Key_1, Qt::ControlModifier));
   QVERIFY(!keys.gridMode());
 }
 

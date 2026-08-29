@@ -1408,7 +1408,7 @@ Item {
             else if (mods & Qt.ShiftModifier)
                 fsn.selection.shiftClick(i)
             else
-                fsn.selection.click(i)
+                fsn.selection.leftClick(i)
             return
         }
         if (fsn.filterProxy)

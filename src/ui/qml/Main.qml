@@ -19,6 +19,9 @@ Window {
     readonly property bool gridMode: root.keys ? root.keys.gridMode : false
     readonly property bool fsnMode: root.keys ? root.keys.fsnMode : false
     readonly property int themeEpoch: Theme.epoch
+    // The listing's vertical edge belongs to its scrollbar. Parked panel
+    // grips stay close without sitting on top of its pointer target.
+    readonly property int browserScrollClearance: Theme.space(18)
 
     onThemeEpochChanged: {
         if (typeof hostApi !== "undefined" && hostApi)
@@ -106,23 +109,65 @@ Window {
     property bool lookSessionOpen: root.config
                                    ? root.config.panelLookOpen : true
     readonly property bool lookEnabled: root.lookSessionOpen
+    property string lookSideOverride: ""
+    readonly property string explicitLookSide: root.config
+                                                ? root.config.lookSide
+                                                : root.lookSideOverride
+    readonly property bool lookSideExplicit: explicitLookSide.length > 0
+    readonly property string lookDockSide: lookSideExplicit
+                                            ? explicitLookSide : "right"
+    readonly property bool lookDockLeft: lookDockSide === "left"
+    readonly property bool lookDockRight: lookDockSide === "right"
+    readonly property bool lookDockTop: lookDockSide === "top"
+    readonly property bool lookDockBottom: lookDockSide === "bottom"
+    readonly property bool lookDockVertical: lookDockLeft || lookDockRight
     // Action Deck is a true overlay: keep the browser composition and its
     // loaded Look companion intact underneath it.
     readonly property bool lookWanted: lookEnabled && selectionCount > 0 &&
                                        root.keys && !root.keys.peekOpen
-    readonly property bool lookStandaloneHasRoom:
-        root.lookTargetSize >= 240 &&
-        root.width - root.lookTargetSize >= Theme.space(300) &&
-        statusLine.y - commandField.y - commandField.height >= Theme.space(260)
     readonly property bool lookInPanel: lookWanted && root.panelOpen &&
                                        panelDock.lookSupported &&
-                                       panelDock.lookHasRoom
-    readonly property bool lookStandalone: lookWanted && !root.panelOpen &&
-                                          lookStandaloneHasRoom
+                                       panelDock.lookHasRoom &&
+                                       (!lookSideExplicit ||
+                                        lookDockSide === panelSide)
+    readonly property real browserAreaLeft: root.panelOpen && root.panelLeft
+                                             ? panelDock.x + panelDock.width : 0
+    readonly property real browserAreaRight: root.panelOpen && root.panelRight
+                                              ? panelDock.x : root.width
+    readonly property real browserAreaTop: root.panelOpen && root.panelTopSide
+                                            ? panelDock.y + panelDock.height
+                                            : commandField.y + commandField.height
+    readonly property real browserAreaBottom: root.panelOpen && root.panelBottom
+                                               ? panelDock.y : statusLine.y
+    readonly property real browserAreaWidth: Math.max(
+                                                  0, browserAreaRight -
+                                                     browserAreaLeft)
+    readonly property real browserAreaHeight: Math.max(
+                                                   0, browserAreaBottom -
+                                                      browserAreaTop)
     readonly property int lookTargetSize: root.config
                                           ? Math.min(root.config.lookSize,
-                                                     Math.round(root.width * 0.46))
-                                          : Theme.space(360)
+                                                     Math.round(
+                                                         (lookDockVertical
+                                                          ? browserAreaWidth
+                                                          : browserAreaHeight) *
+                                                         0.46))
+                                          : Math.round((lookDockVertical
+                                                        ? browserAreaWidth
+                                                        : browserAreaHeight) *
+                                                       0.46)
+    readonly property int lookMinimumSpan: lookDockVertical
+                                            ? Theme.space(240)
+                                            : Theme.space(145)
+    readonly property bool lookStandaloneHasRoom:
+        root.lookTargetSize >= root.lookMinimumSpan &&
+        (root.lookDockVertical
+         ? root.browserAreaWidth - root.lookTargetSize >= Theme.space(300) &&
+           root.browserAreaHeight >= Theme.space(260)
+         : root.browserAreaHeight - root.lookTargetSize >= Theme.space(180) &&
+           root.browserAreaWidth >= Theme.space(300))
+    readonly property bool lookStandalone: lookWanted && !lookInPanel &&
+                                           lookStandaloneHasRoom
 
     // Grip-drag re-docking state (the gesture only starts from the grip,
     // so panel content keeps its own drag and drop untouched).
@@ -131,6 +176,8 @@ Window {
     property real panelDragY: 0
     property string panelDragTargetId: ""
     property string panelDragLabel: ""
+    readonly property string lookDragTarget: "__synchro_look__"
+    readonly property bool draggingLook: panelDragTargetId === lookDragTarget
 
     // Panel apps: which are relevant to the current selection (parked
     // pills) and which have been opened this session (kept alive).
@@ -147,6 +194,12 @@ Window {
         root.lookSessionOpen = !!open
         if (persist && root.config)
             root.config.panelLookOpen = root.lookSessionOpen
+    }
+
+    function setLookDockSide(side) {
+        root.lookSideOverride = side
+        if (root.config)
+            root.config.lookSide = side
     }
 
     function openAgentSearch() {
@@ -299,7 +352,18 @@ Window {
         var target = root.panelDragTargetId
         root.panelDragging = false
         root.panelDragTargetId = ""
-        if (!root.keys || !target.length)
+        if (!target.length)
+            return
+        if (target === root.lookDragTarget) {
+            // Center/outside is a harmless cancel for Look. It is a persistent
+            // companion, not a panel app that should disappear by accident.
+            if (z !== "close" && z.length) {
+                root.setLookDockSide(z)
+                root.setLookOpen(true, true)
+            }
+            return
+        }
+        if (!root.keys)
             return
         if (z === "close") {
             // dropping the docked app closes it; a parked pill just cancels
@@ -328,19 +392,22 @@ Window {
         }
     }
 
-    // Standalone Look reserves browser space only while an explicit
-    // selection exists. Its width animates; the preview item itself is shared
-    // with the app-panel companion below.
+    // Standalone Look reserves browser space only while an explicit selection
+    // exists. It can occupy any edge of the browser area left by an app panel.
     Item {
         id: standaloneLookDock
-        x: root.width - width
-        y: commandField.y + commandField.height
-        width: root.lookStandalone ? root.lookTargetSize : 0
-        height: Math.max(0, statusLine.y - y)
+        objectName: "standaloneLookDock"
+        property real span: root.lookStandalone ? root.lookTargetSize : 0
+        x: root.lookDockRight ? root.browserAreaRight - width
+                              : root.browserAreaLeft
+        y: root.lookDockBottom ? root.browserAreaBottom - height
+                               : root.browserAreaTop
+        width: root.lookDockVertical ? span : root.browserAreaWidth
+        height: root.lookDockVertical ? root.browserAreaHeight : span
         z: 2
         clip: true
 
-        Behavior on width {
+        Behavior on span {
             NumberAnimation {
                 duration: 140
                 easing.type: Easing.OutCubic
@@ -350,6 +417,7 @@ Window {
 
     Loader {
         id: listingLoader
+        objectName: "listingLoader"
 
         HoverHandler {
             enabled: root.hoverFocusAllowed
@@ -358,14 +426,22 @@ Window {
                     root.focusListingForce()
             }
         }
-        anchors.top: root.panelOpen && root.panelTopSide ? panelDock.bottom
-                                                          : commandField.bottom
-        anchors.left: root.panelOpen && root.panelLeft ? panelDock.right
-                                                       : parent.left
-        anchors.right: root.panelOpen && root.panelRight ? panelDock.left
-                                                         : standaloneLookDock.left
-        anchors.bottom: root.panelOpen && root.panelBottom ? panelDock.top
-                                                           : statusLine.top
+        anchors.top: standaloneLookDock.span > 0.5 && root.lookDockTop
+                     ? standaloneLookDock.bottom
+                     : (root.panelOpen && root.panelTopSide
+                        ? panelDock.bottom : commandField.bottom)
+        anchors.left: standaloneLookDock.span > 0.5 && root.lookDockLeft
+                      ? standaloneLookDock.right
+                      : (root.panelOpen && root.panelLeft
+                         ? panelDock.right : parent.left)
+        anchors.right: standaloneLookDock.span > 0.5 && root.lookDockRight
+                       ? standaloneLookDock.left
+                       : (root.panelOpen && root.panelRight
+                          ? panelDock.left : parent.right)
+        anchors.bottom: standaloneLookDock.span > 0.5 && root.lookDockBottom
+                        ? standaloneLookDock.top
+                        : (root.panelOpen && root.panelBottom
+                           ? panelDock.top : statusLine.top)
         z: 1
         sourceComponent: root.fsnMode ? fsnComp
                                       : (root.gridMode ? gridComp : listComp)
@@ -894,7 +970,7 @@ Window {
     PanelLook {
         id: panelLook
         parent: root.lookInPanel ? panelDock : root.contentItem
-        visible: root.lookInPanel || standaloneLookDock.width > 0.5
+        visible: root.lookInPanel || standaloneLookDock.span > 0.5
         opacity: root.lookInPanel || root.lookStandalone ? 1 : 0
         z: 2
         x: root.lookInPanel
@@ -919,9 +995,36 @@ Window {
         fileModel: root.files
         filterProxy: root.listing
         selectionModel: root.selection
-        horizontalSplit: root.lookInPanel ? root.panelHorizontal : true
+        horizontalSplit: root.lookInPanel ? root.panelHorizontal
+                                           : !root.lookDockVertical
         mainQueryBusy: root.mainSqlBusy
         onCollapseRequested: root.setLookOpen(false, true)
+        onDockDragStarted: function(sceneX, sceneY) {
+            root.panelDragX = sceneX
+            root.panelDragY = sceneY
+            root.panelDragTargetId = root.lookDragTarget
+            root.panelDragLabel = "LOOK"
+            root.panelDragging = true
+        }
+        onDockDragMoved: function(sceneX, sceneY) {
+            if (!root.panelDragging || !root.draggingLook)
+                return
+            root.panelDragX = sceneX
+            root.panelDragY = sceneY
+        }
+        onDockDragFinished: function(sceneX, sceneY) {
+            if (!root.panelDragging || !root.draggingLook)
+                return
+            root.panelDragX = sceneX
+            root.panelDragY = sceneY
+            root.applyPanelDrop()
+        }
+        onDockDragCanceled: {
+            if (root.draggingLook) {
+                root.panelDragging = false
+                root.panelDragTargetId = ""
+            }
+        }
 
         Behavior on opacity {
             NumberAnimation { duration: 90 }
@@ -930,26 +1033,38 @@ Window {
 
     MouseArea {
         id: standaloneLookResize
-        visible: standaloneLookDock.width > 0.5 && !root.lookInPanel &&
-                 !root.panelOpen
+        visible: standaloneLookDock.span > 0.5 && !root.lookInPanel
         z: 5
-        x: standaloneLookDock.x - 3
-        y: standaloneLookDock.y
-        width: 6
-        height: standaloneLookDock.height
-        cursorShape: Qt.SplitHCursor
+        x: root.lookDockRight ? standaloneLookDock.x - 3
+                              : (root.lookDockLeft
+                                 ? standaloneLookDock.x +
+                                   standaloneLookDock.width - 3
+                                 : standaloneLookDock.x)
+        y: root.lookDockBottom ? standaloneLookDock.y - 3
+                               : (root.lookDockTop
+                                  ? standaloneLookDock.y +
+                                    standaloneLookDock.height - 3
+                                  : standaloneLookDock.y)
+        width: root.lookDockVertical ? 6 : standaloneLookDock.width
+        height: root.lookDockVertical ? standaloneLookDock.height : 6
+        cursorShape: root.lookDockVertical ? Qt.SplitHCursor
+                                           : Qt.SplitVCursor
         preventStealing: true
         property real startSize: 0
-        property real startX: 0
+        property real startCoord: 0
         onPressed: function(mouse) {
             startSize = root.config ? root.config.lookSize : 360
-            startX = mapToItem(null, mouse.x, mouse.y).x
+            var p = mapToItem(null, mouse.x, mouse.y)
+            startCoord = root.lookDockVertical ? p.x : p.y
         }
         onPositionChanged: function(mouse) {
             if (!pressed || !root.config)
                 return
-            var now = mapToItem(null, mouse.x, mouse.y).x
-            root.config.lookSize = Math.round(startSize + startX - now)
+            var p = mapToItem(null, mouse.x, mouse.y)
+            var now = root.lookDockVertical ? p.x : p.y
+            var delta = root.lookDockRight || root.lookDockBottom
+                        ? startCoord - now : now - startCoord
+            root.config.lookSize = Math.round(startSize + delta)
         }
     }
 
@@ -977,7 +1092,8 @@ Window {
             x: root.panelHorizontal
                ? (root.width - width) / 2 +
                  (slot - (count - 1) / 2) * (width + 10)
-               : (root.panelRight ? root.width - width - 2 : 2)
+               : (root.panelRight
+                  ? root.width - width - 2 - root.browserScrollClearance : 2)
             y: root.panelHorizontal
                ? (root.panelBottom ? statusLine.y - height - 2
                                    : commandField.y + commandField.height + 2)
@@ -1076,6 +1192,7 @@ Window {
 
     Item {
         id: panelDropZones
+        objectName: "panelDropZones"
         visible: root.panelDragging
         z: 150
         anchors.left: parent.left
@@ -1154,7 +1271,10 @@ Window {
         Text {
             anchors.centerIn: parent
             text: panelDropZones.zone === "close"
-                  ? (root.panelOpen ? "release to close" : "release to cancel")
+                  ? (root.draggingLook
+                     ? "release to keep current position"
+                     : (root.panelOpen ? "release to close"
+                                       : "release to cancel"))
                   : "drop on an edge to dock"
             color: panelDropZones.zone === "close" ? Theme.urgent : Theme.muted
             font.family: Theme.fontFamily
@@ -1296,6 +1416,11 @@ Window {
         }
         function onFsnModeChanged() {
             Qt.callLater(root.focusListing)
+        }
+        function onGridMoveRequested(dx, dy) {
+            if (root.gridMode && !root.fsnMode && listingLoader.item &&
+                    listingLoader.item.navigateGeometry)
+                listingLoader.item.navigateGeometry(dx, dy, false, true)
         }
     }
 

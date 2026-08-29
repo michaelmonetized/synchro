@@ -2,7 +2,6 @@
 
 #include "CommandPalette.h"
 
-#include <QElapsedTimer>
 #include <QObject>
 #include <QString>
 #include <QTimer>
@@ -20,8 +19,8 @@ class RecentStore;
 class SearchModel;
 class SelectionModel;
 
-// Ranger-with-visible-field keyboard states (K7). The list owns keys on
-// launch; the field is chrome, not an always-focused omnibar.
+// Conventional browser keyboard states. The listing owns focus on launch;
+// printable input promotes the visible field into a local folder filter.
 class KeyMachine : public QObject {
   Q_OBJECT
   Q_PROPERTY(QString mode READ mode NOTIFY modeChanged)
@@ -190,6 +189,9 @@ signals:
   void chooserPromptDismissRequested();
   void filterCycleRequested(int delta);
   void saveNameFocusRequested();
+  void localFilterStarted();
+  void localFilterCanceled();
+  void gridMoveRequested(int dx, int dy);
 
 private:
   void setMode(Mode mode);
@@ -200,11 +202,13 @@ private:
   void closeOverlays();
   void applyFieldText();
   void clearFieldAndFilter();
+  void beginLocalFilter();
+  void cancelLocalFilter();
+  void activateCurrent();
   void onPathChanged();
   bool handleListVerbs(int key, int modifiers);
   bool handlePeekKey(int key, int modifiers);
   bool handleDoKey(int key, int modifiers);
-  void seek(const QString &chunk);
   void runCommand(const QString &text);
   bool runBuiltin(const QString &id, QString *info);
   bool runRecent(QString *info);
@@ -231,8 +235,6 @@ private:
   void setCursorIndex(int index);
   int cursorIndex() const;
 
-  static bool isReservedVerb(int key, int modifiers);
-
   DirectoryModel *m_model = nullptr;
   FilterProxy *m_proxy = nullptr;
   NavStack *m_nav = nullptr;
@@ -249,10 +251,12 @@ private:
   ActionRunner m_actionRunner;
   Mode m_mode = Mode::ListFocused;
   QString m_fieldText;
-  QString m_seek;
   QString m_status;
   bool m_searchStatus = false;
-  QElapsedTimer m_seekClock;
+  bool m_localFilterSession = false;
+  int m_filterRestoreSourceRow = -1;
+  QString m_filterRestorePath;
+  QString m_filterRestoreItemPath;
   int m_jumpEpoch = 0;
   bool m_gridMode = false;
   bool m_fsnMode = false;

@@ -104,13 +104,25 @@ void SelectionModel::setAnchor(int proxyRow) {
 }
 
 void SelectionModel::click(int proxyRow) {
-  const int size = selectedCount();
   setAnchor(proxyRow);
   m_suppressFollow = true;
   setCursor(proxyRow);
   m_suppressFollow = false;
-  if (size <= 1)
-    replaceSelected({proxyRow});
+  // An ordinary click starts a new selection. Keeping a prior range alive
+  // here made list rows feel impossible to deselect; additive selection is
+  // already expressed explicitly by Ctrl-click and Shift-click.
+  replaceSelected({proxyRow});
+}
+
+void SelectionModel::leftClick(int proxyRow) {
+  // Pointer semantics are intentionally a little more direct than the
+  // programmatic click(): clicking an already selected object removes it.
+  // Right-click callers continue to use click() only when they first need to
+  // target an unselected object, so opening a context menu never deselects.
+  if (isSelected(proxyRow))
+    ctrlClick(proxyRow);
+  else
+    click(proxyRow);
 }
 
 void SelectionModel::selectPath(const QString &path, const QString &name,

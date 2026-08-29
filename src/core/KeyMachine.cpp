@@ -16,7 +16,6 @@
 
 namespace {
 
-constexpr int kSeekTimeoutMs = 800;
 constexpr int kSearchDebounceMs = 350;
 
 bool hasCtrl(int modifiers) { return modifiers & Qt::ControlModifier; }
@@ -416,8 +415,77 @@ void KeyMachine::clearFieldAndFilter() {
     setStatusMessage(QString());
 }
 
+void KeyMachine::beginLocalFilter() {
+  if (m_localFilterSession)
+    return;
+  m_localFilterSession = true;
+  m_filterRestoreSourceRow = m_model ? m_model->currentIndex() : -1;
+  m_filterRestorePath = m_model ? m_model->path() : QString();
+  m_filterRestoreItemPath.clear();
+  if (m_model && m_filterRestoreSourceRow >= 0) {
+    m_filterRestoreItemPath =
+        m_model->data(m_model->index(m_filterRestoreSourceRow, 0),
+                      DirectoryModel::PathRole)
+            .toString();
+  }
+  emit localFilterStarted();
+}
+
+void KeyMachine::cancelLocalFilter() {
+  const bool restore = m_localFilterSession && m_model && m_proxy &&
+                       m_model->path() == m_filterRestorePath;
+  const int sourceRow = m_filterRestoreSourceRow;
+  const QString itemPath = m_filterRestoreItemPath;
+  clearFieldAndFilter();
+
+  if (restore) {
+    int row = -1;
+    if (sourceRow >= 0 && sourceRow < m_model->rowCount()) {
+      const QModelIndex source = m_model->index(sourceRow, 0);
+      if (itemPath.isEmpty() ||
+          m_model->data(source, DirectoryModel::PathRole).toString() ==
+              itemPath)
+        row = m_proxy->mapFromSource(source).row();
+    }
+    if (row < 0 && !itemPath.isEmpty()) {
+      for (int i = 0; i < m_proxy->rowCount(); ++i) {
+        if (m_proxy->data(m_proxy->index(i, 0), DirectoryModel::PathRole)
+                .toString() == itemPath) {
+          row = i;
+          break;
+        }
+      }
+    }
+    if (row >= 0)
+      setCursorIndex(row);
+  }
+
+  m_localFilterSession = false;
+  m_filterRestoreSourceRow = -1;
+  m_filterRestorePath.clear();
+  m_filterRestoreItemPath.clear();
+  setMode(Mode::ListFocused);
+  emit localFilterCanceled();
+}
+
+void KeyMachine::activateCurrent() {
+  if (m_chooserMode) {
+    emit chooserAcceptRequested();
+    return;
+  }
+  if (m_selection)
+    m_selection->activate();
+  else if (m_proxy)
+    m_proxy->activateCurrent();
+  else if (m_model)
+    m_model->activateCurrent();
+}
+
 void KeyMachine::onPathChanged() {
-  m_seek.clear();
+  m_localFilterSession = false;
+  m_filterRestoreSourceRow = -1;
+  m_filterRestorePath.clear();
+  m_filterRestoreItemPath.clear();
   if (m_selection)
     m_selection->exitVisual();
   if (!m_promptKind.isEmpty() || m_mode == Mode::RenameInline ||
@@ -479,6 +547,7 @@ void KeyMachine::focusFilter() {
   setHelpOpen(false);
   if (m_selection)
     m_selection->exitVisual();
+  beginLocalFilter();
   setMode(Mode::FieldFilter);
   applyFieldText();
 }
@@ -754,6 +823,10 @@ void KeyMachine::escape() {
     return;
   }
   if (m_mode != Mode::ListFocused) {
+    if (m_mode == Mode::FieldFilter) {
+      cancelLocalFilter();
+      return;
+    }
     if (m_mode == Mode::FieldSearch || isSearchText(m_fieldText))
       cancelSearch();
     // ':' / '?' are chrome (same as an empty filter). Only a real query is step 4.
@@ -772,7 +845,10 @@ void KeyMachine::escape() {
   if (!m_fieldText.isEmpty() || (m_proxy && !m_proxy->filter().isEmpty())) {
     if (isSearchText(m_fieldText))
       cancelSearch();
-    clearFieldAndFilter();
+    if (m_localFilterSession)
+      cancelLocalFilter();
+    else
+      clearFieldAndFilter();
     return;
   }
   if (m_fsnMode) {
@@ -809,6 +885,8 @@ void KeyMachine::acceptField() {
   }
   applyFieldText();
   setMode(Mode::ListFocused);
+  if (!m_fieldText.isEmpty() && (!m_proxy || m_proxy->rowCount() > 0))
+    activateCurrent();
 }
 
 bool KeyMachine::isCommandText(const QString &text) {
@@ -1394,51 +1472,6 @@ QString KeyMachine::resolveJump(const QString &text, const QString &cwd) {
   return {};
 }
 
-bool KeyMachine::isReservedVerb(int key, int modifiers) {
-  if (hasChord(modifiers) || hasAlt(modifiers))
-    return false;
-  const bool shift = hasShift(modifiers);
-  switch (key) {
-  case Qt::Key_J:
-  case Qt::Key_K:
-  case Qt::Key_H:
-  case Qt::Key_L:
-  case Qt::Key_N:
-  case Qt::Key_R:
-  case Qt::Key_Y:
-  case Qt::Key_P:
-  case Qt::Key_U:
-  case Qt::Key_T:
-  case Qt::Key_G:
-  case Qt::Key_Delete:
-    return !shift;
-  case Qt::Key_W:
-  case Qt::Key_A:
-  case Qt::Key_S:
-  case Qt::Key_D:
-  case Qt::Key_Q:
-  case Qt::Key_E:
-  case Qt::Key_V:
-  case Qt::Key_Period:
-  case Qt::Key_Slash:
-  case Qt::Key_Colon:
-  case Qt::Key_Question:
-  case Qt::Key_F1:
-  case Qt::Key_X:
-  case Qt::Key_Space:
-  case Qt::Key_Return:
-  case Qt::Key_Enter:
-  case Qt::Key_Backspace:
-  case Qt::Key_Up:
-  case Qt::Key_Down:
-  case Qt::Key_Left:
-  case Qt::Key_Right:
-    return true;
-  default:
-    return false;
-  }
-}
-
 bool KeyMachine::handleListVerbs(int key, int modifiers) {
   const bool alt = hasAlt(modifiers);
   const bool chord = hasChord(modifiers);
@@ -1456,67 +1489,32 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
       m_selection->selectAll();
     return true;
   }
-  if ((key == Qt::Key_Y && !alt && !chord && !shift) ||
-      (key == Qt::Key_C && ctrl && !alt && !meta)) {
+  if (key == Qt::Key_C && ctrl && !alt && !meta) {
     if (!m_chooserMode && m_fileOps)
       m_fileOps->copySelection();
     return true;
   }
-  if ((key == Qt::Key_X && !alt && !chord && !shift) ||
-      (key == Qt::Key_X && ctrl && !alt && !meta)) {
+  if (key == Qt::Key_X && ctrl && !alt && !meta) {
     if (!m_chooserMode && m_fileOps)
       m_fileOps->cutSelection();
     return true;
   }
-  if (!alt && !chord &&
-      (key == Qt::Key_W || key == Qt::Key_A || key == Qt::Key_S ||
-       key == Qt::Key_D)) {
-    if (m_fsnMode)
-      return false;
-    int dx = 0;
-    int dy = 0;
-    if (key == Qt::Key_W)
-      dy = -1;
-    else if (key == Qt::Key_S)
-      dy = 1;
-    else if (key == Qt::Key_A)
-      dx = -1;
-    else
-      dx = 1;
-    nudgeCursor(dx, dy, shift);
-    return true;
-  }
-  if ((key == Qt::Key_P && !alt && !chord && !shift) ||
-      (key == Qt::Key_V && ctrl && !alt && !meta)) {
+  if (key == Qt::Key_V && ctrl && !alt && !meta) {
     if (!m_chooserMode && m_fileOps)
       m_fileOps->paste();
     return true;
   }
-  if (key == Qt::Key_V && shift && !alt && !chord) {
-    if (m_selection && (!m_chooserMode || m_chooserMultiple)) {
-      if (m_mode == Mode::VisualSelect) {
-        m_selection->exitVisual();
-        setMode(Mode::ListFocused);
-      } else {
-        m_selection->enterVisual();
-        setMode(Mode::VisualSelect);
-      }
-    }
-    return true;
-  }
-  if (key == Qt::Key_N && !alt && !chord && !shift) {
+  if (key == Qt::Key_N && ctrl && shift && !alt && !meta) {
     if (!m_chooserMode)
       startMkdir();
     return true;
   }
-  if ((key == Qt::Key_R && !alt && !chord && !shift) ||
-      (key == Qt::Key_F2 && !alt && !chord)) {
+  if (key == Qt::Key_F2 && !alt && !chord) {
     if (!m_chooserMode)
       startRename();
     return true;
   }
-  if ((key == Qt::Key_U && !alt && !chord && !shift) ||
-      (key == Qt::Key_Z && ctrl && !alt && !meta)) {
+  if (key == Qt::Key_Z && ctrl && !alt && !meta) {
     if (!m_chooserMode && m_fileOps)
       m_fileOps->undo();
     return true;
@@ -1531,10 +1529,10 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
     return true;
   }
 
-  if (key == Qt::Key_J || key == Qt::Key_Down) {
+  if (key == Qt::Key_Down) {
     if (alt || chord)
       return false;
-    if (m_gridMode && m_model && m_model->isSearch()) {
+    if (m_gridMode) {
       nudgeCursor(0, 1, false);
       return true;
     }
@@ -1546,10 +1544,10 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
       m_model->moveCursor(1);
     return true;
   }
-  if (key == Qt::Key_K || key == Qt::Key_Up) {
+  if (key == Qt::Key_Up) {
     if (alt || chord)
       return false;
-    if (m_gridMode && m_model && m_model->isSearch()) {
+    if (m_gridMode) {
       nudgeCursor(0, -1, false);
       return true;
     }
@@ -1564,29 +1562,7 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
   if (key == Qt::Key_Return || key == Qt::Key_Enter) {
     if (alt || chord)
       return false;
-    if (m_chooserMode) {
-      emit chooserAcceptRequested();
-      return true;
-    }
-    if (m_selection)
-      m_selection->activate();
-    else if (m_proxy)
-      m_proxy->activateCurrent();
-    else if (m_model)
-      m_model->activateCurrent();
-    return true;
-  }
-  if ((key == Qt::Key_L || key == Qt::Key_Right || key == Qt::Key_E) &&
-      !alt && !chord && !shift) {
-    const bool isDir = m_model && m_model->currentIsDir();
-    if (!isDir && m_host) {
-      m_host->openCurrent();
-      return true;
-    }
-    if (m_proxy)
-      m_proxy->activateCurrent();
-    else if (m_model)
-      m_model->activateCurrent();
+    activateCurrent();
     return true;
   }
   if (key == Qt::Key_Space && !alt && !chord) {
@@ -1598,9 +1574,7 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
     }
     return true;
   }
-  if ((key == Qt::Key_H || key == Qt::Key_Backspace || key == Qt::Key_Left ||
-       key == Qt::Key_Q) &&
-      !alt && !chord && !shift) {
+  if (key == Qt::Key_Backspace && !alt && !chord && !shift) {
     if (m_nav)
       m_nav->goUp();
     return true;
@@ -1615,24 +1589,29 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
       m_nav->goForward();
     return true;
   }
-  if (m_chooserMode &&
-      (key == Qt::Key_BracketLeft || key == Qt::Key_BracketRight) && !alt &&
-      !chord && !shift) {
-    emit filterCycleRequested(key == Qt::Key_BracketRight ? 1 : -1);
+  if (key == Qt::Key_G && ctrl && !alt && !meta) {
+    revealCurrent();
     return true;
   }
-  if ((key == Qt::Key_Tab || key == Qt::Key_Backtab) && !alt && !chord) {
-    toggleSearchField();
-    return true;
-  }
-  if ((key == Qt::Key_P && shift && !alt && !chord)) {
+  if (key == Qt::Key_D && ctrl && !alt && !meta) {
     QString info;
     runPinCommand(QStringLiteral("pin"), &info);
     if (!info.isEmpty())
       setStatusMessage(info);
     return true;
   }
-  if (key == Qt::Key_Period && !alt && !chord && !shift) {
+  if (m_chooserMode &&
+      (key == Qt::Key_BracketLeft || key == Qt::Key_BracketRight) && ctrl &&
+      !alt && !meta) {
+    emit filterCycleRequested(key == Qt::Key_BracketRight ? 1 : -1);
+    return true;
+  }
+  if (m_chooserMode && m_chooserSave &&
+      (key == Qt::Key_Tab || key == Qt::Key_Backtab) && !alt && !chord) {
+    emit saveNameFocusRequested();
+    return true;
+  }
+  if (key == Qt::Key_H && ctrl && !alt && !meta) {
     if (m_selection)
       m_selection->exitVisual();
     if (m_mode == Mode::VisualSelect)
@@ -1648,36 +1627,11 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
     focusFilter();
     return true;
   }
-  if (key == Qt::Key_V && !alt && !chord && !shift) {
-    if (m_fsnMode)
-      setFsnMode(false);
-    else
-      setGridMode(!m_gridMode);
-    return true;
-  }
-  if ((key == Qt::Key_Question || key == Qt::Key_F1) && !alt && !chord) {
+  if (key == Qt::Key_F1 && !alt && !chord) {
     setHelpOpen(!m_helpOpen);
     return true;
   }
-  if (key == Qt::Key_T && !alt && !chord && !shift) {
-    closeOverlays();
-    emit terminalRequested();
-    return true;
-  }
-  if (key == Qt::Key_G && !alt && !chord && !shift) {
-    revealCurrent();
-    return true;
-  }
   return false;
-}
-
-void KeyMachine::seek(const QString &chunk) {
-  if (!m_seekClock.isValid() || m_seekClock.elapsed() > kSeekTimeoutMs)
-    m_seek.clear();
-  m_seek += chunk;
-  m_seekClock.restart();
-  if (m_proxy)
-    m_proxy->seekPrefix(m_seek);
 }
 
 bool KeyMachine::handleDoKey(int key, int modifiers) {
@@ -1868,6 +1822,13 @@ bool KeyMachine::handleListKey(int key, int modifiers, const QString &text) {
   if (m_mode != Mode::ListFocused && m_mode != Mode::VisualSelect)
     return false;
 
+  if (hasCtrl(modifiers) && !hasAlt(modifiers) && !hasMeta(modifiers) &&
+      !hasShift(modifiers) &&
+      (key == Qt::Key_1 || key == Qt::Key_2)) {
+    setGridMode(key == Qt::Key_2);
+    return true;
+  }
+
   if (key == Qt::Key_K && hasCtrl(modifiers) && !hasAlt(modifiers) &&
       !hasMeta(modifiers)) {
     focusFilter();
@@ -1898,25 +1859,30 @@ bool KeyMachine::handleListKey(int key, int modifiers, const QString &text) {
     focusCommand();
     return true;
   }
-  if (handleListVerbs(key, modifiers))
-    return true;
   if (m_fsnMode && !hasChord(modifiers) && !hasAlt(modifiers) &&
       (key == Qt::Key_W || key == Qt::Key_A || key == Qt::Key_S ||
        key == Qt::Key_D || key == Qt::Key_M))
     return false;
-  if (isReservedVerb(key, modifiers))
+  if (!hasChord(modifiers) && !hasAlt(modifiers) &&
+      (key == Qt::Key_Question || text == QLatin1String("?"))) {
+    focusSearch();
+    return true;
+  }
+  if (handleListVerbs(key, modifiers))
     return true;
 
   if (!hasChord(modifiers) && !hasAlt(modifiers) && !text.isEmpty()) {
     bool printable = true;
     for (const QChar c : text) {
-      if (!c.isPrint() || c.isSpace()) {
+      if (!c.isPrint()) {
         printable = false;
         break;
       }
     }
     if (printable) {
-      seek(text);
+      const QString next = m_localFilterSession ? m_fieldText + text : text;
+      focusFilter();
+      setFieldText(next);
       return true;
     }
   }
@@ -1930,13 +1896,24 @@ bool KeyMachine::handleFieldKey(int key, int modifiers) {
     return handlePeekKey(key, modifiers);
   if (m_mode == Mode::ListFocused)
     return false;
+  if (hasCtrl(modifiers) && !hasAlt(modifiers) && !hasMeta(modifiers) &&
+      !hasShift(modifiers) &&
+      (key == Qt::Key_1 || key == Qt::Key_2)) {
+    setGridMode(key == Qt::Key_2);
+    return true;
+  }
   if (key == Qt::Key_Escape) {
     escape();
     return true;
   }
-  if ((key == Qt::Key_Tab || key == Qt::Key_Backtab) &&
-      !hasAlt(modifiers) && !hasChord(modifiers)) {
-    toggleSearchField();
+  if (m_mode == Mode::FieldFilter && !hasChord(modifiers) &&
+      !hasAlt(modifiers) &&
+      (key == Qt::Key_Up || key == Qt::Key_Down)) {
+    const int dy = key == Qt::Key_Up ? -1 : 1;
+    if (m_gridMode)
+      emit gridMoveRequested(0, dy);
+    else
+      nudgeCursor(0, dy, false);
     return true;
   }
   if (key == Qt::Key_Return || key == Qt::Key_Enter) {

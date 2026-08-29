@@ -36,6 +36,7 @@ public:
   Q_INVOKABLE void toggleRow(int proxyRow);
   Q_INVOKABLE void selectAll();
   Q_INVOKABLE void click(int proxyRow);
+  Q_INVOKABLE void leftClick(int proxyRow);
   // StrataV/MapV render recursive descendants which need not have a row in the
   // current directory proxy. Keep one such path as a proper browser selection
   // so previews, actions, and file operations all target what was clicked.

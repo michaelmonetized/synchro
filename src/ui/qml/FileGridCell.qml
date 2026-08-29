@@ -311,7 +311,7 @@ Item {
                 else if (mouse.modifiers & Qt.ShiftModifier)
                     listing.selection.shiftClick(cell.rowIndex)
                 else
-                    listing.selection.click(cell.rowIndex)
+                    listing.selection.leftClick(cell.rowIndex)
                 return
             }
             if (listing.filterProxy)

@@ -226,7 +226,7 @@ void LocationAdaptersTest::recentGRevealsParent() {
   model.setPath(QStringLiteral("recent://"));
   QVERIFY(waitListingDone(model));
   QCOMPARE(model.currentName(), QStringLiteral("read.txt"));
-  QVERIFY(keys.handleListKey(Qt::Key_G, Qt::NoModifier, QStringLiteral("g")));
+  QVERIFY(keys.handleListKey(Qt::Key_G, Qt::ControlModifier, QString()));
   QVERIFY(waitListingDone(model));
   QCOMPARE(canon(model.path()),
            canon(tmp.filePath(QStringLiteral("sub"))));
@@ -491,19 +491,24 @@ void LocationAdaptersTest::configPersistsPanelLook() {
     QVERIFY(cfg.panelLookOpen());
     QCOMPARE(cfg.panelLookRatio(), 0.34);
     QCOMPARE(cfg.lookSize(), 360);
+    QVERIFY(cfg.lookSide().isEmpty());
     cfg.setPanelLookOpen(false);
     cfg.setPanelLookRatio(0.43);
     cfg.setLookSize(412);
+    cfg.setLookSide(QStringLiteral("left"));
     QVERIFY(cfg.save());
   }
   Config loaded(path);
   QVERIFY(!loaded.panelLookOpen());
   QCOMPARE(loaded.panelLookRatio(), 0.43);
   QCOMPARE(loaded.lookSize(), 412);
+  QCOMPARE(loaded.lookSide(), QStringLiteral("left"));
   loaded.setPanelLookRatio(0.9);
   QCOMPARE(loaded.panelLookRatio(), 0.5);
   loaded.setLookSize(10);
   QCOMPARE(loaded.lookSize(), 240);
+  loaded.setLookSide(QStringLiteral("diagonal"));
+  QVERIFY(loaded.lookSide().isEmpty());
 }
 
 void LocationAdaptersTest::lastPathNeverPersistsSearch() {
@@ -699,7 +704,7 @@ void LocationAdaptersTest::colonPinAndShiftPToggle() {
   QVERIFY(chips.isPinned(proj));
   QCOMPARE(keys.statusMessage(), QStringLiteral("pinned proj"));
 
-  QVERIFY(keys.handleListKey(Qt::Key_P, Qt::ShiftModifier, QStringLiteral("P")));
+  QVERIFY(keys.handleListKey(Qt::Key_D, Qt::ControlModifier, QString()));
   QVERIFY(!chips.isPinned(proj));
 }
 

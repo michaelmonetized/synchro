@@ -15,6 +15,7 @@ Item {
     property bool centerInitialSelection: false
     property string initialSelectionPath: ""
     property bool initialSelectionRevealed: false
+    property real filterRestoreContentY: 0
     property bool dndEnabled: true
     readonly property int selectionEpoch: selection ? selection.epoch : 0
     readonly property bool dndLive: dndEnabled && fileOps && fileModel &&
@@ -129,6 +130,10 @@ Item {
     function tilesView() {
         return bodyLoader.item && bodyLoader.item.objectName === "fileGridTiles"
                ? bodyLoader.item : null
+    }
+
+    function activeScrollView() {
+        return grid.searching ? grid.searchList() : grid.tilesView()
     }
 
     // GridView, grouped search results, and future grid surfaces do not share
@@ -392,6 +397,8 @@ Item {
 
             ScrollChrome {
                 flick: parent
+                itemCount: grid.rows ? grid.rows.count : -1
+                wheelStep: grid.cellHeight * 0.9
             }
         }
     }
@@ -530,6 +537,8 @@ Item {
 
                 ScrollChrome {
                     flick: groupsFlick
+                    itemCount: grid.rows ? grid.rows.count : -1
+                    wheelStep: grid.cellHeight * 0.9
                 }
             }
         }
@@ -660,55 +669,44 @@ Item {
     }
 
     onActiveFocusChanged: {
-        if (activeFocus && grid.keyMachine && grid.keyMachine.fieldFocused &&
-                grid.keyMachine.mode !== "field-search")
+        if (activeFocus && grid.keyMachine && !grid.keyMachine.listFocused)
             grid.keyMachine.focusList()
     }
 
     Keys.priority: Keys.BeforeItem
     Keys.onPressed: function (event) {
-        var wasd = event.key === Qt.Key_W || event.key === Qt.Key_A ||
-                   event.key === Qt.Key_S || event.key === Qt.Key_D
-        var chord = event.modifiers & (Qt.ControlModifier | Qt.AltModifier |
-                                       Qt.MetaModifier)
-        if (wasd && !chord) {
-            var dx = event.key === Qt.Key_A ? -1
-                   : (event.key === Qt.Key_D ? 1 : 0)
-            var dy = event.key === Qt.Key_W ? -1
-                   : (event.key === Qt.Key_S ? 1 : 0)
-            grid.navigateGeometry(dx, dy,
-                                  !!(event.modifiers & Qt.ShiftModifier), true)
+        var arrow = event.key === Qt.Key_Left || event.key === Qt.Key_Right ||
+                    event.key === Qt.Key_Up || event.key === Qt.Key_Down
+        if (arrow && event.modifiers === Qt.NoModifier) {
+            var dx = event.key === Qt.Key_Left ? -1
+                   : (event.key === Qt.Key_Right ? 1 : 0)
+            var dy = event.key === Qt.Key_Up ? -1
+                   : (event.key === Qt.Key_Down ? 1 : 0)
+            grid.navigateGeometry(dx, dy, false, true)
             event.accepted = true
             return
         }
         if (grid.keyMachine &&
                 grid.keyMachine.handleListKey(event.key, event.modifiers, event.text)) {
             event.accepted = true
-            return
         }
-        if (!grid.fileModel)
-            return
-        if (event.key === Qt.Key_J || event.key === Qt.Key_Down) {
-            if (grid.filterProxy)
-                grid.filterProxy.moveCursor(1)
-            else
-                grid.fileModel.moveCursor(1)
-            event.accepted = true
-        } else if (event.key === Qt.Key_K || event.key === Qt.Key_Up) {
-            if (grid.filterProxy)
-                grid.filterProxy.moveCursor(-1)
-            else
-                grid.fileModel.moveCursor(-1)
-            event.accepted = true
-        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (grid.filterProxy)
-                grid.filterProxy.activateCurrent()
-            else
-                grid.fileModel.activateCurrent()
-            event.accepted = true
-        } else if (event.key === Qt.Key_V && event.modifiers === Qt.NoModifier) {
-            grid.viewToggleRequested()
-            event.accepted = true
+    }
+
+    Connections {
+        target: grid.keyMachine
+        function onLocalFilterStarted() {
+            var view = grid.activeScrollView()
+            grid.filterRestoreContentY = view ? view.contentY : 0
+        }
+        function onLocalFilterCanceled() {
+            Qt.callLater(function() {
+                var view = grid.activeScrollView()
+                if (!view)
+                    return
+                view.contentY = Math.max(view.originY,
+                    Math.min(grid.filterRestoreContentY,
+                             view.originY + Math.max(0, view.contentHeight - view.height)))
+            })
         }
     }
 }

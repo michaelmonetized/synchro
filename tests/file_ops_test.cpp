@@ -71,7 +71,7 @@ private slots:
   void spaceDoesNotToggle();
   void ctrlSpaceTogglesCursor();
   void ctrlASelectsFiltered();
-  void visualRangeAndEscKeepsSet();
+  void conventionalRangeSelection();
   void escCollapsesMultiSetThenFilter();
   void leavingDirCollapsesSelection();
   void clickAndShiftClickAndCtrlClick();
@@ -98,9 +98,9 @@ private slots:
   void renameSameNameIsNoop();
   void moveSameDirIsNoop();
   void refuseSpecialFileCopy();
-  void slashAndPeriodExitVisual();
-  void wasdMovesAndShiftLeaps();
-  void arrowsWalkHierarchy();
+  void slashAndCtrlHExitVisual();
+  void arrowsMoveAndLettersFilter();
+  void enterAndBackspaceWalkHierarchy();
   void visibleThumbsFollowSortedProxy();
   void partialCopyKeepsUndo();
   void pasteReadsOsClipboardFromOtherEngine();
@@ -230,7 +230,7 @@ void FileOpsTest::ctrlASelectsFiltered() {
   QVERIFY(sel.statusText().startsWith(QStringLiteral("2 selected")));
 }
 
-void FileOpsTest::visualRangeAndEscKeepsSet() {
+void FileOpsTest::conventionalRangeSelection() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   QVERIFY(writeFile(tmp.filePath(QStringLiteral("a"))));
@@ -247,17 +247,10 @@ void FileOpsTest::visualRangeAndEscKeepsSet() {
   keys.setSelection(&sel);
   model.setPath(tmp.path());
   QVERIFY(waitListingDone(model));
-  proxy.setCurrentIndex(0);
-  QVERIFY(keys.handleListKey(Qt::Key_V, Qt::ShiftModifier, QStringLiteral("V")));
-  QCOMPARE(keys.mode(), QStringLiteral("visual-select"));
-  QVERIFY(sel.visual());
-  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
-  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
+  sel.click(0);
+  sel.shiftClick(2);
   QCOMPARE(sel.selectedCount(), 3);
-  QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
-  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
-  QVERIFY(!sel.visual());
-  QCOMPARE(sel.selectedCount(), 3);
+  QCOMPARE(sel.cursor(), 2);
 }
 
 void FileOpsTest::escCollapsesMultiSetThenFilter() {
@@ -335,6 +328,28 @@ void FileOpsTest::clickAndShiftClickAndCtrlClick() {
   QCOMPARE(sel.selectedCount(), 3);
   sel.ctrlClick(1);
   QCOMPARE(sel.selectedCount(), 2);
+  QVERIFY(!sel.isSelected(1));
+
+  // A normal click collapses an additive/range selection to the clicked row.
+  sel.click(2);
+  QCOMPARE(sel.selectedCount(), 1);
+  QVERIFY(sel.isSelected(2));
+
+  // Ctrl-clicking the only selected row leaves an intentionally empty set.
+  sel.ctrlClick(2);
+  QCOMPARE(sel.selectedCount(), 0);
+  QVERIFY(!sel.isSelected(2));
+
+  // A plain left pointer click is itself a toggle for an already-selected
+  // item. Programmatic click() remains idempotent selection for reveal paths
+  // and right-click targeting.
+  sel.click(2);
+  QCOMPARE(sel.selectedCount(), 1);
+  sel.leftClick(2);
+  QCOMPARE(sel.selectedCount(), 0);
+  sel.click(2);
+  sel.click(2);
+  QCOMPARE(sel.selectedCount(), 1);
 }
 
 void FileOpsTest::recursivePathSelectionIsFirstClass() {
@@ -500,7 +515,7 @@ void FileOpsTest::cutDoesNotDelete() {
   const int row = findProxy(proxy, QStringLiteral("keep.txt"));
   QVERIFY(row >= 0);
   proxy.setCurrentIndex(row);
-  QVERIFY(keys.handleListKey(Qt::Key_X, Qt::NoModifier, QStringLiteral("x")));
+  QVERIFY(keys.handleListKey(Qt::Key_X, Qt::ControlModifier, QString()));
   QVERIFY(QFileInfo(tmp.filePath(QStringLiteral("keep.txt"))).exists());
   QCOMPARE(ops.clipboardMode(), QStringLiteral("cut"));
   QCOMPARE(ops.clipboardCount(), 1);
@@ -529,11 +544,11 @@ void FileOpsTest::copyPasteThenCutPaste() {
   const int row = findProxy(proxy, QStringLiteral("item"));
   QVERIFY(row >= 0);
   proxy.setCurrentIndex(row);
-  QVERIFY(keys.handleListKey(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y")));
+  QVERIFY(keys.handleListKey(Qt::Key_C, Qt::ControlModifier, QString()));
   QCOMPARE(ops.clipboardMode(), QStringLiteral("copy"));
   model.setPath(b.path());
   QVERIFY(waitListingDone(model));
-  QVERIFY(keys.handleListKey(Qt::Key_P, Qt::NoModifier, QStringLiteral("p")));
+  QVERIFY(keys.handleListKey(Qt::Key_V, Qt::ControlModifier, QString()));
   QVERIFY(waitIdle(ops));
   QVERIFY(QFileInfo(b.filePath(QStringLiteral("item"))).exists());
   QVERIFY(QFileInfo(a.filePath(QStringLiteral("item"))).exists());
@@ -541,10 +556,10 @@ void FileOpsTest::copyPasteThenCutPaste() {
   model.setPath(a.path());
   QVERIFY(waitListingDone(model));
   proxy.setCurrentIndex(findProxy(proxy, QStringLiteral("item")));
-  QVERIFY(keys.handleListKey(Qt::Key_X, Qt::NoModifier, QStringLiteral("x")));
+  QVERIFY(keys.handleListKey(Qt::Key_X, Qt::ControlModifier, QString()));
   model.setPath(b.path());
   QVERIFY(waitListingDone(model));
-  QVERIFY(keys.handleListKey(Qt::Key_P, Qt::NoModifier, QStringLiteral("p")));
+  QVERIFY(keys.handleListKey(Qt::Key_V, Qt::ControlModifier, QString()));
   QVERIFY(waitIdle(ops));
   QVERIFY(!QFileInfo(a.filePath(QStringLiteral("item"))).exists());
   QVERIFY(QFileInfo(b.filePath(QStringLiteral("item"))).exists());
@@ -643,7 +658,7 @@ void FileOpsTest::keysRenameMkdirUndo() {
   QVERIFY(row >= 0);
   proxy.setCurrentIndex(row);
 
-  QVERIFY(keys.handleListKey(Qt::Key_R, Qt::NoModifier, QStringLiteral("r")));
+  QVERIFY(keys.handleListKey(Qt::Key_F2, Qt::NoModifier, QString()));
   QCOMPARE(keys.mode(), QStringLiteral("rename-inline"));
   QCOMPARE(keys.promptText(), QStringLiteral("oldname"));
   keys.setPromptText(QStringLiteral("renamed"));
@@ -652,14 +667,16 @@ void FileOpsTest::keysRenameMkdirUndo() {
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
   QVERIFY(QFileInfo(tmp.filePath(QStringLiteral("renamed"))).exists());
 
-  QVERIFY(keys.handleListKey(Qt::Key_N, Qt::NoModifier, QStringLiteral("n")));
+  QVERIFY(keys.handleListKey(Qt::Key_N,
+                             Qt::ControlModifier | Qt::ShiftModifier,
+                             QString()));
   QCOMPARE(keys.mode(), QStringLiteral("confirm-dialog"));
   keys.setPromptText(QStringLiteral("made"));
   QVERIFY(keys.handleListKey(Qt::Key_Return, Qt::NoModifier, QString()));
   QVERIFY(waitIdle(ops));
   QVERIFY(QFileInfo(tmp.filePath(QStringLiteral("made"))).isDir());
 
-  QVERIFY(keys.handleListKey(Qt::Key_U, Qt::NoModifier, QStringLiteral("u")));
+  QVERIFY(keys.handleListKey(Qt::Key_Z, Qt::ControlModifier, QString()));
   QVERIFY(waitIdle(ops));
   QVERIFY(!QFileInfo(tmp.filePath(QStringLiteral("made"))).exists());
   QVERIFY(keys.handleListKey(Qt::Key_Z, Qt::ControlModifier, QString()));
@@ -767,7 +784,7 @@ void FileOpsTest::refuseSpecialFileCopy() {
 #endif
 }
 
-void FileOpsTest::slashAndPeriodExitVisual() {
+void FileOpsTest::slashAndCtrlHExitVisual() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   QVERIFY(writeFile(tmp.filePath(QStringLiteral("aa"))));
@@ -783,9 +800,9 @@ void FileOpsTest::slashAndPeriodExitVisual() {
   keys.setSelection(&sel);
   model.setPath(tmp.path());
   QVERIFY(waitListingDone(model));
-  proxy.setCurrentIndex(0);
-  QVERIFY(keys.handleListKey(Qt::Key_V, Qt::ShiftModifier, QStringLiteral("V")));
-  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
+  sel.click(0);
+  sel.enterVisual();
+  sel.moveCursor(1);
   QCOMPARE(sel.selectedCount(), 2);
   QVERIFY(sel.visual());
   QVERIFY(keys.handleListKey(Qt::Key_Slash, Qt::NoModifier, QStringLiteral("/")));
@@ -796,17 +813,16 @@ void FileOpsTest::slashAndPeriodExitVisual() {
   QCOMPARE(proxy.filter(), QStringLiteral("a"));
   QCOMPARE(sel.selectedCount(), 2);
   keys.escape();
-  keys.escape();
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
 
-  QVERIFY(keys.handleListKey(Qt::Key_V, Qt::ShiftModifier, QStringLiteral("V")));
+  sel.enterVisual();
   QVERIFY(sel.visual());
-  QVERIFY(keys.handleListKey(Qt::Key_Period, Qt::NoModifier, QStringLiteral(".")));
+  QVERIFY(keys.handleListKey(Qt::Key_H, Qt::ControlModifier, QString()));
   QVERIFY(!sel.visual());
   QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
 }
 
-void FileOpsTest::wasdMovesAndShiftLeaps() {
+void FileOpsTest::arrowsMoveAndLettersFilter() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   for (int i = 0; i < 12; ++i)
@@ -825,35 +841,16 @@ void FileOpsTest::wasdMovesAndShiftLeaps() {
   proxy.setCurrentIndex(5);
   QCOMPARE(sel.cursor(), 5);
 
-  QVERIFY(keys.handleListKey(Qt::Key_W, Qt::NoModifier, QStringLiteral("w")));
+  QVERIFY(keys.handleListKey(Qt::Key_Up, Qt::NoModifier, QString()));
   QCOMPARE(sel.cursor(), 4);
+  QVERIFY(keys.handleListKey(Qt::Key_Down, Qt::NoModifier, QString()));
+  QCOMPARE(sel.cursor(), 5);
   QVERIFY(keys.handleListKey(Qt::Key_S, Qt::NoModifier, QStringLiteral("s")));
-  QCOMPARE(sel.cursor(), 5);
-  QVERIFY(keys.handleListKey(Qt::Key_A, Qt::NoModifier, QStringLiteral("a")));
-  QCOMPARE(sel.cursor(), 4);
-  QVERIFY(keys.handleListKey(Qt::Key_D, Qt::NoModifier, QStringLiteral("d")));
-  QCOMPARE(sel.cursor(), 5);
-
-  QVERIFY(keys.handleListKey(Qt::Key_S, Qt::ShiftModifier, QStringLiteral("S")));
-  QCOMPARE(sel.cursor(), 10);
-  QVERIFY(keys.handleListKey(Qt::Key_W, Qt::ShiftModifier, QStringLiteral("W")));
-  QCOMPARE(sel.cursor(), 5);
-
-  keys.setGridMode(true);
-  keys.setGridStride(4);
-  QVERIFY(keys.handleListKey(Qt::Key_S, Qt::NoModifier, QStringLiteral("s")));
-  QCOMPARE(sel.cursor(), 9);
-  QVERIFY(keys.handleListKey(Qt::Key_A, Qt::NoModifier, QStringLiteral("a")));
-  QCOMPARE(sel.cursor(), 8);
-  QVERIFY(keys.handleListKey(Qt::Key_D, Qt::ShiftModifier, QStringLiteral("D")));
-  QCOMPARE(sel.cursor(), 11);
-
-  QVERIFY(keys.handleListKey(Qt::Key_X, Qt::NoModifier, QStringLiteral("x")));
-  // no FileOpEngine — cut is a no-op; D no longer cuts
-  QCOMPARE(sel.cursor(), 11);
+  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
+  QCOMPARE(keys.fieldText(), QStringLiteral("s"));
 }
 
-void FileOpsTest::arrowsWalkHierarchy() {
+void FileOpsTest::enterAndBackspaceWalkHierarchy() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("child")));
@@ -874,24 +871,24 @@ void FileOpsTest::arrowsWalkHierarchy() {
   QVERIFY(child >= 0);
   proxy.setCurrentIndex(child);
 
-  QVERIFY(keys.handleListKey(Qt::Key_Right, Qt::NoModifier, QString()));
+  QVERIFY(keys.handleListKey(Qt::Key_Return, Qt::NoModifier, QString()));
   QVERIFY(waitListingDone(model));
   QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
            QFileInfo(tmp.filePath(QStringLiteral("child"))).canonicalFilePath());
 
-  QVERIFY(keys.handleListKey(Qt::Key_Q, Qt::NoModifier, QStringLiteral("q")));
+  QVERIFY(keys.handleListKey(Qt::Key_Backspace, Qt::NoModifier, QString()));
   QVERIFY(waitListingDone(model));
   QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
            QFileInfo(tmp.path()).canonicalFilePath());
   const int childAgain = findProxy(proxy, QStringLiteral("child"));
   QVERIFY(childAgain >= 0);
   proxy.setCurrentIndex(childAgain);
-  QVERIFY(keys.handleListKey(Qt::Key_E, Qt::NoModifier, QStringLiteral("e")));
+  QVERIFY(keys.handleListKey(Qt::Key_Return, Qt::NoModifier, QString()));
   QVERIFY(waitListingDone(model));
   QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
            QFileInfo(tmp.filePath(QStringLiteral("child"))).canonicalFilePath());
 
-  QVERIFY(keys.handleListKey(Qt::Key_Left, Qt::NoModifier, QString()));
+  QVERIFY(keys.handleListKey(Qt::Key_Backspace, Qt::NoModifier, QString()));
   QVERIFY(waitListingDone(model));
   QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
            QFileInfo(tmp.path()).canonicalFilePath());

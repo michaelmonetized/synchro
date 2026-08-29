@@ -108,6 +108,7 @@ void Config::applyDefaults() {
   m_panelLookOpen = true;
   m_panelLookRatio = 0.34;
   m_lookSize = 360;
+  m_lookSide.clear();
   m_gridSize = 132;
 }
 
@@ -116,6 +117,14 @@ static QString normalizePanelSide(const QString &side) {
       side == QLatin1String("top"))
     return side;
   return QStringLiteral("bottom");
+}
+
+static QString normalizeLookSide(const QString &side) {
+  if (side == QLatin1String("left") || side == QLatin1String("right") ||
+      side == QLatin1String("top") || side == QLatin1String("bottom"))
+    return side;
+  // Empty means automatic: share a compatible app panel, otherwise right.
+  return {};
 }
 
 bool Config::load() {
@@ -166,6 +175,8 @@ bool Config::load() {
                0.5);
     m_lookSize = qBound(
         240, panel.value(QStringLiteral("lookSize")).toInt(360), 1200);
+    m_lookSide =
+        normalizeLookSide(panel.value(QStringLiteral("lookSide")).toString());
   }
   if (obj.contains(QStringLiteral("gridSize")))
     m_gridSize = qBound(88, obj.value(QStringLiteral("gridSize")).toInt(132), 240);
@@ -225,6 +236,7 @@ bool Config::save() const {
   panel.insert(QStringLiteral("lookOpen"), m_panelLookOpen);
   panel.insert(QStringLiteral("lookRatio"), m_panelLookRatio);
   panel.insert(QStringLiteral("lookSize"), m_lookSize);
+  panel.insert(QStringLiteral("lookSide"), m_lookSide);
   obj.insert(QStringLiteral("panel"), panel);
   obj.insert(QStringLiteral("gridSize"), m_gridSize);
   QSaveFile out(m_path);
@@ -405,6 +417,14 @@ void Config::setLookSize(int px) {
   if (m_lookSize == next)
     return;
   m_lookSize = next;
+  emit panelChanged();
+}
+
+void Config::setLookSide(const QString &side) {
+  const QString next = normalizeLookSide(side);
+  if (m_lookSide == next)
+    return;
+  m_lookSide = next;
   emit panelChanged();
 }
 

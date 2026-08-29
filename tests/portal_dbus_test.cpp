@@ -872,14 +872,14 @@ void PortalDbusTest::bracketsCyclePortalFilters() {
   QVERIFY(findProxy(*session.filterProxy(), QStringLiteral("sub")) >= 0);
 
   QVERIFY(session.keyMachine()->handleListKey(Qt::Key_BracketRight,
-                                              Qt::NoModifier, QString()));
+                                              Qt::ControlModifier, QString()));
   QCOMPARE(session.currentFilterIndex(), 1);
   QCOMPARE(session.keyMachine()->statusMessage(), QStringLiteral("Text"));
   QCOMPARE(findProxy(*session.filterProxy(), QStringLiteral("keep.png")), -1);
   QVERIFY(findProxy(*session.filterProxy(), QStringLiteral("skip.txt")) >= 0);
 
   QVERIFY(session.keyMachine()->handleListKey(Qt::Key_BracketLeft,
-                                              Qt::NoModifier, QString()));
+                                              Qt::ControlModifier, QString()));
   QCOMPARE(session.currentFilterIndex(), 0);
   QCOMPARE(session.keyMachine()->statusMessage(), QStringLiteral("PNG"));
   QVERIFY(findProxy(*session.filterProxy(), QStringLiteral("keep.png")) >= 0);

@@ -243,9 +243,10 @@ private slots:
   void doLayerShowsFilePreviewAndFolderGrid();
   void volumesListingChromeUrls();
   void volumesListingChromeVisible();
+  void scrollChromeTracksAndMovesLongListings();
   void pathBarTabsSitAboveCommandField();
   void fileGridCellsFillWidth();
-  void gridWasdTracksRenderedGeometryAcrossRelayout();
+  void gridArrowsTrackRenderedGeometryAcrossRelayout();
   void locationCloseConsumesClick();
   void searchGridCellsMatchRows();
   void searchGridDropsFolderTiles();
@@ -1422,13 +1423,64 @@ void PeekOverlayTest::standaloneLookFollowsSelectionAndMigrates() {
   auto *dock = window->findChild<QQuickItem *>(QStringLiteral("panelDock"));
   auto *toggle =
       window->findChild<QQuickItem *>(QStringLiteral("browserLookToggle"));
+  auto *lookPill =
+      window->findChild<QQuickItem *>(QStringLiteral("lookDragPill"));
+  auto *dropZones =
+      window->findChild<QQuickItem *>(QStringLiteral("panelDropZones"));
+  auto *listingLoader =
+      window->findChild<QQuickItem *>(QStringLiteral("listingLoader"));
   QVERIFY(look);
   QVERIFY(dock);
   QVERIFY(toggle);
+  QVERIFY(lookPill);
+  QVERIFY(dropZones);
+  QVERIFY(listingLoader);
   QVERIFY(toggle->property("checked").toBool());
   QTRY_VERIFY_WITH_TIMEOUT(look->isVisible() && look->width() >= 240, 1000);
   QVERIFY(look->parentItem() != dock);
   QCOMPARE(host.inlinePreviewPath(), tmp.filePath(QStringLiteral("notes.txt")));
+
+  // The visible LOOK pill drives the same edge targets as app panels. A drag
+  // to the left persists the preview edge and gives that width back to the
+  // listing on the opposite side.
+  const QPointF leftDrop =
+      dropZones->mapToScene(QPointF(4, dropZones->height() / 2));
+  QVERIFY(QMetaObject::invokeMethod(
+      look, "dockDragStarted", Q_ARG(double, leftDrop.x()),
+      Q_ARG(double, leftDrop.y())));
+  QVERIFY(QMetaObject::invokeMethod(
+      look, "dockDragMoved", Q_ARG(double, leftDrop.x()),
+      Q_ARG(double, leftDrop.y())));
+  QTRY_VERIFY_WITH_TIMEOUT(window->property("panelDragging").toBool(), 1000);
+  QVERIFY(QMetaObject::invokeMethod(
+      look, "dockDragFinished", Q_ARG(double, leftDrop.x()),
+      Q_ARG(double, leftDrop.y())));
+  QTRY_COMPARE_WITH_TIMEOUT(config.lookSide(), QStringLiteral("left"), 1000);
+  QTRY_VERIFY_WITH_TIMEOUT(look->x() < 1 &&
+                               listingLoader->x() >= look->width() - 1,
+                           1000);
+
+  const QPointF topDrop =
+      dropZones->mapToScene(QPointF(dropZones->width() / 2, 4));
+  QVERIFY(QMetaObject::invokeMethod(
+      look, "dockDragStarted", Q_ARG(double, topDrop.x()),
+      Q_ARG(double, topDrop.y())));
+  QVERIFY(QMetaObject::invokeMethod(
+      look, "dockDragMoved", Q_ARG(double, topDrop.x()),
+      Q_ARG(double, topDrop.y())));
+  QVERIFY(QMetaObject::invokeMethod(
+      look, "dockDragFinished", Q_ARG(double, topDrop.x()),
+      Q_ARG(double, topDrop.y())));
+  QTRY_COMPARE_WITH_TIMEOUT(config.lookSide(), QStringLiteral("top"), 1000);
+  QTRY_VERIFY_WITH_TIMEOUT(look->width() >= window->width() - 1 &&
+                               listingLoader->y() >=
+                                   look->y() + look->height() - 1,
+                           1000);
+
+  // Auto remains the compatibility default: clearing the explicit placement
+  // restores migration into a compatible app panel later in this test.
+  config.setLookSide(QString());
+  QTRY_VERIFY_WITH_TIMEOUT(look->x() > listingLoader->x(), 1000);
 
   // Grid geometry is live state: resizing or moving Look must update the
   // keyboard stride without changing which filesystem item is selected.
@@ -3203,6 +3255,70 @@ void PeekOverlayTest::volumesListingChromeVisible() {
            "volumes:// rows must bind percent/detail so the bar paints");
 }
 
+void PeekOverlayTest::scrollChromeTracksAndMovesLongListings() {
+  QQmlEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  QQmlComponent component(&engine);
+  const QUrl base = QUrl::fromLocalFile(
+      QFileInfo(QStringLiteral(SYNCHRO_MAIN_QML))
+          .absolutePath() + QStringLiteral("/ScrollChromeHarness.qml"));
+  component.setData(R"QML(
+import QtQuick
+import "."
+
+Item {
+    width: 320
+    height: 240
+
+    Flickable {
+        id: listing
+        objectName: "scrollTestListing"
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: 2400
+
+        ScrollChrome {
+            objectName: "scrollTestChrome"
+            flick: listing
+            itemCount: 100
+            wheelStep: 120
+        }
+    }
+}
+)QML",
+                    base);
+  QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+  std::unique_ptr<QObject> instance(component.create());
+  QVERIFY2(instance, qPrintable(component.errorString()));
+
+  auto *listing = instance->findChild<QQuickItem *>(
+      QStringLiteral("scrollTestListing"));
+  auto *chrome = instance->findChild<QQuickItem *>(
+      QStringLiteral("scrollTestChrome"));
+  auto *track = instance->findChild<QQuickItem *>(QStringLiteral("scrollTrack"));
+  auto *thumb = instance->findChild<QQuickItem *>(QStringLiteral("scrollThumb"));
+  auto *hit = instance->findChild<QQuickItem *>(
+      QStringLiteral("scrollTrackHitTarget"));
+  QVERIFY(listing);
+  QVERIFY(chrome);
+  QVERIFY(track);
+  QVERIFY(thumb);
+  QVERIFY(hit);
+  QVERIFY(chrome->property("scrollable").toBool());
+  QVERIFY(track->width() >= 14);
+  QVERIFY(hit->width() >= 14);
+  QVERIFY(thumb->width() < hit->width());
+
+  track->setProperty("dragOffset", thumb->height() / 2.0);
+  const bool invoked = QMetaObject::invokeMethod(
+      track, "moveThumbTo", Q_ARG(QVariant, QVariant(track->height() * 0.75)));
+  QVERIFY(invoked);
+  QCoreApplication::processEvents();
+  QVERIFY(listing->property("contentY").toReal() > 1200.0);
+  QVERIFY(chrome->property("position").toReal() > 0.5);
+}
+
 void PeekOverlayTest::pathBarTabsSitAboveCommandField() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
@@ -3309,7 +3425,7 @@ void PeekOverlayTest::fileGridCellsFillWidth() {
                layout) < 1.0);
 }
 
-void PeekOverlayTest::gridWasdTracksRenderedGeometryAcrossRelayout() {
+void PeekOverlayTest::gridArrowsTrackRenderedGeometryAcrossRelayout() {
   QTemporaryDir tmp;
   QVERIFY(tmp.isValid());
   for (int i = 0; i < 30; ++i) {
@@ -3391,7 +3507,7 @@ void PeekOverlayTest::gridWasdTracksRenderedGeometryAcrossRelayout() {
                              1000);
     grid->forceActiveFocus();
     QVERIFY(QTest::qWaitFor([&] { return grid->hasActiveFocus(); }, 1000));
-    QTest::keyClick(window, Qt::Key_S);
+    QTest::keyClick(window, Qt::Key_Down);
     QCOMPARE(proxy.currentIndex(), expected);
   };
 

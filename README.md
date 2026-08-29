@@ -93,10 +93,11 @@ an always-focused omnibar.
 
 | Key | What it does |
 |---|---|
-| `j`/`k` · `WASD` | Move. Shift+WASD leaps 5. |
-| `h` / `Q` / Backspace | Up a directory |
-| `l` / `E` / Right | Into a folder, or peek a file |
+| Arrow keys | Move through the rendered rows or tiles |
 | `Enter` | Open the file, or enter the folder |
+| Backspace | Up a directory |
+| `Alt+Left` / `Alt+Right` | Back / forward |
+| Type | Filter the current folder; Up/Down select, Enter opens, Escape clears and restores position |
 | `Space` | Toggle the lightweight Look panel. |
 | `Shift+Space` | Open full Peek. Esc / Q / Space leave. |
 | `Ctrl+Enter` / right-click | Do-layer (sticky actions + params) |
@@ -104,12 +105,15 @@ an always-focused omnibar.
 | `:` | Command palette (`:trash` `:home` `:volumes` `:sql` `:flow` `:help`) |
 | `Ctrl+L` | Jump (current path selected) |
 | `?name` | Name search via `fd` |
-| `v` | List / grid (or leave a 3D view). `V` is visual select. |
+| `Ctrl+1` / `Ctrl+2` | Switch to list / grid |
 | `Ctrl+M` | Enter/leave StrataV; `M` switches StrataV / MapV while there. |
 | Middle-drag | Pan the StrataV / MapV camera; left-drag orbits and the wheel zooms. |
-| `y` `x` `p` | Copy / cut / paste |
-| `Delete` | Trash. `u` undoes. |
-| `t` | Terminal in this folder |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
+| `F2` / `Ctrl+Shift+N` | Rename / new folder |
+| `Delete` / `Ctrl+Z` | Trash / undo |
+| `Ctrl+H` | Toggle hidden files |
+| `Ctrl+D` / `Ctrl+G` | Pin this folder / reveal a result in its folder |
+| Ctrl+backtick | Terminal panel |
 | `F1` / `:?` | Key reference |
 
 Look is the ambient preview. Peek is deliberate deep inspection. Enter is
