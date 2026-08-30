@@ -100,6 +100,7 @@ qt_add_executable(synchro
     src/core/IconImageProvider.cpp
     src/core/SearchService.cpp
     src/core/SearchModel.cpp
+    src/core/SearchApi.cpp
     src/core/SelectionModel.cpp
     src/core/UndoStack.cpp
     src/core/FileOpEngine.cpp
@@ -886,6 +887,7 @@ if(BUILD_TESTING)
         ${SYNCHRO_THUMB_SOURCES}
         src/core/SearchService.cpp
         src/core/SearchModel.cpp
+        src/core/SearchApi.cpp
         src/core/MimeMap.cpp
     )
     target_include_directories(file_catalog_test PRIVATE
@@ -896,7 +898,7 @@ if(BUILD_TESTING)
         SYNCHRO_VERSION="${PROJECT_VERSION}"
     )
     target_link_libraries(file_catalog_test PRIVATE
-        Qt6::Test Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Concurrent
+        Qt6::Test Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Concurrent Qt6::DBus
     )
     synchro_use_webp(file_catalog_test)
     synchro_use_sqlite(file_catalog_test)
@@ -943,6 +945,10 @@ configure_file(
     ${CMAKE_CURRENT_BINARY_DIR}/org.freedesktop.impl.portal.desktop.synchro.service
     @ONLY)
 configure_file(
+    packaging/dbus/org.omarchy.Synchro.Search1.service.in
+    ${CMAKE_CURRENT_BINARY_DIR}/org.omarchy.Synchro.Search1.service
+    @ONLY)
+configure_file(
     packaging/systemd/synchro-indexd.service.in
     ${CMAKE_CURRENT_BINARY_DIR}/synchro-indexd.service
     @ONLY)
@@ -957,6 +963,8 @@ install(DIRECTORY agents/synchro/
 install(FILES packaging/portals/synchro.portal
         DESTINATION ${CMAKE_INSTALL_DATADIR}/xdg-desktop-portal/portals)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.freedesktop.impl.portal.desktop.synchro.service
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/services)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.omarchy.Synchro.Search1.service
         DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/services)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/synchro-indexd.service
         DESTINATION ${SYNCHRO_SYSTEMD_USER_UNIT_DIR})

@@ -8,6 +8,7 @@
 #include "HandlerInstall.h"
 #include "HandlerRegistry.h"
 #include "Manifest.h"
+#include "SearchApi.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -51,8 +52,19 @@ void queryUsage() {
 void launcherUsage() {
   std::fprintf(stderr,
                "Usage: synchro launcher search --query <text> [--cwd "
-               "<folder>] [--limit <1-50>] [--content] [--compact]\n"
+               "<folder>] [--limit <1-100>] [--content] [--compact]\n"
                "       synchro launcher search <text> [same options]\n");
+}
+
+void searchUsage() {
+  std::fprintf(
+      stderr,
+      "Usage: synchro search <terms> [--cwd <folder>] [--limit <1-100>]\n"
+      "                      [--offset <n>] [--content] [--kind <kind>]\n"
+      "                      [--extension <ext>] [--scope all|cwd]\n"
+      "                      [--include-hidden] [--compact]\n"
+      "       synchro search status [--cwd <folder>] [--compact]\n"
+      "       synchro search describe [--compact]\n");
 }
 
 void catalogUsage() {
@@ -706,7 +718,15 @@ int runQueryCli(int argc, char **argv) {
     queryUsage();
     return 2;
   }
-  const QVariantMap result = FileCatalog::querySync(sql, cwd, selection, limit);
+  QVariantMap options{{QStringLiteral("cwd"), cwd},
+                      {QStringLiteral("selection"), selection},
+                      {QStringLiteral("limit"), limit}};
+  QVariantMap result = SearchApiClient::query(sql, options);
+  if (result.value(QStringLiteral("transportError")).toBool()) {
+    result = FileCatalog::querySync(sql, cwd, selection, limit);
+    result.insert(QStringLiteral("transport"),
+                  QStringLiteral("direct-fallback"));
+  }
   QByteArray encoded =
       QJsonDocument(QJsonObject::fromVariantMap(result))
           .toJson(compact ? QJsonDocument::Compact : QJsonDocument::Indented);
@@ -717,20 +737,64 @@ int runQueryCli(int argc, char **argv) {
   return result.value(QStringLiteral("ok")).toBool() ? 0 : 1;
 }
 
-int runLauncherCli(int argc, char **argv) {
-  Q_UNUSED(argc);
-  Q_UNUSED(argv);
+int runSearchCommand(bool launcherCommand) {
   const QStringList args = QCoreApplication::arguments().mid(2);
-  if (args.isEmpty() || args.first() != QLatin1String("search")) {
+  if (launcherCommand &&
+      (args.isEmpty() || args.first() != QLatin1String("search"))) {
     launcherUsage();
     return 2;
   }
+  const int firstOption = launcherCommand ? 1 : 0;
+  bool compact = args.contains(QStringLiteral("--compact"));
+  if (!launcherCommand && !args.isEmpty() &&
+      (args.first() == QLatin1String("describe") ||
+       args.first() == QLatin1String("status"))) {
+    QVariantMap result;
+    if (args.first() == QLatin1String("describe")) {
+      for (int i = 1; i < args.size(); ++i) {
+        if (args.at(i) != QLatin1String("--compact")) {
+          searchUsage();
+          return 2;
+        }
+      }
+      result = SearchApiClient::describe();
+      if (result.value(QStringLiteral("transportError")).toBool()) {
+        SearchApi direct;
+        result = direct.describe();
+        result.insert(QStringLiteral("transport"),
+                      QStringLiteral("direct-fallback"));
+      }
+    } else {
+      QVariantMap options;
+      for (int i = 1; i < args.size(); ++i) {
+        if (args.at(i) == QLatin1String("--cwd") && i + 1 < args.size())
+          options.insert(QStringLiteral("cwd"), args.at(++i));
+        else if (args.at(i) != QLatin1String("--compact")) {
+          searchUsage();
+          return 2;
+        }
+      }
+      result = SearchApiClient::status(options);
+      if (result.value(QStringLiteral("transportError")).toBool()) {
+        SearchApi direct;
+        result = direct.status(options);
+        result.insert(QStringLiteral("transport"),
+                      QStringLiteral("direct-fallback"));
+      }
+    }
+    writeJson(QJsonObject::fromVariantMap(result), compact);
+    return result.value(QStringLiteral("ok")).toBool() ? 0 : 1;
+  }
   QString query;
   QString cwd = QDir::currentPath();
-  int limit = 8;
-  bool compact = false;
+  int limit = launcherCommand ? 8 : 20;
+  int offset = 0;
   bool content = false;
-  for (int i = 1; i < args.size(); ++i) {
+  bool includeHidden = launcherCommand;
+  QStringList kinds;
+  QStringList extensions;
+  QString scope = QStringLiteral("all");
+  for (int i = firstOption; i < args.size(); ++i) {
     const QString arg = args.at(i);
     auto next = [&](const char *option) -> QString {
       if (i + 1 >= args.size()) {
@@ -753,23 +817,53 @@ int runLauncherCli(int argc, char **argv) {
       if (value.isNull())
         return 2;
       limit = value.toInt(&ok);
-      if (!ok || limit < 1 || limit > 50) {
-        std::fprintf(stderr, "synchro: --limit must be between 1 and 50\n");
+      if (!ok || limit < 1 || limit > 100) {
+        std::fprintf(stderr, "synchro: --limit must be between 1 and 100\n");
+        return 2;
+      }
+    } else if (arg == QLatin1String("--offset")) {
+      bool ok = false;
+      const QString value = next("--offset");
+      if (value.isNull())
+        return 2;
+      offset = value.toInt(&ok);
+      if (!ok || offset < 0 || offset > 10000) {
+        std::fprintf(stderr, "synchro: --offset must be 0-10000\n");
         return 2;
       }
     } else if (arg == QLatin1String("--compact")) {
       compact = true;
     } else if (arg == QLatin1String("--content")) {
       content = true;
+    } else if (arg == QLatin1String("--include-hidden")) {
+      includeHidden = true;
+    } else if (arg == QLatin1String("--kind")) {
+      const QString value = next("--kind");
+      if (value.isNull())
+        return 2;
+      kinds.append(value);
+    } else if (arg == QLatin1String("--extension")) {
+      const QString value = next("--extension");
+      if (value.isNull())
+        return 2;
+      extensions.append(value);
+    } else if (arg == QLatin1String("--scope")) {
+      scope = next("--scope");
+      if (scope.isNull())
+        return 2;
+      if (scope != QLatin1String("all") && scope != QLatin1String("cwd")) {
+        std::fprintf(stderr, "synchro: --scope must be all or cwd\n");
+        return 2;
+      }
     } else if (arg == QLatin1String("--json")) {
       // JSON is the only output format.
     } else if (arg == QLatin1String("-h") || arg == QLatin1String("--help")) {
-      launcherUsage();
+      launcherCommand ? launcherUsage() : searchUsage();
       return 0;
     } else if (arg.startsWith(QLatin1Char('-'))) {
-      std::fprintf(stderr, "synchro: unknown launcher option %s\n",
+      std::fprintf(stderr, "synchro: unknown search option %s\n",
                    qPrintable(arg));
-      launcherUsage();
+      launcherCommand ? launcherUsage() : searchUsage();
       return 2;
     } else if (query.isEmpty()) {
       query = arg;
@@ -779,14 +873,27 @@ int runLauncherCli(int argc, char **argv) {
     }
   }
   if (query.trimmed().isEmpty()) {
-    launcherUsage();
+    launcherCommand ? launcherUsage() : searchUsage();
     return 2;
   }
-  Config config;
-  const QVariantMap result =
-      content ? FileCatalog::contentSearchSync(query, cwd, limit)
-              : FileCatalog::searchSync(query, cwd, config.pins(),
-                                        config.sqlBookmarks(), limit);
+  QVariantMap options{{QStringLiteral("cwd"), cwd},
+                      {QStringLiteral("limit"), limit},
+                      {QStringLiteral("offset"), offset},
+                      {QStringLiteral("mode"),
+                       content ? QStringLiteral("content")
+                               : QStringLiteral("name")},
+                      {QStringLiteral("includeHidden"), includeHidden},
+                      {QStringLiteral("scope"), scope}};
+  if (!kinds.isEmpty())
+    options.insert(QStringLiteral("kinds"), kinds);
+  if (!extensions.isEmpty())
+    options.insert(QStringLiteral("extensions"), extensions);
+  QVariantMap result = SearchApiClient::search(query, options);
+  if (result.value(QStringLiteral("transportError")).toBool()) {
+    result = SearchApi::executeSearch(query, options);
+    result.insert(QStringLiteral("transport"),
+                  QStringLiteral("direct-fallback"));
+  }
   QByteArray encoded =
       QJsonDocument(QJsonObject::fromVariantMap(result))
           .toJson(compact ? QJsonDocument::Compact : QJsonDocument::Indented);
@@ -795,6 +902,18 @@ int runLauncherCli(int argc, char **argv) {
   std::fwrite(encoded.constData(), 1, static_cast<size_t>(encoded.size()),
               stdout);
   return result.value(QStringLiteral("ok")).toBool() ? 0 : 1;
+}
+
+int runLauncherCli(int argc, char **argv) {
+  Q_UNUSED(argc);
+  Q_UNUSED(argv);
+  return runSearchCommand(true);
+}
+
+int runSearchCli(int argc, char **argv) {
+  Q_UNUSED(argc);
+  Q_UNUSED(argv);
+  return runSearchCommand(false);
 }
 
 int runCatalogCli(int argc, char **argv) {
@@ -946,6 +1065,13 @@ int runIndexCli(int argc, char **argv) {
 
   ::setpriority(PRIO_PROCESS, 0, 15);
 
+  SearchApi searchApi;
+  if (!searchApi.start()) {
+    std::fprintf(stderr, "synchro-indexd: search API: %s\n",
+                 qPrintable(searchApi.lastError()));
+    return 1;
+  }
+
   FileCatalog catalog(nullptr, nullptr, true);
   const auto environmentInterval = [](const char *name, int fallback) {
     bool ok = false;
@@ -1012,7 +1138,7 @@ int runIndexCli(int argc, char **argv) {
       recursiveScan.start(initialDelay);
   }
   std::fprintf(stderr,
-               "synchro-indexd: catalog owner ready · %d/%d hot watches · "
+               "synchro-indexd: Search1 ready · %d/%d hot watches · "
                "%d ms debounce%s\n",
                hotSet.watchCount(), hotSet.maxWatches(), hotSet.debounceMs(),
                scan ? "" : " (recursive scans disabled)");

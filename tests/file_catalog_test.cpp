@@ -3,10 +3,13 @@
 #include "FileCatalog.h"
 #include "FsnLayout.h"
 #include "HotSetWatcher.h"
+#include "SearchApi.h"
 #include "ThumbCache.h"
 #include "ThumbnailService.h"
 
 #include <QCoreApplication>
+#include <QDBusConnection>
+#include <QDBusConnectionInterface>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -85,7 +88,114 @@ private slots:
   void incrementalRefreshReconcilesExternalMove();
   void rescanPrunesMissingRows();
   void hotSetWatcherCoalescesAndReconciles();
+  void operationalSearchApiIsAsyncFilteredAndVersioned();
 };
+
+void FileCatalogTest::operationalSearchApiIsAsyncFilteredAndVersioned() {
+  QTemporaryDir home;
+  QTemporaryDir root;
+  QVERIFY(home.isValid());
+  QVERIFY(root.isValid());
+  qputenv("SYNCHRO_HOME", QFile::encodeName(home.path()));
+
+  for (const QString &name : {QStringLiteral("alpha-one.pdf"),
+                              QStringLiteral("alpha-two.pdf"),
+                              QStringLiteral("alpha-note.txt")}) {
+    QFile file(root.filePath(name));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("alpha payload\n");
+  }
+  QVERIFY(QDir(root.path()).mkpath(QStringLiteral("nested")));
+  QFile nested(root.filePath(QStringLiteral("nested/alpha-inside.pdf")));
+  QVERIFY(nested.open(QIODevice::WriteOnly));
+  nested.write("alpha nested payload\n");
+  nested.close();
+  DirectoryModel model;
+  FileCatalog catalog(&model);
+  catalog.scanTree(root.path(), 100);
+  QTRY_VERIFY_WITH_TIMEOUT(!catalog.indexing() && catalog.indexedCount() == 5,
+                           10000);
+
+  SearchApi api;
+  const QVariantMap description = api.describe();
+  QCOMPARE(description.value(QStringLiteral("apiVersion")).toInt(), 1);
+  QVERIFY(description.value(QStringLiteral("cancellation")).toBool());
+  QVERIFY(description.value(QStringLiteral("pagination")).toBool());
+  QVERIFY(!description.value(QStringLiteral("contentIndexed")).toBool());
+
+  if (QDBusConnection::sessionBus().isConnected()) {
+    const QString service =
+        QStringLiteral("org.omarchy.Synchro.Search1.test%1")
+            .arg(QCoreApplication::applicationPid());
+    QVERIFY2(api.start(QDBusConnection::sessionBus(), service),
+             qPrintable(api.lastError()));
+    QVERIFY(QDBusConnection::sessionBus()
+                .interface()
+                ->isServiceRegistered(service));
+  }
+
+  QSignalSpy ready(&api, &SearchApi::resultsReady);
+  const QVariantMap options{{QStringLiteral("cwd"), root.path()},
+                            {QStringLiteral("scope"), QStringLiteral("cwd")},
+                            {QStringLiteral("kind"), QStringLiteral("file")},
+                            {QStringLiteral("extension"), QStringLiteral("pdf")},
+                            {QStringLiteral("limit"), 1}};
+  const qulonglong request = api.startSearch(QStringLiteral("alpha"), options);
+  QVERIFY(request > 0);
+  QCOMPARE(api.result(request).value(QStringLiteral("state")).toString(),
+           QStringLiteral("running"));
+  QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 5000);
+  const QVariantMap result = api.result(request);
+  QVERIFY2(result.value(QStringLiteral("ok")).toBool(),
+           qPrintable(result.value(QStringLiteral("error")).toString()));
+  QCOMPARE(result.value(QStringLiteral("state")).toString(),
+           QStringLiteral("ready"));
+  QCOMPARE(result.value(QStringLiteral("count")).toInt(), 1);
+  QVERIFY(result.value(QStringLiteral("hasMore")).toBool());
+  QCOMPARE(result.value(QStringLiteral("nextOffset")).toInt(), 1);
+  const QVariantMap row =
+      result.value(QStringLiteral("rows")).toList().first().toMap();
+  QCOMPARE(row.value(QStringLiteral("extension")).toString(),
+           QStringLiteral("pdf"));
+  QVERIFY(row.value(QStringLiteral("uri")).toString().startsWith(
+      QLatin1String("file://")));
+  const QVariantMap generation = result.value(QStringLiteral("catalog")).toMap();
+  QVERIFY(generation.value(QStringLiteral("available")).toBool());
+  QVERIFY(generation.value(QStringLiteral("coverageComplete")).toBool());
+  QVERIFY(generation.value(QStringLiteral("revision")).toLongLong() > 0);
+
+  QVariantMap scopedOptions = options;
+  scopedOptions.insert(QStringLiteral("cwd"), root.filePath("nested"));
+  scopedOptions.insert(QStringLiteral("limit"), 10);
+  const QVariantMap scoped =
+      SearchApi::executeSearch(QStringLiteral("alpha"), scopedOptions);
+  QCOMPARE(scoped.value(QStringLiteral("count")).toInt(), 1);
+  QCOMPARE(scoped.value(QStringLiteral("rows")).toList().first().toMap().value(
+               QStringLiteral("path")),
+           root.filePath(QStringLiteral("nested/alpha-inside.pdf")));
+
+  const qulonglong queryRequest = api.startQuery(
+      QStringLiteral("select name, path from tree order by name"),
+      {{QStringLiteral("cwd"), root.path()}, {QStringLiteral("limit"), 2}});
+  QVERIFY(queryRequest > 0);
+  QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 2, 5000);
+  const QVariantMap queryResult = api.result(queryRequest);
+  QVERIFY2(queryResult.value(QStringLiteral("ok")).toBool(),
+           qPrintable(queryResult.value(QStringLiteral("error")).toString()));
+  QCOMPARE(queryResult.value(QStringLiteral("state")).toString(),
+           QStringLiteral("ready"));
+  QCOMPARE(queryResult.value(QStringLiteral("requestKind")).toString(),
+           QStringLiteral("query"));
+  QCOMPARE(queryResult.value(QStringLiteral("mode")).toString(),
+           QStringLiteral("sql"));
+  QCOMPARE(queryResult.value(QStringLiteral("count")).toInt(), 2);
+
+  const qulonglong canceled =
+      api.startSearch(QStringLiteral("alpha"), options);
+  QVERIFY(api.cancel(canceled));
+  QCOMPARE(api.result(canceled).value(QStringLiteral("state")).toString(),
+           QStringLiteral("canceled"));
+}
 
 void FileCatalogTest::hotSetWatcherCoalescesAndReconciles() {
   QTemporaryDir home;

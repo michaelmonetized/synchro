@@ -29,7 +29,10 @@ synchro_bin=${SYNCHRO_BIN:-$(command -v synchro || true)}
 [[ -n $synchro_bin && -x $synchro_bin ]] || fail "synchro is not installed"
 
 systemctl --user daemon-reload
-systemctl --user enable --now synchro-indexd.service
+# Restart is intentional: upgrades may change the D-Bus contract or unit type,
+# and enable --now alone leaves an already-running old binary in place.
+systemctl --user enable synchro-indexd.service
+systemctl --user restart synchro-indexd.service
 systemctl --user is-active --quiet synchro-indexd.service \
   || fail "synchro-indexd.service did not start"
 

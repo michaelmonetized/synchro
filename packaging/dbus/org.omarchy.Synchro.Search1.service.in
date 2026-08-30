@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.omarchy.Synchro.Search1
+Exec=@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_BINDIR@/synchro index serve
+SystemdService=synchro-indexd.service

@@ -2666,6 +2666,27 @@ QVariantMap FileCatalog::refreshShadow() { return refreshShadowInternal(); }
 
 QVariantMap FileCatalog::shadowStatus() { return readShadowStatus(); }
 
+QVariantMap FileCatalog::catalogStatus(const QString &rawCwd) {
+  const QString cwd = normalizedPath(rawCwd.isEmpty() ? QDir::homePath()
+                                                       : rawCwd);
+  QVariantMap out = catalogScopeMetadata(cwd);
+  sqlite3 *db = openCatalogReadOnly();
+  out.insert(QStringLiteral("available"), db != nullptr);
+  if (!db)
+    return out;
+  out.insert(QStringLiteral("revision"), catalogRevision(db));
+  out.insert(QStringLiteral("factsRevision"),
+             catalogMetaInteger(db, "facts_revision"));
+  out.insert(QStringLiteral("changeSequence"),
+             catalogMetaInteger(db, "change_sequence"));
+  out.insert(QStringLiteral("changedAt"),
+             qMax(catalogMetaInteger(db, "catalog_changed_at"),
+                  catalogMetaInteger(db, "facts_changed_at")));
+  out.insert(QStringLiteral("searchIndex"), searchIndexStatus(db));
+  sqlite3_close(db);
+  return out;
+}
+
 QStringList FileCatalog::hotDirectories(int limit) {
   QStringList paths;
   sqlite3 *db = openCatalogReadOnly();
@@ -2752,7 +2773,7 @@ QVariantMap FileCatalog::searchSync(const QString &rawQuery,
                                     const QString &rawCwd,
                                     const QStringList &pinnedPaths,
                                     const QVariantList &savedQueries,
-                                    int maxRows) {
+                                    int maxRows, bool restrictToCwd) {
   QElapsedTimer timer;
   timer.start();
   QVariantMap out;
@@ -2761,7 +2782,12 @@ QVariantMap FileCatalog::searchSync(const QString &rawQuery,
   const QStringList terms = needle.split(
       QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
   const QString cwd = normalizedPath(rawCwd);
-  const int limit = qBound(1, maxRows, 50);
+  const QString scopeLower = restrictToCwd ? cwd : QString();
+  const QString scopeUpper =
+      !restrictToCwd ? QString()
+                     : (cwd == QLatin1String("/") ? QStringLiteral("0")
+                                                   : cwd + QLatin1Char('0'));
+  const int limit = qBound(1, maxRows, 500);
   out.insert(QStringLiteral("ok"), true);
   out.insert(QStringLiteral("query"), query);
   out.insert(QStringLiteral("cwd"), cwd);
@@ -2801,6 +2827,11 @@ QVariantMap FileCatalog::searchSync(const QString &rawQuery,
   // hits without letting unrelated bookmarks pollute the result set.
   for (const QVariant &value : savedQueries) {
     const QVariantMap bookmark = value.toMap();
+    const QString bookmarkCwd =
+        normalizedPath(bookmark.value(QStringLiteral("cwd")).toString());
+    if (restrictToCwd && bookmarkCwd != cwd &&
+        !bookmarkCwd.startsWith(cwd + QLatin1Char('/')))
+      continue;
     const QString name = bookmark.value(QStringLiteral("name")).toString();
     const int base = matchScore(name);
     if (needle.isEmpty() || base >= 10000)
@@ -2835,6 +2866,9 @@ QVariantMap FileCatalog::searchSync(const QString &rawQuery,
     const QString path = textAt(0);
     const QString id = QStringLiteral("file:") + path;
     if (path.isEmpty() || seen.contains(id))
+      return;
+    if (restrictToCwd && path != cwd &&
+        !path.startsWith(cwd + QLatin1Char('/')))
       return;
     const QString parent = textAt(1);
     const QString name = textAt(2);
@@ -2913,8 +2947,13 @@ QVariantMap FileCatalog::searchSync(const QString &rawQuery,
     sqlite3_stmt *st = nullptr;
     if (sqlite3_prepare_v2(db, sql.constData(), -1, &st, nullptr) != SQLITE_OK)
       return;
-    bindText(st, 1, value);
-    sqlite3_bind_int(st, 2, cap);
+    int parameter = 1;
+    bindText(st, parameter++, value);
+    if (restrictToCwd) {
+      bindText(st, parameter++, scopeLower);
+      bindText(st, parameter++, scopeUpper);
+    }
+    sqlite3_bind_int(st, parameter, cap);
     while (sqlite3_step(st) == SQLITE_ROW) {
       const auto *pathText = sqlite3_column_text(st, 0);
       const QString path =
@@ -2927,18 +2966,30 @@ QVariantMap FileCatalog::searchSync(const QString &rawQuery,
   if (!query.isEmpty()) {
     appendIndexedNames(
         QByteArray(kColumns) +
-            "FROM files f WHERE f.name=? COLLATE NOCASE LIMIT ?;",
+            (restrictToCwd
+                 ? "FROM files f WHERE f.name=? COLLATE NOCASE "
+                   "AND f.path>=? AND f.path<? LIMIT ?;"
+                 : "FROM files f WHERE f.name=? COLLATE NOCASE LIMIT ?;"),
         query, qMax(16, limit * 2));
     sqlite3_stmt *prefixQuery = nullptr;
     const QByteArray prefixSql =
         QByteArray(kColumns) +
-        "FROM files f WHERE f.name>=? COLLATE NOCASE "
-        "AND f.name<? COLLATE NOCASE LIMIT ?;";
+        (restrictToCwd
+             ? "FROM files f WHERE f.name>=? COLLATE NOCASE "
+               "AND f.name<? COLLATE NOCASE AND f.path>=? AND f.path<? "
+               "LIMIT ?;"
+             : "FROM files f WHERE f.name>=? COLLATE NOCASE "
+               "AND f.name<? COLLATE NOCASE LIMIT ?;");
     if (sqlite3_prepare_v2(db, prefixSql.constData(), -1, &prefixQuery,
                            nullptr) == SQLITE_OK) {
       bindText(prefixQuery, 1, query);
       bindText(prefixQuery, 2, query + QChar(0xffff));
-      sqlite3_bind_int(prefixQuery, 3, qMax(32, limit * 4));
+      int parameter = 3;
+      if (restrictToCwd) {
+        bindText(prefixQuery, parameter++, scopeLower);
+        bindText(prefixQuery, parameter++, scopeUpper);
+      }
+      sqlite3_bind_int(prefixQuery, parameter, qMax(32, limit * 4));
       while (sqlite3_step(prefixQuery) == SQLITE_ROW) {
         const auto *pathText = sqlite3_column_text(prefixQuery, 0);
         const QString path =
@@ -2965,13 +3016,24 @@ QVariantMap FileCatalog::searchSync(const QString &rawQuery,
     const int candidateLimit = qBound(64, limit * 32, 2048);
     const QByteArray searchSql =
         QByteArray(kColumns) +
-        "FROM file_name_fts JOIN files f ON f.rowid=file_name_fts.rowid "
-        "WHERE file_name_fts MATCH ? LIMIT ?;";
+        (restrictToCwd
+             ? "FROM file_name_fts JOIN files f "
+               "ON f.rowid=file_name_fts.rowid "
+               "WHERE file_name_fts MATCH ? AND f.path>=? AND f.path<? "
+               "LIMIT ?;"
+             : "FROM file_name_fts JOIN files f "
+               "ON f.rowid=file_name_fts.rowid "
+               "WHERE file_name_fts MATCH ? LIMIT ?;");
     sqlite3_stmt *search = nullptr;
     if (sqlite3_prepare_v2(db, searchSql.constData(), -1, &search, nullptr) ==
         SQLITE_OK) {
       bindText(search, 1, expression);
-      sqlite3_bind_int(search, 2, candidateLimit);
+      int parameter = 2;
+      if (restrictToCwd) {
+        bindText(search, parameter++, scopeLower);
+        bindText(search, parameter++, scopeUpper);
+      }
+      sqlite3_bind_int(search, parameter, candidateLimit);
       while (sqlite3_step(search) == SQLITE_ROW) {
         const auto *pathText = sqlite3_column_text(search, 0);
         const QString path =
@@ -3036,7 +3098,7 @@ QVariantMap FileCatalog::contentSearchSync(const QString &rawQuery,
                              query.endsWith(QLatin1Char('"')))))
     query = query.mid(1, query.size() - 2);
   const QString cwd = normalizedPath(rawCwd);
-  const int limit = qBound(1, maxRows, 50);
+  const int limit = qBound(1, maxRows, 500);
   const int deadline = qBound(250, timeoutMs, 30000);
   out.insert(QStringLiteral("ok"), true);
   out.insert(QStringLiteral("mode"), QStringLiteral("content"));

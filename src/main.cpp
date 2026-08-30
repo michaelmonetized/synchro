@@ -62,6 +62,7 @@ int main(int argc, char *argv[]) {
        std::strcmp(argv[1], "catalog") == 0 ||
        std::strcmp(argv[1], "index") == 0 ||
        std::strcmp(argv[1], "launcher") == 0 ||
+       std::strcmp(argv[1], "search") == 0 ||
        std::strcmp(argv[1], "query") == 0 ||
        std::strcmp(argv[1], "mcp") == 0)) {
     QCoreApplication app(argc, argv);
@@ -73,6 +74,8 @@ int main(int argc, char *argv[]) {
       return runQueryCli(argc, argv);
     if (std::strcmp(argv[1], "launcher") == 0)
       return runLauncherCli(argc, argv);
+    if (std::strcmp(argv[1], "search") == 0)
+      return runSearchCli(argc, argv);
     if (std::strcmp(argv[1], "agent") == 0)
       return runAgentCli(argc, argv);
     if (std::strcmp(argv[1], "catalog") == 0)

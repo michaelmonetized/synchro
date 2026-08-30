@@ -38,6 +38,9 @@ public:
   // Falls back to a bounded full build only when no compatible baseline exists.
   static QVariantMap refreshShadow();
   static QVariantMap shadowStatus();
+  // Cheap generation and coverage envelope for operational API consumers.
+  // Unlike shadowStatus(), this never starts DuckDB.
+  static QVariantMap catalogStatus(const QString &cwd = {});
   // Headless query seam shared by the SQL panel, CLI, and MCP server. It
   // reads only the durable catalog and does not require a GUI model.
   static QVariantMap querySync(const QString &sql, const QString &cwd,
@@ -49,7 +52,8 @@ public:
   static QVariantMap searchSync(const QString &query, const QString &cwd = {},
                                 const QStringList &pinnedPaths = {},
                                 const QVariantList &savedQueries = {},
-                                int maxRows = 8);
+                                int maxRows = 8,
+                                bool restrictToCwd = false);
   // Literal in-file lookup matching the app's content-search contract. It is
   // bounded, cancellable by killing the caller, and never mutates the catalog.
   static QVariantMap contentSearchSync(const QString &query,

@@ -4,7 +4,8 @@ PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]
-Type=simple
+Type=dbus
+BusName=org.omarchy.Synchro.Search1
 ExecStart=@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_BINDIR@/synchro index serve
 Restart=on-failure
 RestartSec=5

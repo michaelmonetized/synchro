@@ -19,6 +19,7 @@ required=(
   usr/share/synchro/handlers/synchro.preview.folder/Preview.qml
   usr/share/xdg-desktop-portal/portals/synchro.portal
   usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.synchro.service
+  usr/share/dbus-1/services/org.omarchy.Synchro.Search1.service
   usr/lib/systemd/user/synchro-indexd.service
 )
 
@@ -38,6 +39,18 @@ fi
 if ! grep -Fq 'ExecStart=/usr/bin/synchro index serve' \
   "$root/usr/lib/systemd/user/synchro-indexd.service"; then
   echo 'indexer unit does not point at /usr/bin/synchro' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'BusName=org.omarchy.Synchro.Search1' \
+  "$root/usr/lib/systemd/user/synchro-indexd.service"; then
+  echo 'indexer unit does not own the Search1 API name' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'SystemdService=synchro-indexd.service' \
+  "$root/usr/share/dbus-1/services/org.omarchy.Synchro.Search1.service"; then
+  echo 'Search1 D-Bus activation does not use the catalog service' >&2
   exit 1
 fi
 

@@ -268,6 +268,23 @@ synchro launcher search --query "test pdf" --cwd "$PWD" --limit 8 --compact
 synchro launcher search --content --query "import re" --cwd "$HOME" --limit 8 --compact
 ```
 
+The launcher now consumes Synchro's versioned
+[`org.omarchy.Synchro.Search1`](docs/search-api.md) user service rather than
+opening the catalog itself. Apps and Quickshell plugins can use the same
+asynchronous, cancellable API directly; `synchro search` is its stable CLI:
+
+```bash
+synchro search "test pdf" --kind file --extension pdf --limit 20 --compact
+synchro search status --cwd "$HOME" --compact
+synchro search describe --compact
+```
+
+The response includes catalog coverage and generation metadata, pagination,
+cached thumbnail URLs, and launch operations for open/reveal/SQL result
+handoffs. Content search currently preserves the app's bounded live-ripgrep
+behavior and identifies itself honestly as non-indexed. See the API document
+for the D-Bus methods and options.
+
 On Omarchy 4.0, enable that index in the normal **Super+Space** menu with:
 
 ```bash
