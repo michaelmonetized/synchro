@@ -98,6 +98,7 @@ private slots:
   void unknownFileGetsFallbackCard();
   void packedCacheRoundTrip();
   void visibleRequestsReuseLargerTierAsOneBatch();
+  void newerVisibleRequestSkipsQueuedViewportWork();
   void invalidateDropsOldPackedEntry();
 
 private:
@@ -858,6 +859,57 @@ void ThumbnailServiceTest::visibleRequestsReuseLargerTierAsOneBatch() {
     QCOMPARE(results.at(i).url,
              ThumbCache::imageUrl(expected.at(i), jobs.at(i).mtime, 256));
   }
+}
+
+void ThumbnailServiceTest::newerVisibleRequestSkipsQueuedViewportWork() {
+  QVector<ThumbnailJob> stale;
+  for (int i = 0; i < 64; ++i) {
+    const QString path = m_files.filePath(
+        QStringLiteral("stale-viewport-%1.txt").arg(i, 2, 10, QChar('0')));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write("old viewport\n");
+    file.close();
+    ThumbnailJob job;
+    job.path = path;
+    job.mime = QStringLiteral("text/plain");
+    job.mtime = mtimeMsOf(path);
+    job.sizePx = 128;
+    stale.append(job);
+  }
+
+  const QString currentPath =
+      m_files.filePath(QStringLiteral("current-viewport.txt"));
+  QFile current(currentPath);
+  QVERIFY(current.open(QIODevice::WriteOnly | QIODevice::Truncate));
+  current.write("current viewport\n");
+  current.close();
+  ThumbnailJob currentJob;
+  currentJob.path = currentPath;
+  currentJob.mime = QStringLiteral("text/plain");
+  currentJob.mtime = mtimeMsOf(currentPath);
+  currentJob.sizePx = 128;
+  const QVector<ThumbnailJob> currentJobs{currentJob};
+
+  ThumbnailService svc;
+  svc.setThumbnailerDirectories({});
+  QSignalSpy ready(&svc, &ThumbnailService::thumbnailReady);
+  svc.requestVisible(stale);
+  svc.requestVisible(currentJobs);
+
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        for (const QList<QVariant> &event : ready) {
+          if (event.first().toString() == currentPath)
+            return true;
+        }
+        return false;
+      },
+      3000));
+  QTest::qWait(100);
+  for (const QList<QVariant> &event : ready)
+    QVERIFY2(!event.first().toString().contains("stale-viewport-"),
+             qPrintable(event.first().toString()));
 }
 
 void ThumbnailServiceTest::invalidateDropsOldPackedEntry() {

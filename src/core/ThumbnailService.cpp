@@ -935,7 +935,17 @@ public:
     }
   }
 
-  void submit(const QVector<ThumbnailJob> &jobs, bool exclusive) {
+  void submit(const QVector<ThumbnailJob> &jobs, bool exclusive,
+              quint64 generation = 0,
+              const std::atomic<quint64> *latestGeneration = nullptr) {
+    if (exclusive && latestGeneration)
+      m_latestVisibleGeneration = latestGeneration;
+    const auto stale = [exclusive, generation, latestGeneration] {
+      return exclusive && latestGeneration &&
+             latestGeneration->load(std::memory_order_acquire) != generation;
+    };
+    if (stale())
+      return;
     QElapsedTimer elapsed;
     elapsed.start();
     QSet<QString> keep;
@@ -945,6 +955,8 @@ public:
     QVector<Job> cold;
     cold.reserve(jobs.size());
     for (const ThumbnailJob &in : jobs) {
+      if (stale())
+        return;
       if (in.path.isEmpty() || in.mtime <= 0 || in.sizePx <= 0)
         continue;
       if (isThumbCachePath(in.path))
@@ -956,6 +968,7 @@ public:
       job.sizePx = ThumbCache::canonicalSize(in.sizePx);
       job.key = jobKey(job.path, job.mtime, job.sizePx);
       job.priority = in.priority;
+      job.visibleGeneration = exclusive ? generation : 0;
       job.mosaicPaths = in.mosaicPaths;
       job.mosaicLabel = in.mosaicLabel;
       keep.insert(job.key);
@@ -990,6 +1003,8 @@ public:
 
     const int packedHits = hits.size();
     const qint64 packedMs = elapsed.elapsed();
+    if (stale())
+      return;
     if (!hits.isEmpty() && notifyBatch) {
       notifyBatch(hits);
       hits.clear();
@@ -997,6 +1012,8 @@ public:
 
     int legacyHits = 0;
     for (const Job &job : std::as_const(cold)) {
+      if (stale())
+        return;
       const QString hit = lookupLegacyCache(job);
       if (!hit.isEmpty()) {
         ++legacyHits;
@@ -1010,12 +1027,20 @@ public:
         }
         continue;
       }
-      if (m_pending.contains(job.key))
-        m_pending[job.key].priority = job.priority;
-      else
+      if (m_pending.contains(job.key)) {
+        Job &pending = m_pending[job.key];
+        pending.priority = job.priority;
+        // A path may survive across adjacent viewport ranges. Retag it for
+        // the newest range (or as background work) instead of letting the
+        // stale-range sweep discard a still-relevant thumbnail.
+        pending.visibleGeneration = job.visibleGeneration;
+      } else {
         m_pending.insert(job.key, job);
+      }
     }
 
+    if (stale())
+      return;
     if (!hits.isEmpty() && notifyBatch)
       notifyBatch(hits);
 
@@ -1048,6 +1073,7 @@ private:
     qint64 mtime = 0;
     int sizePx = 128;
     int priority = 0;
+    quint64 visibleGeneration = 0;
     QStringList mosaicPaths;
     QString mosaicLabel;
   };
@@ -1068,6 +1094,12 @@ private:
         return true;
     }
     return false;
+  }
+
+  bool isStaleVisible(const Job &job) const {
+    return job.visibleGeneration > 0 && m_latestVisibleGeneration &&
+           m_latestVisibleGeneration->load(std::memory_order_acquire) !=
+               job.visibleGeneration;
   }
 
   QString cachePath(const Job &job) const {
@@ -1233,11 +1265,16 @@ private:
     while (m_active.size() < kMaxWorkers && !m_pending.isEmpty()) {
       auto best = m_pending.end();
       int bestPri = std::numeric_limits<int>::max();
-      for (auto it = m_pending.begin(); it != m_pending.end(); ++it) {
+      for (auto it = m_pending.begin(); it != m_pending.end();) {
+        if (isStaleVisible(it.value())) {
+          it = m_pending.erase(it);
+          continue;
+        }
         if (it.value().priority < bestPri) {
           bestPri = it.value().priority;
           best = it;
         }
+        ++it;
       }
       if (best == m_pending.end())
         break;
@@ -1248,6 +1285,10 @@ private:
   }
 
   void startGenerate(const Job &job) {
+    if (isStaleVisible(job)) {
+      kick();
+      return;
+    }
     const QString hit = lookupCache(job);
     if (!hit.isEmpty()) {
       m_ready.insert(job.key, hit);
@@ -1547,6 +1588,7 @@ private:
   QHash<QString, QString> m_ready;
   QSet<QString> m_failed;
   QVector<Active> m_active;
+  const std::atomic<quint64> *m_latestVisibleGeneration = nullptr;
   QHash<QString, Job> m_factPending;
   QSet<QString> m_factsPublished;
   QStringList m_factPublishedOrder;
@@ -2333,7 +2375,11 @@ ThumbnailService::ThumbnailService(QObject *parent) : QObject(parent) {
   connect(
       this, &ThumbnailService::submitted, m_engine,
       [eng = m_engine](const QVector<ThumbnailJob> &jobs, bool exclusive) {
-        eng->submit(jobs, exclusive);
+        // Viewport submissions carry a generation token through the
+        // latest-wins queue below. Keep this public signal as the diagnostic
+        // seam used by tests and tracing.
+        if (!exclusive)
+          eng->submit(jobs, false);
       },
       Qt::QueuedConnection);
   connect(
@@ -2463,9 +2509,20 @@ void ThumbnailService::requestVisible(const QVector<ThumbnailJob> &jobs) {
     job.sizePx = ThumbCache::canonicalSize(job.sizePx);
     normalized.append(std::move(job));
   }
-  // Cache probing and legacy-cache ingestion can perform SQLite and file I/O;
-  // keep the entire visible-page lookup on the thumbnail thread.
+  const quint64 generation =
+      m_visibleGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+  // Cache probing and legacy-cache ingestion can perform SQLite and file I/O.
+  // A scrollbar drag emits many ranges; queued stale ranges must be discarded
+  // before they do that work so the final viewport jumps to the front.
   emit submitted(normalized, true);
+  QMetaObject::invokeMethod(
+      m_engine,
+      [this, eng = m_engine, normalized = std::move(normalized), generation] {
+        if (m_visibleGeneration.load(std::memory_order_acquire) != generation)
+          return;
+        eng->submit(normalized, true, generation, &m_visibleGeneration);
+      },
+      Qt::QueuedConnection);
 }
 
 void ThumbnailService::invalidate(const QString &path) {
@@ -2489,7 +2546,10 @@ QString ThumbnailService::displayUrl(const QString &path,
              : url;
 }
 
-void ThumbnailService::cancelAll() { emit cancelRequested(); }
+void ThumbnailService::cancelAll() {
+  m_visibleGeneration.fetch_add(1, std::memory_order_acq_rel);
+  emit cancelRequested();
+}
 
 void ThumbnailService::setThumbnailerDirectories(const QStringList &dirs) {
   emit thumbnailerDirectoriesChanged(dirs);

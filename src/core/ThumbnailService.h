@@ -10,6 +10,8 @@
 #include <QVector>
 #include <QtGlobal>
 
+#include <atomic>
+
 struct ExecThumbnailer {
   QStringList mimes;
   QString exec;
@@ -113,6 +115,9 @@ private:
   QThread m_thread;
   ThumbnailEngine *m_engine = nullptr;
   QHash<QString, quint64> m_displayRevisions;
+  // Scrollbar drags can enqueue many intermediate viewport pages while the
+  // worker is still probing the packed cache. Only the newest page matters.
+  std::atomic<quint64> m_visibleGeneration{0};
 };
 
 Q_DECLARE_METATYPE(ThumbnailJob)

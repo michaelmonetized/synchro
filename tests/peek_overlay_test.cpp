@@ -252,6 +252,7 @@ private slots:
   void volumesListingChromeUrls();
   void volumesListingChromeVisible();
   void scrollChromeTracksAndMovesLongListings();
+  void fileGridScrollbarRequestsDestinationThumbs();
   void pathBarTabsSitAboveCommandField();
   void fileGridCellsFillWidth();
   void gridArrowsTrackRenderedGeometryAcrossRelayout();
@@ -3360,6 +3361,110 @@ Item {
   QCoreApplication::processEvents();
   QVERIFY(listing->property("contentY").toReal() > 1200.0);
   QVERIFY(chrome->property("position").toReal() > 0.5);
+}
+
+void PeekOverlayTest::fileGridScrollbarRequestsDestinationThumbs() {
+  QQmlEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  QQmlComponent component(&engine);
+  const QUrl base = QUrl::fromLocalFile(
+      QFileInfo(QStringLiteral(SYNCHRO_MAIN_QML)).absolutePath() +
+      QStringLiteral("/FileGridScrollbarHarness.qml"));
+  component.setData(R"QML(
+import QtQuick
+import "."
+
+Item {
+    width: 480
+    height: 300
+
+    ListModel {
+        id: rows
+        objectName: "thumbRangeModel"
+        property int currentIndex: -1
+        property bool isSearch: false
+        property bool listing: false
+        property var folderGroups: []
+        property int requestedFirst: -1
+        property int requestedLast: -1
+        property int requestCount: 0
+
+        function rowMap(row) { return get(row) }
+        function requestVisibleThumbs(first, last, sizePx) {
+            requestedFirst = first
+            requestedLast = last
+            requestCount += 1
+        }
+    }
+
+    FileGrid {
+        anchors.fill: parent
+        fileModel: rows
+        filterProxy: null
+        keyMachine: null
+        selection: null
+        dndEnabled: false
+    }
+
+    Component.onCompleted: {
+        for (var i = 0; i < 1000; ++i) {
+            rows.append({
+                name: "file-" + i + ".png",
+                isDir: false,
+                isSymlink: false,
+                thumbnail: "",
+                thumbnailPending: false,
+                path: "/tmp/file-" + i + ".png",
+                detail: "",
+                used: -1,
+                total: -1,
+                percent: -1
+            })
+        }
+    }
+}
+)QML",
+                    base);
+  QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+  std::unique_ptr<QObject> instance(component.create());
+  QVERIFY2(instance, qPrintable(component.errorString()));
+  auto *root = qobject_cast<QQuickItem *>(instance.get());
+  QVERIFY(root);
+  QQuickWindow window;
+  window.resize(480, 300);
+  root->setParentItem(window.contentItem());
+  root->setSize(QSizeF(480, 300));
+  window.show();
+  QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+  auto *rows = instance->findChild<QObject *>(QStringLiteral("thumbRangeModel"));
+  auto *tiles = instance->findChild<QQuickItem *>(QStringLiteral("fileGridTiles"));
+  auto *track = instance->findChild<QQuickItem *>(QStringLiteral("scrollTrack"));
+  auto *thumb = instance->findChild<QQuickItem *>(QStringLiteral("scrollThumb"));
+  QVERIFY(rows);
+  QVERIFY(tiles);
+  QVERIFY(track);
+  QVERIFY(thumb);
+  QVERIFY(QTest::qWaitFor(
+      [&] { return tiles->property("contentHeight").toReal() > 3000; }, 2000));
+
+  rows->setProperty("requestedFirst", -1);
+  rows->setProperty("requestedLast", -1);
+  track->setProperty("dragOffset", thumb->height() / 2.0);
+  QVERIFY(QMetaObject::invokeMethod(
+      track, "moveThumbTo", Q_ARG(QVariant, QVariant(track->height() * 0.80))));
+
+  QVERIFY2(QTest::qWaitFor(
+               [&] { return rows->property("requestedFirst").toInt() > 500; },
+               1000),
+           qPrintable(QStringLiteral("destination request stayed at rows %1-%2; "
+                                     "contentY=%3")
+                          .arg(rows->property("requestedFirst").toInt())
+                          .arg(rows->property("requestedLast").toInt())
+                          .arg(tiles->property("contentY").toReal())));
+  QVERIFY(rows->property("requestedLast").toInt() >
+          rows->property("requestedFirst").toInt());
 }
 
 void PeekOverlayTest::pathBarTabsSitAboveCommandField() {
