@@ -39,6 +39,7 @@ optdepends=(
 )
 provides=('synchro')
 conflicts=('synchro')
+install=synchro-git.install
 source=('synchro::git+https://github.com/ryrobes/synchro.git')
 b2sums=('SKIP')
 

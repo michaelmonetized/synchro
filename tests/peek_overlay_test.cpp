@@ -3681,8 +3681,22 @@ void PeekOverlayTest::locationCloseConsumesClick() {
   QCOMPARE(bookmarkActivated.count(), 0);
   QCOMPARE(QFileInfo(model.path()).canonicalFilePath(), originalPath);
 
+  // The path-bar star toggles the current folder without another menu.
+  auto *bookmarkCurrent =
+      window->findChild<QQuickItem *>(QStringLiteral("bookmarkCurrentFolder"));
+  QVERIFY(bookmarkCurrent);
+  QVERIFY(bookmarkCurrent->isVisible());
+  QVERIFY(!chips.isPinned(originalPath));
+  scene = bookmarkCurrent->mapToScene(
+      QPointF(bookmarkCurrent->width() / 2, bookmarkCurrent->height() / 2));
+  QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, scene.toPoint());
+  QTRY_VERIFY_WITH_TIMEOUT(chips.isPinned(originalPath), 1000);
+  QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, scene.toPoint());
+  QTRY_VERIFY_WITH_TIMEOUT(!chips.isPinned(originalPath), 1000);
+
   // A compact window replaces the entire stacked disk rail with one Volumes
   // affordance, preserving the route without spending another row of chrome.
+  QVERIFY(chips.pin(pinned));
   window->resize(480, 480);
   auto *pathBar = window->findChild<QQuickItem *>(QStringLiteral("pathBar"));
   auto *diskTabs = window->findChild<QQuickItem *>(QStringLiteral("diskTabs"));
@@ -3694,6 +3708,29 @@ void PeekOverlayTest::locationCloseConsumesClick() {
   QTRY_VERIFY_WITH_TIMEOUT(pathBar->property("compactDisks").toBool(), 1000);
   QVERIFY(!diskTabs->isVisible());
   QVERIFY(compactVolumes->isVisible());
+
+  // A compact bookmark has no overlapping remove target: left-click opens it
+  // and preserves the bookmark. Middle-click is the explicit compact unpin.
+  QQuickItem *compactPin = nullptr;
+  QTRY_VERIFY_WITH_TIMEOUT(
+      [&] {
+        const auto hits = visualNamed(window->contentItem(),
+                                      LocationChips::pinId(pinned));
+        compactPin = hits.isEmpty() ? nullptr : hits.first();
+        return compactPin && compactPin->isVisible();
+      }(),
+      1000);
+  const auto compactRemove =
+      visualNamed(window->contentItem(),
+                  QStringLiteral("remove:") + LocationChips::pinId(pinned));
+  QVERIFY(!compactRemove.isEmpty());
+  QVERIFY(!compactRemove.first()->isVisible());
+  scene = compactPin->mapToScene(
+      QPointF(compactPin->width() / 2, compactPin->height() / 2));
+  QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, scene.toPoint());
+  QTRY_COMPARE_WITH_TIMEOUT(QFileInfo(model.path()).canonicalFilePath(),
+                            QFileInfo(pinned).canonicalFilePath(), 1000);
+  QVERIFY(chips.isPinned(pinned));
 }
 
 void PeekOverlayTest::searchGridCellsMatchRows() {

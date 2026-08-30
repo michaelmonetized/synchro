@@ -112,7 +112,7 @@ const std::initializer_list<HelpSection> kHelp = {
       {"Ctrl+1 / Ctrl+2", "list / grid"},
       {"Ctrl+A", "select all"},
       {"Ctrl+Space", "toggle selected item"},
-      {"Ctrl+D", "pin current folder"},
+      {"Ctrl+B", "toggle folder bookmark"},
       {"Ctrl+G", "reveal result in its folder"},
       {"headers", "click to sort columns"},
       {"All Files Folders", "kind filter chips"}}},

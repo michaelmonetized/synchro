@@ -39,16 +39,26 @@ directly from the public repository:
 git clone https://github.com/ryrobes/synchro.git
 cd synchro/packaging/aur
 makepkg -si
+synchro-omarchy-setup
 synchro
 ```
 
 Once the listing is live, installation will simply be `yay -S synchro-git`.
 
+`synchro-omarchy-setup` is an idempotent per-user finish step: it reloads and
+enables `synchro-indexd.service`, starts the singleton catalog owner, and
+installs the Synchro skill for Omarchy's configured system agent. Add `--menu`
+to also install the optional Super+Space search provider. Package hooks cannot
+safely operate on the invoking user's session bus, so the AUR install message
+points to this explicit command instead of attempting user-service setup as
+root.
+
 The package installs the application, built-in handlers, agent skill source,
 desktop entry, icon, Omarchy launchers, the opt-in Super+Space provider assets,
-and the opt-in FileChooser portal descriptor. It does not change your Hyprland
-bindings, folder MIME default, Omarchy menu, or portal preference. Those remain
-explicit user choices described below.
+the catalog-maintenance user service, and the opt-in FileChooser portal
+descriptor. It does not change your Hyprland bindings, folder MIME default,
+Omarchy menu, or portal preference. Those remain explicit user choices
+described below.
 
 Synchro currently uses Qt's private RHI API for its accelerated spatial views.
 That is acceptable for the deliberately narrow Omarchy 4.0.x target, but it
@@ -74,6 +84,7 @@ files under `~/.local/share`):
 cmake -S . -B build -G Ninja -DCMAKE_INSTALL_PREFIX="$HOME/.local"
 cmake --build build
 cmake --install build
+synchro-omarchy-setup
 ```
 
 Run the complete test suite with:
@@ -112,7 +123,8 @@ an always-focused omnibar.
 | `F2` / `Ctrl+Shift+N` | Rename / new folder |
 | `Delete` / `Ctrl+Z` | Trash / undo |
 | `Ctrl+H` | Toggle hidden files |
-| `Ctrl+D` / `Ctrl+G` | Pin this folder / reveal a result in its folder |
+| `Ctrl+B` / `Ctrl+D` | Toggle bookmark for this folder (`Ctrl+D` remains compatible) |
+| `Ctrl+G` | Reveal a result in its folder |
 | Ctrl+backtick | Terminal panel |
 | `F1` / `:?` | Key reference |
 
@@ -560,6 +572,52 @@ restricted to `SELECT`/`WITH`; the catalog database is attached read-only and
 extension autoload/install are disabled. Agents should check
 `catalog.coverageComplete` and `truncated` before treating a result as
 exhaustive.
+
+### Catalog maintenance
+
+Browser windows only publish the folders and facts they actually touch. One
+lightweight `synchro index serve` process owns FTS migration, recursive
+reconciliation, and DuckDB freshness for the whole session; opening a normal
+Synchro window starts it if needed, and a lock makes duplicate launches exit.
+The installed `synchro-indexd.service` can also be enabled at login:
+
+```bash
+systemctl --user enable --now synchro-indexd.service
+synchro index status
+```
+
+Routine shadow refreshes clone the active DuckDB generation and apply the
+persistent SQLite file/fact change ledger. Existing queries keep reading the
+previous inode until the patched generation is atomically promoted. A bounded
+full compaction is scheduled no more than weekly and can be requested
+explicitly; it runs with low CPU/I/O priority, a 1 GiB DuckDB memory limit, and
+the user-service resource ceiling:
+
+```bash
+synchro catalog shadow refresh
+synchro catalog shadow compact
+```
+
+The background recursive reconciliation starts after 15 minutes and then at
+six-hour intervals. Between those passes, a bounded inotify hot set follows
+recently browsed folders, pins, and saved-query roots. Events are coalesced for
+650 ms and reconcile only the affected directories; newly created folders join
+the watched neighborhood automatically. The default ceiling is 2,048 watches,
+so the durable sweep remains the correctness backstop rather than attempting an
+inotify watch for every directory in a multi-million-row catalog. Useful tuning
+and diagnostics are available without adding browser chrome:
+
+```bash
+synchro index watch /path/to/a/project
+synchro index unwatch /path/to/a/project
+synchro index status
+SYNCHRO_INDEX_MAX_WATCHES=4096 synchro index serve
+```
+
+`SYNCHRO_INDEX_WATCH_DEBOUNCE_MS` and
+`SYNCHRO_INDEX_WATCH_NEIGHBORHOOD` tune batching and the number of immediate
+child directories retained around each hot root. Ordinary installs should keep
+the defaults.
 
 The built-in **Agent** action runs `omarchy agent prompt`, so it always follows
 Omarchy's current default agent. It starts in the selected folder (or a selected

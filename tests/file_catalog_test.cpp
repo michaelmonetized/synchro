@@ -2,6 +2,7 @@
 #include "DirectoryModel.h"
 #include "FileCatalog.h"
 #include "FsnLayout.h"
+#include "HotSetWatcher.h"
 #include "ThumbCache.h"
 #include "ThumbnailService.h"
 
@@ -83,7 +84,45 @@ private slots:
   void aggregateRowsExposeDrillQueries();
   void incrementalRefreshReconcilesExternalMove();
   void rescanPrunesMissingRows();
+  void hotSetWatcherCoalescesAndReconciles();
 };
+
+void FileCatalogTest::hotSetWatcherCoalescesAndReconciles() {
+  QTemporaryDir home;
+  QTemporaryDir root;
+  QVERIFY(home.isValid());
+  QVERIFY(root.isValid());
+  qputenv("SYNCHRO_HOME", QFile::encodeName(home.path()));
+
+  DirectoryModel model;
+  FileCatalog catalog(&model);
+  catalog.scanTree(root.path(), 100);
+  QTRY_VERIFY_WITH_TIMEOUT(!catalog.indexing(), 10000);
+
+  HotSetWatcher watcher(32, 80);
+  QVERIFY(watcher.available());
+  QVERIFY(watcher.addDirectory(root.path()));
+  QSignalSpy changed(&watcher, &HotSetWatcher::directoriesChanged);
+  connect(&watcher, &HotSetWatcher::directoriesChanged, &catalog,
+          &FileCatalog::reconcileDirectories);
+
+  const QString path = root.filePath(QStringLiteral("live.txt"));
+  QFile file(path);
+  QVERIFY(file.open(QIODevice::WriteOnly));
+  file.write("one");
+  file.write(" two");
+  file.close();
+  QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 1, 3000);
+  QTRY_COMPARE_WITH_TIMEOUT(catalogRows(), 1, 3000);
+
+  QVERIFY(QFile::remove(path));
+  QTRY_COMPARE_WITH_TIMEOUT(changed.size(), 2, 3000);
+  QTRY_COMPARE_WITH_TIMEOUT(catalogRows(), 0, 3000);
+  QVERIFY(FileCatalog::markHotDirectory(root.path()));
+  QCOMPARE(FileCatalog::hotDirectories(4).value(0), root.path());
+  QVERIFY(FileCatalog::forgetHotDirectory(root.path()));
+  QVERIFY(FileCatalog::hotDirectories(4).isEmpty());
+}
 
 void FileCatalogTest::sourceRelationIgnoresCommentsAndStrings() {
   DirectoryModel model;
@@ -163,11 +202,58 @@ void FileCatalogTest::nativeShadowIsAtomicAndDeliberatelyLagged() {
   const QVariantMap refreshed = FileCatalog::rebuildShadow(false);
   QVERIFY2(refreshed.value(QStringLiteral("ok")).toBool(),
            qPrintable(refreshed.value(QStringLiteral("error")).toString()));
-  QVERIFY(refreshed.value(QStringLiteral("rebuilt")).toBool());
+  QVERIFY(refreshed.value(QStringLiteral("refreshed")).toBool());
+  QCOMPARE(refreshed.value(QStringLiteral("mode")).toString(),
+           QStringLiteral("delta"));
+  QCOMPARE(refreshed.value(QStringLiteral("changedFiles")).toLongLong(), 1);
   query = FileCatalog::querySync(
       QStringLiteral("select name,path from tree order by name"), root.path());
   QCOMPARE(query.value(QStringLiteral("rows")).toList().size(), 2);
   QVERIFY(!FileCatalog::shadowStatus().value(QStringLiteral("stale")).toBool());
+
+  const qint64 factsRevision =
+      FileCatalog::shadowStatus().value(QStringLiteral("currentFactsRevision"))
+          .toLongLong();
+  catalog.recordImageFacts(
+      second.fileName(), QFileInfo(second).lastModified().toMSecsSinceEpoch(),
+      QVariantMap{{QStringLiteral("width"), 640.0}});
+  QTRY_VERIFY_WITH_TIMEOUT(
+      FileCatalog::shadowStatus()
+              .value(QStringLiteral("currentFactsRevision"))
+              .toLongLong() > factsRevision,
+      5000);
+  const QVariantMap factsRefresh = FileCatalog::refreshShadow();
+  QVERIFY2(factsRefresh.value(QStringLiteral("ok")).toBool(),
+           qPrintable(factsRefresh.value(QStringLiteral("error")).toString()));
+  QCOMPARE(factsRefresh.value(QStringLiteral("mode")).toString(),
+           QStringLiteral("delta"));
+  QCOMPARE(factsRefresh.value(QStringLiteral("changedFacts")).toLongLong(), 1);
+  const QVariantMap factsQuery = FileCatalog::querySync(
+      QStringLiteral("select key,numeric_value from facts where name="
+                     "'second.txt' and key='width'"),
+      root.path());
+  const QVariantList factRows =
+      factsQuery.value(QStringLiteral("rows")).toList();
+  QCOMPARE(factRows.size(), 1);
+  QCOMPARE(factRows.first().toMap().value(QStringLiteral("numeric_value"))
+               .toDouble(),
+           640.0);
+
+  QVERIFY(QFile::remove(first.fileName()));
+  catalog.scanTree(root.path());
+  QTRY_VERIFY_WITH_TIMEOUT(!catalog.indexing() && catalog.indexedCount() == 1,
+                           10000);
+  const QVariantMap pruned = FileCatalog::refreshShadow();
+  QVERIFY2(pruned.value(QStringLiteral("ok")).toBool(),
+           qPrintable(pruned.value(QStringLiteral("error")).toString()));
+  QCOMPARE(pruned.value(QStringLiteral("mode")).toString(),
+           QStringLiteral("delta"));
+  query = FileCatalog::querySync(
+      QStringLiteral("select name,path from tree order by name"), root.path());
+  const QVariantList remaining = query.value(QStringLiteral("rows")).toList();
+  QCOMPARE(remaining.size(), 1);
+  QCOMPARE(remaining.first().toMap().value(QStringLiteral("name")).toString(),
+           QStringLiteral("second.txt"));
 }
 
 void FileCatalogTest::deterministicImageFactsAreQueryable() {
@@ -1013,7 +1099,7 @@ void FileCatalogTest::legacySchemaMigratesWithoutRowLoss() {
   sqlite3_close(db);
 
   DirectoryModel model;
-  FileCatalog catalog(&model);
+  FileCatalog catalog(&model, nullptr, true);
   // The low-priority legacy FTS backfill may briefly hold the first write
   // transaction after construction; ordinary readers retry through WAL.
   QTRY_COMPARE_WITH_TIMEOUT(catalogRows(), 1, 1000);

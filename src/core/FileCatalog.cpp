@@ -45,13 +45,16 @@ constexpr int kImageVisualVersion = 2;
 constexpr int kSearchIndexVersion = 1;
 constexpr int kSearchBackfillBatch = 2048;
 constexpr int kStrataPreviewChildLimit = 96;
-constexpr int kShadowSchemaVersion = 2;
+constexpr int kShadowSchemaVersion = 3;
 // Automatic refreshes are eligibility checks, not a promise to rebuild. The
 // active generation remains queryable while a newer one is prepared.
-constexpr int kShadowRefreshCheckIntervalMs = 5 * 60 * 1000;
-constexpr qint64 kShadowQuietPeriodMs = 10 * 60 * 1000;
-constexpr qint64 kShadowRefreshCooldownMs = 60 * 60 * 1000;
+constexpr int kShadowRefreshCheckIntervalMs = 2 * 60 * 1000;
+constexpr qint64 kShadowQuietPeriodMs = 30 * 1000;
+constexpr qint64 kShadowRefreshCooldownMs = 2 * 60 * 1000;
+constexpr qint64 kShadowCompactionIntervalMs = 7LL * 24 * 60 * 60 * 1000;
 constexpr int kShadowDuckThreads = 2;
+constexpr auto kShadowMemoryLimit = "1GB";
+constexpr auto kShadowDeltaMemoryLimit = "768MB";
 
 struct SceneRollup {
   qint64 bytes = 0;
@@ -608,7 +611,13 @@ sqlite3 *openCatalog(QString *error = nullptr) {
           " row_count INTEGER NOT NULL DEFAULT 0,"
           " complete INTEGER NOT NULL DEFAULT 0,"
           " completed_at INTEGER NOT NULL DEFAULT 0"
-          ");");
+          ");"
+          "CREATE TABLE IF NOT EXISTS catalog_hot_dirs ("
+          " path TEXT PRIMARY KEY,"
+          " last_seen INTEGER NOT NULL DEFAULT 0"
+          ");"
+          "CREATE INDEX IF NOT EXISTS catalog_hot_dirs_seen "
+          "ON catalog_hot_dirs(last_seen DESC);");
   const bool migrated =
       ok && addColumnIfMissing(db, "file_id", "file_id TEXT") &&
       addColumnIfMissing(db, "device", "device INTEGER") &&
@@ -641,7 +650,25 @@ sqlite3 *openCatalog(QString *error = nullptr) {
                   "VALUES('catalog_changed_at','0');"
                   "INSERT OR IGNORE INTO catalog_meta(key,value) "
                   "VALUES('facts_changed_at','0');");
-  if (!migrated) {
+  const bool changeLedgerReady =
+      migrated &&
+      execSql(db,
+              "INSERT OR IGNORE INTO catalog_meta(key,value) "
+              "VALUES('change_sequence','0');"
+              "CREATE TABLE IF NOT EXISTS catalog_changes ("
+              " path TEXT PRIMARY KEY,"
+              " operation INTEGER NOT NULL,"
+              " sequence INTEGER NOT NULL"
+              ");"
+              "CREATE INDEX IF NOT EXISTS catalog_changes_sequence "
+              "ON catalog_changes(sequence);"
+              "CREATE TABLE IF NOT EXISTS fact_changes ("
+              " file_id TEXT PRIMARY KEY,"
+              " sequence INTEGER NOT NULL"
+              ");"
+              "CREATE INDEX IF NOT EXISTS fact_changes_sequence "
+              "ON fact_changes(sequence);");
+  if (!changeLedgerReady) {
     if (error)
       *error = QString::fromUtf8(sqlite3_errmsg(db));
     sqlite3_close(db);
@@ -838,6 +865,60 @@ void bindText(sqlite3_stmt *st, int index, const QString &value) {
   sqlite3_bind_text(st, index, utf8.constData(), utf8.size(), SQLITE_TRANSIENT);
 }
 
+qint64 nextChangeSequence(sqlite3 *db) {
+  if (!db ||
+      !execSql(db,
+               "UPDATE catalog_meta SET value=CAST(value AS INTEGER)+1 "
+               "WHERE key='change_sequence';"))
+    return 0;
+  return catalogMetaInteger(db, "change_sequence");
+}
+
+bool recordCatalogChanges(sqlite3 *db, const QStringList &paths, int operation,
+                          qint64 sequence) {
+  if (!db || paths.isEmpty() || sequence <= 0)
+    return true;
+  sqlite3_stmt *st = nullptr;
+  if (sqlite3_prepare_v2(
+          db,
+          "INSERT INTO catalog_changes(path,operation,sequence) VALUES(?,?,?) "
+          "ON CONFLICT(path) DO UPDATE SET operation=excluded.operation,"
+          "sequence=excluded.sequence;",
+          -1, &st, nullptr) != SQLITE_OK)
+    return false;
+  bool ok = true;
+  for (const QString &path : paths) {
+    sqlite3_reset(st);
+    sqlite3_clear_bindings(st);
+    bindText(st, 1, path);
+    sqlite3_bind_int(st, 2, operation);
+    sqlite3_bind_int64(st, 3, sequence);
+    if (sqlite3_step(st) != SQLITE_DONE) {
+      ok = false;
+      break;
+    }
+  }
+  sqlite3_finalize(st);
+  return ok;
+}
+
+bool recordFactChange(sqlite3 *db, const QString &fileId, qint64 sequence) {
+  if (!db || fileId.isEmpty() || sequence <= 0)
+    return true;
+  sqlite3_stmt *st = nullptr;
+  if (sqlite3_prepare_v2(
+          db,
+          "INSERT INTO fact_changes(file_id,sequence) VALUES(?,?) "
+          "ON CONFLICT(file_id) DO UPDATE SET sequence=excluded.sequence;",
+          -1, &st, nullptr) != SQLITE_OK)
+    return false;
+  bindText(st, 1, fileId);
+  sqlite3_bind_int64(st, 2, sequence);
+  const bool ok = sqlite3_step(st) == SQLITE_DONE;
+  sqlite3_finalize(st);
+  return ok;
+}
+
 bool upsertRows(sqlite3 *db, const QVector<CatalogRow> &rows,
                 const QString &scanRoot = QString(), qint64 seenAt = 0,
                 bool bumpTreeRevision = true, int *changedRowsOut = nullptr) {
@@ -886,6 +967,7 @@ bool upsertRows(sqlite3 *db, const QVector<CatalogRow> &rows,
   const qint64 now = seenAt > 0 ? seenAt : QDateTime::currentMSecsSinceEpoch();
   bool ok = true;
   int changedRows = 0;
+  QStringList changedPaths;
   execSql(db, "BEGIN IMMEDIATE;");
   for (const CatalogRow &row : rows) {
     if (row.path.isEmpty())
@@ -911,9 +993,17 @@ bool upsertRows(sqlite3 *db, const QVector<CatalogRow> &rows,
       ok = false;
       break;
     }
-    changedRows += sqlite3_changes(db);
+    const int changed = sqlite3_changes(db);
+    changedRows += changed;
+    if (changed > 0)
+      changedPaths.append(row.path);
   }
   sqlite3_finalize(st);
+  if (ok && !changedPaths.isEmpty()) {
+    const qint64 sequence = nextChangeSequence(db);
+    ok = sequence > 0 &&
+         recordCatalogChanges(db, changedPaths, 1, sequence);
+  }
   if (ok && bumpTreeRevision && changedRows > 0)
     ok = bumpCatalogRevision(db);
   execSql(db, ok ? "COMMIT;" : "ROLLBACK;");
@@ -1002,8 +1092,11 @@ bool writeFacts(sqlite3 *db, const CatalogRow &row, const QString &analyzer,
     changedFacts += sqlite3_changes(db);
   }
   sqlite3_finalize(st);
-  if (ok && changedFacts > 0)
-    ok = bumpFactsRevision(db);
+  if (ok && changedFacts > 0) {
+    const qint64 sequence = nextChangeSequence(db);
+    ok = sequence > 0 && recordFactChange(db, row.fileId, sequence) &&
+         bumpFactsRevision(db);
+  }
   execSql(db, ok ? "COMMIT;" : "ROLLBACK;");
   return ok;
 }
@@ -1011,6 +1104,37 @@ bool writeFacts(sqlite3 *db, const CatalogRow &row, const QString &analyzer,
 int deleteCatalogPath(sqlite3 *db, const QString &path, bool isDir) {
   if (!db || path.isEmpty())
     return 0;
+  const bool ownsTransaction = sqlite3_get_autocommit(db) != 0;
+  if (ownsTransaction && !execSql(db, "BEGIN IMMEDIATE;"))
+    return 0;
+  QStringList doomedPaths;
+  if (isDir) {
+    sqlite3_stmt *doomed = nullptr;
+    const bool prepared = sqlite3_prepare_v2(
+            db,
+            "WITH RECURSIVE doomed(path) AS (SELECT path FROM files WHERE "
+            "path=? UNION ALL SELECT files.path FROM files JOIN doomed ON "
+            "files.parent=doomed.path) SELECT path FROM doomed;",
+            -1, &doomed, nullptr) == SQLITE_OK;
+    if (prepared) {
+      bindText(doomed, 1, path);
+      while (sqlite3_step(doomed) == SQLITE_ROW) {
+        const auto *text = sqlite3_column_text(doomed, 0);
+        if (text)
+          doomedPaths.append(
+              QString::fromUtf8(reinterpret_cast<const char *>(text)));
+      }
+    }
+    if (doomed)
+      sqlite3_finalize(doomed);
+    if (!prepared) {
+      if (ownsTransaction)
+        execSql(db, "ROLLBACK;");
+      return 0;
+    }
+  } else {
+    doomedPaths.append(path);
+  }
   const char *sql =
       isDir ? "WITH RECURSIVE doomed(path) AS ("
               " SELECT path FROM files WHERE path=?"
@@ -1020,12 +1144,27 @@ int deleteCatalogPath(sqlite3 *db, const QString &path, bool isDir) {
               ") DELETE FROM files WHERE path IN (SELECT path FROM doomed);"
             : "DELETE FROM files WHERE path=?;";
   sqlite3_stmt *st = nullptr;
-  if (sqlite3_prepare_v2(db, sql, -1, &st, nullptr) != SQLITE_OK)
+  if (sqlite3_prepare_v2(db, sql, -1, &st, nullptr) != SQLITE_OK) {
+    if (ownsTransaction)
+      execSql(db, "ROLLBACK;");
     return 0;
+  }
   bindText(st, 1, path);
   const bool ok = sqlite3_step(st) == SQLITE_DONE;
+  const int changed = ok ? sqlite3_changes(db) : 0;
   sqlite3_finalize(st);
-  return ok ? sqlite3_changes(db) : 0;
+  if (changed > 0) {
+    const qint64 sequence = nextChangeSequence(db);
+    if (sequence <= 0 ||
+        !recordCatalogChanges(db, doomedPaths, 0, sequence)) {
+      if (ownsTransaction)
+        execSql(db, "ROLLBACK;");
+      return 0;
+    }
+  }
+  if (ownsTransaction)
+    execSql(db, "COMMIT;");
+  return changed;
 }
 
 int catalogCountBelow(sqlite3 *db, const QString &root) {
@@ -1530,12 +1669,15 @@ QVariantMap readShadowStatus() {
   const qint64 catalogChangedAt =
       catalogMetaInteger(source, "catalog_changed_at");
   const qint64 factsChangedAt = catalogMetaInteger(source, "facts_changed_at");
+  const qint64 currentChangeSequence =
+      catalogMetaInteger(source, "change_sequence");
   if (source)
     sqlite3_close(source);
   out.insert(QStringLiteral("currentRevision"), currentRevision);
   out.insert(QStringLiteral("currentFactsRevision"), currentFactsRevision);
   out.insert(QStringLiteral("catalogChangedAt"), catalogChangedAt);
   out.insert(QStringLiteral("factsChangedAt"), factsChangedAt);
+  out.insert(QStringLiteral("currentChangeSequence"), currentChangeSequence);
   out.insert(QStringLiteral("lastSourceChangeAt"),
              qMax(catalogChangedAt, factsChangedAt));
 
@@ -1588,25 +1730,70 @@ QVariantMap readShadowStatus() {
           .toLongLong();
   const qint64 builtAt =
       row.value(QStringLiteral("built_at")).toVariant().toLongLong();
+  const qint64 compactedAt =
+      row.value(QStringLiteral("compacted_at")).toVariant().toLongLong();
+  const qint64 sourceChangeSequence =
+      row.value(QStringLiteral("source_change_sequence"))
+          .toVariant()
+          .toLongLong();
   out.insert(QStringLiteral("schemaVersion"), schemaVersion);
   out.insert(QStringLiteral("builtAt"), builtAt);
+  out.insert(QStringLiteral("compactedAt"), compactedAt);
   out.insert(QStringLiteral("builtAtIso"),
              QDateTime::fromMSecsSinceEpoch(builtAt).toString(Qt::ISODate));
   out.insert(QStringLiteral("sourceRevision"), sourceRevision);
   out.insert(QStringLiteral("sourceFactsRevision"), sourceFactsRevision);
+  out.insert(QStringLiteral("sourceChangeSequence"), sourceChangeSequence);
   out.insert(QStringLiteral("rowCount"),
              row.value(QStringLiteral("row_count")).toVariant().toLongLong());
   out.insert(QStringLiteral("lagRevisions"),
              qMax<qint64>(0, currentRevision - sourceRevision));
   out.insert(QStringLiteral("lagFactsRevisions"),
              qMax<qint64>(0, currentFactsRevision - sourceFactsRevision));
-  const bool available = schemaVersion == kShadowSchemaVersion;
-  out.insert(QStringLiteral("available"), available);
+  // Schema 2 has the same query tables and remains a safe read-only baseline
+  // while the first ledger-capable generation is being compacted.
+  const bool queryCompatible =
+      schemaVersion == kShadowSchemaVersion || schemaVersion == 2;
+  const bool deltaCapable = schemaVersion == kShadowSchemaVersion;
+  out.insert(QStringLiteral("available"), queryCompatible);
+  out.insert(QStringLiteral("deltaCapable"), deltaCapable);
   out.insert(QStringLiteral("stale"),
-             !available || sourceRevision != currentRevision ||
+             !deltaCapable || sourceRevision != currentRevision ||
                  !hasFactsRevision ||
                  sourceFactsRevision != currentFactsRevision);
   return out;
+}
+
+void clearChangeLedgerThrough(qint64 sequence) {
+  if (sequence <= 0)
+    return;
+  sqlite3 *db = openCatalog();
+  if (!db)
+    return;
+  execSql(db, "BEGIN IMMEDIATE;");
+  sqlite3_stmt *files = nullptr;
+  sqlite3_stmt *facts = nullptr;
+  bool ok =
+      sqlite3_prepare_v2(db, "DELETE FROM catalog_changes WHERE sequence<=?;",
+                         -1, &files, nullptr) == SQLITE_OK;
+  if (ok) {
+    sqlite3_bind_int64(files, 1, sequence);
+    ok = sqlite3_step(files) == SQLITE_DONE;
+  }
+  if (files)
+    sqlite3_finalize(files);
+  if (ok)
+    ok = sqlite3_prepare_v2(db,
+                            "DELETE FROM fact_changes WHERE sequence<=?;", -1,
+                            &facts, nullptr) == SQLITE_OK;
+  if (ok) {
+    sqlite3_bind_int64(facts, 1, sequence);
+    ok = sqlite3_step(facts) == SQLITE_DONE;
+  }
+  if (facts)
+    sqlite3_finalize(facts);
+  execSql(db, ok ? "COMMIT;" : "ROLLBACK;");
+  sqlite3_close(db);
 }
 
 QVariantMap rebuildShadowInternal(bool force) {
@@ -1656,6 +1843,9 @@ QVariantMap rebuildShadowInternal(bool force) {
                    .arg(QCoreApplication::applicationPid())
                    .arg(QDateTime::currentMSecsSinceEpoch());
   QFile::remove(temporary);
+  const QString tempDirectory =
+      QFileInfo(shadow).absolutePath() + QStringLiteral("/duckdb-tmp");
+  QDir().mkpath(tempDirectory);
 
   const QString shadowProjection =
       QStringLiteral("%1 AS kind,%2 AS stem,%3 AS depth,%4 AS modified_date,"
@@ -1673,7 +1863,8 @@ QVariantMap rebuildShadowInternal(bool force) {
 
   const QString buildSql =
       QStringLiteral(
-          "SET threads=%4; SET memory_limit='2GB'; "
+          "SET threads=%4; SET memory_limit='%5'; "
+          "SET preserve_insertion_order=false; SET temp_directory=%6; "
           "LOAD sqlite; SET autoinstall_known_extensions=false; "
           "SET autoload_known_extensions=false; "
           "ATTACH %1 AS source (TYPE sqlite, READ_ONLY); "
@@ -1686,12 +1877,16 @@ QVariantMap rebuildShadowInternal(bool force) {
           "source.catalog_meta; "
           "CREATE TABLE _synchro_shadow_meta AS SELECT %2::INTEGER AS "
           "schema_version,epoch_ms(current_timestamp)::BIGINT AS built_at,"
+          "epoch_ms(current_timestamp)::BIGINT AS compacted_at,"
           "coalesce((SELECT CAST(value AS BIGINT) FROM "
           "_synchro_catalog_meta WHERE "
           "key='catalog_revision'),0)::BIGINT AS source_revision,"
           "coalesce((SELECT CAST(value AS BIGINT) FROM "
           "_synchro_catalog_meta WHERE "
           "key='facts_revision'),0)::BIGINT AS source_facts_revision,"
+          "coalesce((SELECT CAST(value AS BIGINT) FROM "
+          "_synchro_catalog_meta WHERE "
+          "key='change_sequence'),0)::BIGINT AS source_change_sequence,"
           "count(*)::BIGINT AS row_count FROM _synchro_files; "
           "CREATE UNIQUE INDEX files_path ON _synchro_files(path); "
           "CREATE INDEX files_parent ON _synchro_files(parent); "
@@ -1703,7 +1898,9 @@ QVariantMap rebuildShadowInternal(bool force) {
           .arg(sqlString(FileCatalog::dbPath()))
           .arg(kShadowSchemaVersion)
           .arg(shadowProjection)
-          .arg(kShadowDuckThreads);
+          .arg(kShadowDuckThreads)
+          .arg(QLatin1String(kShadowMemoryLimit))
+          .arg(sqlString(tempDirectory));
 
   QElapsedTimer timer;
   timer.start();
@@ -1761,11 +1958,247 @@ QVariantMap rebuildShadowInternal(bool force) {
   }
 
   out = readShadowStatus();
+  clearChangeLedgerThrough(
+      out.value(QStringLiteral("sourceChangeSequence")).toLongLong());
   out.insert(QStringLiteral("ok"), true);
   out.insert(QStringLiteral("rebuilt"), true);
   out.insert(QStringLiteral("elapsedMs"), timer.elapsed());
   // A writer may have committed while DuckDB held its SQLite snapshot. The
   // promoted generation is still valid; stale=true schedules another pass.
+  return out;
+}
+
+bool cloneShadowGeneration(const QString &source, const QString &target,
+                           QString *error) {
+  QFile::remove(target);
+  const QString cp = QStandardPaths::findExecutable(QStringLiteral("cp"));
+  if (!cp.isEmpty()) {
+    QProcess process;
+    process.setProcessChannelMode(QProcess::SeparateChannels);
+    process.start(cp, {QStringLiteral("--reflink=auto"),
+                       QStringLiteral("--sparse=always"),
+                       QStringLiteral("--"), source, target});
+    const bool finished = process.waitForFinished(30 * 60 * 1000);
+    if (finished &&
+        process.exitStatus() == QProcess::NormalExit &&
+        process.exitCode() == 0)
+      return true;
+    if (!finished) {
+      process.kill();
+      process.waitForFinished(1000);
+    }
+    if (error)
+      *error = QString::fromUtf8(process.readAllStandardError()).trimmed();
+    QFile::remove(target);
+  }
+  if (QFile::copy(source, target))
+    return true;
+  if (error && error->isEmpty())
+    *error = QStringLiteral("could not clone active shadow generation");
+  return false;
+}
+
+qint64 sqliteScalar(sqlite3 *db, const char *sql, qint64 sequence) {
+  if (!db)
+    return 0;
+  sqlite3_stmt *st = nullptr;
+  qint64 value = 0;
+  if (sqlite3_prepare_v2(db, sql, -1, &st, nullptr) == SQLITE_OK) {
+    sqlite3_bind_int64(st, 1, sequence);
+    if (sqlite3_step(st) == SQLITE_ROW)
+      value = sqlite3_column_int64(st, 0);
+  }
+  if (st)
+    sqlite3_finalize(st);
+  return value;
+}
+
+QVariantMap refreshShadowInternal() {
+  const QVariantMap baseline = readShadowStatus();
+  if (!baseline.value(QStringLiteral("deltaCapable")).toBool())
+    return rebuildShadowInternal(true);
+  if (!baseline.value(QStringLiteral("stale")).toBool()) {
+    QVariantMap current = baseline;
+    current.insert(QStringLiteral("ok"), true);
+    current.insert(QStringLiteral("current"), true);
+    current.insert(QStringLiteral("refreshed"), false);
+    return current;
+  }
+
+  const QString shadow = FileCatalog::shadowPath();
+  QLockFile lock(shadow + QStringLiteral(".lock"));
+  lock.setStaleLockTime(30 * 60 * 1000);
+  if (!lock.tryLock(0)) {
+    QVariantMap busy;
+    busy.insert(QStringLiteral("ok"), true);
+    busy.insert(QStringLiteral("busy"), true);
+    busy.insert(QStringLiteral("path"), shadow);
+    busy.insert(QStringLiteral("message"),
+                QStringLiteral("a shadow refresh is already running"));
+    return busy;
+  }
+
+  QString sourceError;
+  sqlite3 *source = openCatalogReadOnly(&sourceError);
+  if (!source) {
+    QVariantMap failed;
+    failed.insert(QStringLiteral("ok"), false);
+    failed.insert(QStringLiteral("error"), sourceError);
+    return failed;
+  }
+  const qint64 sequence = catalogMetaInteger(source, "change_sequence");
+  const qint64 catalogRev = catalogRevision(source);
+  const qint64 factsRev = catalogMetaInteger(source, "facts_revision");
+  const qint64 changedFiles = sqliteScalar(
+      source, "SELECT count(*) FROM catalog_changes WHERE sequence<=?;",
+      sequence);
+  const qint64 changedFacts = sqliteScalar(
+      source, "SELECT count(*) FROM fact_changes WHERE sequence<=?;", sequence);
+  sqlite3_close(source);
+
+  // A revision mismatch without a corresponding durable delta indicates a
+  // pre-ledger or externally modified catalog. Recover with a full generation.
+  if (changedFiles == 0 && changedFacts == 0) {
+    lock.unlock();
+    return rebuildShadowInternal(true);
+  }
+
+  const QString duck = QStandardPaths::findExecutable(QStringLiteral("duckdb"));
+  if (duck.isEmpty()) {
+    QVariantMap failed;
+    failed.insert(QStringLiteral("ok"), false);
+    failed.insert(QStringLiteral("error"), QStringLiteral("duckdb is not installed"));
+    return failed;
+  }
+  const QString temporary =
+      shadow + QStringLiteral(".delta.%1.%2")
+                   .arg(QCoreApplication::applicationPid())
+                   .arg(QDateTime::currentMSecsSinceEpoch());
+  QString cloneError;
+  QElapsedTimer timer;
+  timer.start();
+  if (!cloneShadowGeneration(shadow, temporary, &cloneError)) {
+    QVariantMap failed;
+    failed.insert(QStringLiteral("ok"), false);
+    failed.insert(QStringLiteral("error"), cloneError);
+    return failed;
+  }
+
+  const QString shadowProjection =
+      QStringLiteral("%1 AS kind,%2 AS stem,%3 AS depth,%4 AS modified_date,"
+                     "%5 AS modified_month,%6 AS size_bucket,%7 AS root")
+          .arg(kindExpression(), stemExpression(),
+               catalogFieldExpression(QStringLiteral("depth"),
+                                      CatalogSqlDialect::DuckDb),
+               catalogFieldExpression(QStringLiteral("modified_date"),
+                                      CatalogSqlDialect::DuckDb),
+               catalogFieldExpression(QStringLiteral("modified_month"),
+                                      CatalogSqlDialect::DuckDb),
+               sizeBucketExpression(),
+               catalogFieldExpression(QStringLiteral("root"),
+                                      CatalogSqlDialect::DuckDb));
+  const QString tempDirectory =
+      QFileInfo(shadow).absolutePath() + QStringLiteral("/duckdb-tmp");
+  QDir().mkpath(tempDirectory);
+  const QString deltaSql =
+      QStringLiteral(
+          "SET threads=1; SET memory_limit='%8'; "
+          "SET preserve_insertion_order=false; SET temp_directory=%9; "
+          "LOAD sqlite; SET autoinstall_known_extensions=false; "
+          "SET autoload_known_extensions=false; "
+          "ATTACH %1 AS source (TYPE sqlite, READ_ONLY); "
+          "DELETE FROM _synchro_files WHERE path IN (SELECT path FROM "
+          "source.catalog_changes WHERE sequence<=%2); "
+          "INSERT INTO _synchro_files SELECT *,%7 FROM source.files WHERE "
+          "path IN (SELECT path FROM source.catalog_changes WHERE "
+          "operation=1 AND sequence<=%2); "
+          "DELETE FROM _synchro_file_facts WHERE file_id IN (SELECT file_id "
+          "FROM source.fact_changes WHERE sequence<=%2); "
+          "INSERT INTO _synchro_file_facts SELECT * FROM source.file_facts "
+          "WHERE file_id IN (SELECT file_id FROM source.fact_changes WHERE "
+          "sequence<=%2); "
+          "DELETE FROM _synchro_scan_state; INSERT INTO _synchro_scan_state "
+          "SELECT * FROM source.scan_state; "
+          "DELETE FROM _synchro_catalog_meta; INSERT INTO "
+          "_synchro_catalog_meta SELECT * FROM source.catalog_meta; "
+          "UPDATE _synchro_shadow_meta SET "
+          "built_at=epoch_ms(current_timestamp)::BIGINT,source_revision=%3,"
+          "source_facts_revision=%4,source_change_sequence=%2,"
+          "row_count=(SELECT count(*) FROM _synchro_files); "
+          "CHECKPOINT; SELECT (SELECT count(*) FROM _synchro_files)::BIGINT "
+          "AS row_count,%5::BIGINT AS changed_files,%6::BIGINT AS "
+          "changed_facts;")
+          .arg(sqlString(FileCatalog::dbPath()))
+          .arg(sequence)
+          .arg(catalogRev)
+          .arg(factsRev)
+          .arg(changedFiles)
+          .arg(changedFacts)
+          .arg(shadowProjection)
+          .arg(QLatin1String(kShadowDeltaMemoryLimit))
+          .arg(sqlString(tempDirectory));
+
+  QProcess process;
+  process.setProcessChannelMode(QProcess::SeparateChannels);
+  process.start(duck, {QStringLiteral("-bail"), QStringLiteral("-json"),
+                       temporary, QStringLiteral("-c"), deltaSql});
+  if (!process.waitForFinished(10 * 60 * 1000)) {
+    process.kill();
+    process.waitForFinished(1000);
+    QFile::remove(temporary);
+    QVariantMap failed;
+    failed.insert(QStringLiteral("ok"), false);
+    failed.insert(QStringLiteral("error"),
+                  QStringLiteral("shadow delta refresh timed out"));
+    return failed;
+  }
+  if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+    const QString error =
+        QString::fromUtf8(process.readAllStandardError()).trimmed();
+    QFile::remove(temporary);
+    QVariantMap failed;
+    failed.insert(QStringLiteral("ok"), false);
+    failed.insert(QStringLiteral("error"),
+                  error.isEmpty() ? QStringLiteral("shadow delta refresh failed")
+                                  : error);
+    return failed;
+  }
+  QJsonParseError validationError;
+  const QJsonDocument validation =
+      QJsonDocument::fromJson(process.readAllStandardOutput(),
+                              &validationError);
+  if (!validation.isArray() || validation.array().isEmpty() ||
+      !validation.array().first().isObject() ||
+      !validation.array().first().toObject().contains(
+          QStringLiteral("row_count"))) {
+    QFile::remove(temporary);
+    QVariantMap failed;
+    failed.insert(QStringLiteral("ok"), false);
+    failed.insert(QStringLiteral("error"),
+                  QStringLiteral("shadow delta validation is unreadable"));
+    return failed;
+  }
+
+  QFile::setPermissions(temporary, QFile::ReadOwner | QFile::WriteOwner);
+  const QByteArray temporaryName = QFile::encodeName(temporary);
+  const QByteArray shadowName = QFile::encodeName(shadow);
+  if (::rename(temporaryName.constData(), shadowName.constData()) != 0) {
+    QFile::remove(temporary);
+    QVariantMap failed;
+    failed.insert(QStringLiteral("ok"), false);
+    failed.insert(QStringLiteral("error"),
+                  QStringLiteral("could not atomically promote shadow delta"));
+    return failed;
+  }
+
+  clearChangeLedgerThrough(sequence);
+  QVariantMap out = readShadowStatus();
+  out.insert(QStringLiteral("ok"), true);
+  out.insert(QStringLiteral("refreshed"), true);
+  out.insert(QStringLiteral("mode"), QStringLiteral("delta"));
+  out.insert(QStringLiteral("changedFiles"), changedFiles);
+  out.insert(QStringLiteral("changedFacts"), changedFacts);
+  out.insert(QStringLiteral("elapsedMs"), timer.elapsed());
   return out;
 }
 
@@ -2107,8 +2540,9 @@ QVariantMap runDuckQuery(QString sql, const QString &cwd,
 
 } // namespace
 
-FileCatalog::FileCatalog(DirectoryModel *model, QObject *parent)
-    : QObject(parent), m_model(model) {
+FileCatalog::FileCatalog(DirectoryModel *model, QObject *parent,
+                         bool maintenanceOwner)
+    : QObject(parent), m_model(model), m_maintenanceOwner(maintenanceOwner) {
   m_scanPool.setMaxThreadCount(1);
   m_scanPool.setExpiryTimeout(-1);
   m_scanPool.setThreadPriority(QThread::LowPriority);
@@ -2132,9 +2566,16 @@ FileCatalog::FileCatalog(DirectoryModel *model, QObject *parent)
   m_shadowRefreshTimer.setInterval(kShadowRefreshCheckIntervalMs);
   connect(&m_shadowRefreshTimer, &QTimer::timeout, this,
           &FileCatalog::requestShadowRefresh);
+  m_shadowDebounceTimer.setSingleShot(true);
+  m_shadowDebounceTimer.setInterval(kShadowQuietPeriodMs + 1000);
+  connect(&m_shadowDebounceTimer, &QTimer::timeout, this,
+          &FileCatalog::requestShadowRefresh);
   if (m_model) {
-    connect(m_model, &DirectoryModel::pathChanged, this,
-            &FileCatalog::scheduleSnapshot);
+    connect(m_model, &DirectoryModel::pathChanged, this, [this] {
+      scheduleSnapshot();
+      if (m_model)
+        rememberHotDirectory(m_model->path());
+    });
     connect(m_model, &DirectoryModel::countChanged, this,
             &FileCatalog::scheduleSnapshot);
     connect(m_model, &DirectoryModel::statsApplied, this,
@@ -2149,30 +2590,34 @@ FileCatalog::FileCatalog(DirectoryModel *model, QObject *parent)
     });
   }
   restoreScanState();
-  const auto searchCancel = std::make_shared<std::atomic_bool>(false);
-  m_searchIndexCancel = searchCancel;
-  m_searchIndexPool.start([searchCancel] {
-    sqlite3 *db = openCatalog();
-    if (!db)
-      return;
-    bool complete = false;
-    while (!searchCancel->load() && !complete) {
-      QElapsedTimer batchTimer;
-      batchTimer.start();
-      if (!backfillSearchIndexBatch(db, kSearchBackfillBatch, &complete))
-        break;
-      if (!complete) {
-        // Keep migration deliberately below interactive work. The sleep scales
-        // with actual indexing cost, targeting roughly a 25% duty cycle.
-        const unsigned long pause = static_cast<unsigned long>(
-            qBound(qint64(20), batchTimer.elapsed() * 3, qint64(250)));
-        QThread::msleep(pause);
+  if (m_maintenanceOwner) {
+    const auto searchCancel = std::make_shared<std::atomic_bool>(false);
+    m_searchIndexCancel = searchCancel;
+    m_searchIndexPool.start([searchCancel] {
+      sqlite3 *db = openCatalog();
+      if (!db)
+        return;
+      bool complete = false;
+      while (!searchCancel->load() && !complete) {
+        QElapsedTimer batchTimer;
+        batchTimer.start();
+        if (!backfillSearchIndexBatch(db, kSearchBackfillBatch, &complete))
+          break;
+        if (!complete) {
+          // Keep migration deliberately below interactive work. The sleep
+          // scales with actual indexing cost, targeting roughly a 25% duty
+          // cycle.
+          const unsigned long pause = static_cast<unsigned long>(
+              qBound(qint64(20), batchTimer.elapsed() * 3, qint64(250)));
+          QThread::msleep(pause);
+        }
       }
-    }
-    sqlite3_close(db);
-  });
+      sqlite3_close(db);
+    });
+  }
   scheduleSnapshot();
-  if (QCoreApplication::applicationName() == QLatin1String("synchro") &&
+  if (m_maintenanceOwner &&
+      QCoreApplication::applicationName() == QLatin1String("synchro") &&
       !qEnvironmentVariableIsSet("SYNCHRO_DISABLE_SHADOW_REFRESH")) {
     m_shadowRefreshTimer.start();
     QTimer::singleShot(30000, this, &FileCatalog::requestShadowRefresh);
@@ -2182,6 +2627,7 @@ FileCatalog::FileCatalog(DirectoryModel *model, QObject *parent)
 FileCatalog::~FileCatalog() {
   m_snapshotTimer.stop();
   m_shadowRefreshTimer.stop();
+  m_shadowDebounceTimer.stop();
   if (m_scanCancel)
     m_scanCancel->store(true);
   if (m_sceneCancel)
@@ -2213,10 +2659,89 @@ QString FileCatalog::shadowPath() {
 }
 
 QVariantMap FileCatalog::rebuildShadow(bool force) {
-  return rebuildShadowInternal(force);
+  return force ? rebuildShadowInternal(true) : refreshShadowInternal();
 }
 
+QVariantMap FileCatalog::refreshShadow() { return refreshShadowInternal(); }
+
 QVariantMap FileCatalog::shadowStatus() { return readShadowStatus(); }
+
+QStringList FileCatalog::hotDirectories(int limit) {
+  QStringList paths;
+  sqlite3 *db = openCatalogReadOnly();
+  if (!db)
+    return paths;
+  sqlite3_stmt *st = nullptr;
+  if (sqlite3_prepare_v2(
+          db,
+          "SELECT path FROM catalog_hot_dirs WHERE last_seen>=? "
+          "ORDER BY last_seen DESC LIMIT ?;",
+          -1, &st, nullptr) == SQLITE_OK) {
+    sqlite3_bind_int64(st, 1, QDateTime::currentMSecsSinceEpoch() -
+                                  30LL * 24 * 60 * 60 * 1000);
+    sqlite3_bind_int(st, 2, qBound(1, limit, 2048));
+    while (sqlite3_step(st) == SQLITE_ROW) {
+      const auto *text = sqlite3_column_text(st, 0);
+      if (text)
+        paths.append(QString::fromUtf8(reinterpret_cast<const char *>(text)));
+    }
+  }
+  if (st)
+    sqlite3_finalize(st);
+  sqlite3_close(db);
+  return paths;
+}
+
+bool FileCatalog::markHotDirectory(const QString &rawPath) {
+  const QString path = normalizedPath(rawPath);
+  if (path.isEmpty() || DirectoryModel::isVirtualPath(path) ||
+      !QFileInfo(path).isDir())
+    return false;
+  sqlite3 *db = openCatalog();
+  if (!db)
+    return false;
+  sqlite3_stmt *st = nullptr;
+  bool ok = false;
+  if (sqlite3_prepare_v2(
+          db,
+          "INSERT INTO catalog_hot_dirs(path,last_seen) VALUES(?,?) "
+          "ON CONFLICT(path) DO UPDATE SET last_seen=excluded.last_seen;",
+          -1, &st, nullptr) == SQLITE_OK) {
+    bindText(st, 1, path);
+    sqlite3_bind_int64(st, 2, QDateTime::currentMSecsSinceEpoch());
+    ok = sqlite3_step(st) == SQLITE_DONE;
+  }
+  if (st)
+    sqlite3_finalize(st);
+  // Keep this table a bounded hint rather than another unbounded history.
+  if (ok)
+    execSql(db,
+            "DELETE FROM catalog_hot_dirs WHERE path NOT IN "
+            "(SELECT path FROM catalog_hot_dirs ORDER BY last_seen DESC "
+            "LIMIT 512);");
+  sqlite3_close(db);
+  return ok;
+}
+
+bool FileCatalog::forgetHotDirectory(const QString &rawPath) {
+  const QString path = normalizedPath(rawPath);
+  if (path.isEmpty())
+    return false;
+  sqlite3 *db = openCatalog();
+  if (!db)
+    return false;
+  sqlite3_stmt *st = nullptr;
+  bool ok = false;
+  if (sqlite3_prepare_v2(db, "DELETE FROM catalog_hot_dirs WHERE path=?;", -1,
+                         &st, nullptr) == SQLITE_OK) {
+    bindText(st, 1, path);
+    ok = sqlite3_step(st) == SQLITE_DONE;
+  }
+  if (st)
+    sqlite3_finalize(st);
+  sqlite3_close(db);
+  return ok;
+}
 
 QVariantMap FileCatalog::querySync(const QString &sql, const QString &cwd,
                                    const QStringList &selection, int maxRows) {
@@ -2380,8 +2905,9 @@ QVariantMap FileCatalog::searchSync(const QString &rawQuery,
     sqlite3_finalize(pinQuery);
 
   // Preserve deterministic high-confidence matches without asking FTS to
-  // rank a potentially enormous result set. Both probes use files_name and
-  // stop as soon as the bounded candidate window is full.
+  // rank a potentially enormous result set. Exact lookup and the bounded
+  // prefix range both use files_name; LIKE with ESCAPE must not be used here
+  // because SQLite turns that form into a full catalog scan.
   const auto appendIndexedNames = [&](const QByteArray &sql,
                                       const QString &value, int cap) {
     sqlite3_stmt *st = nullptr;
@@ -2403,16 +2929,27 @@ QVariantMap FileCatalog::searchSync(const QString &rawQuery,
         QByteArray(kColumns) +
             "FROM files f WHERE f.name=? COLLATE NOCASE LIMIT ?;",
         query, qMax(16, limit * 2));
-    QString prefix = query;
-    prefix.replace(QLatin1Char('\\'), QLatin1String("\\\\"));
-    prefix.replace(QLatin1Char('%'), QLatin1String("\\%"));
-    prefix.replace(QLatin1Char('_'), QLatin1String("\\_"));
-    prefix.append(QLatin1Char('%'));
-    appendIndexedNames(
+    sqlite3_stmt *prefixQuery = nullptr;
+    const QByteArray prefixSql =
         QByteArray(kColumns) +
-            "FROM files f WHERE f.name LIKE ? ESCAPE '\\' COLLATE NOCASE "
-            "LIMIT ?;",
-        prefix, qMax(32, limit * 4));
+        "FROM files f WHERE f.name>=? COLLATE NOCASE "
+        "AND f.name<? COLLATE NOCASE LIMIT ?;";
+    if (sqlite3_prepare_v2(db, prefixSql.constData(), -1, &prefixQuery,
+                           nullptr) == SQLITE_OK) {
+      bindText(prefixQuery, 1, query);
+      bindText(prefixQuery, 2, query + QChar(0xffff));
+      sqlite3_bind_int(prefixQuery, 3, qMax(32, limit * 4));
+      while (sqlite3_step(prefixQuery) == SQLITE_ROW) {
+        const auto *pathText = sqlite3_column_text(prefixQuery, 0);
+        const QString path =
+            pathText
+                ? QString::fromUtf8(reinterpret_cast<const char *>(pathText))
+                : QString();
+        appendFileRow(prefixQuery, pins.contains(path));
+      }
+    }
+    if (prefixQuery)
+      sqlite3_finalize(prefixQuery);
   }
 
   QStringList indexedTerms;
@@ -2661,13 +3198,19 @@ QVariantMap FileCatalog::status() const {
 }
 
 void FileCatalog::requestShadowRefresh() {
-  if (QCoreApplication::applicationName() != QLatin1String("synchro") ||
+  if (!m_maintenanceOwner ||
+      QCoreApplication::applicationName() != QLatin1String("synchro") ||
       qEnvironmentVariableIsSet("SYNCHRO_DISABLE_SHADOW_REFRESH") || m_indexing)
     return;
   const qint64 now = QDateTime::currentMSecsSinceEpoch();
   if (m_lastShadowRefreshRequestAt > 0 &&
-      now - m_lastShadowRefreshRequestAt < kShadowRefreshCooldownMs)
+      now - m_lastShadowRefreshRequestAt < kShadowRefreshCooldownMs) {
+    if (!m_shadowDebounceTimer.isActive())
+      m_shadowDebounceTimer.start(int(kShadowRefreshCooldownMs -
+                                      (now - m_lastShadowRefreshRequestAt) +
+                                      1000));
     return;
+  }
 
   sqlite3 *source = openCatalogReadOnly();
   qint64 lastSourceChange =
@@ -2685,22 +3228,37 @@ void FileCatalog::requestShadowRefresh() {
   if (catalogWal.exists())
     lastSourceChange =
         qMax(lastSourceChange, catalogWal.lastModified().toMSecsSinceEpoch());
-  if (lastSourceChange > 0 && now - lastSourceChange < kShadowQuietPeriodMs)
+  if (lastSourceChange > 0 && now - lastSourceChange < kShadowQuietPeriodMs) {
+    m_shadowDebounceTimer.start(int(kShadowQuietPeriodMs -
+                                    (now - lastSourceChange) + 1000));
     return;
+  }
 
   const QFileInfo activeShadow(shadowPath());
   if (activeShadow.isFile() &&
       now - activeShadow.lastModified().toMSecsSinceEpoch() <
-          kShadowRefreshCooldownMs)
+          kShadowRefreshCooldownMs) {
+    if (!m_shadowDebounceTimer.isActive())
+      m_shadowDebounceTimer.start(int(
+          kShadowRefreshCooldownMs -
+          (now - activeShadow.lastModified().toMSecsSinceEpoch()) + 1000));
     return;
+  }
 
   const QString executable = QCoreApplication::applicationFilePath();
   if (executable.isEmpty())
     return;
   m_lastShadowRefreshRequestAt = now;
+  const QVariantMap shadowStatus = readShadowStatus();
+  const qint64 compactedAt =
+      shadowStatus.value(QStringLiteral("compactedAt")).toLongLong();
+  const bool compact = compactedAt <= 0 ||
+                       now - compactedAt >= kShadowCompactionIntervalMs;
   QString program = executable;
   QStringList arguments{QStringLiteral("catalog"), QStringLiteral("shadow"),
-                        QStringLiteral("rebuild"), QStringLiteral("--compact")};
+                        compact ? QStringLiteral("compact")
+                                : QStringLiteral("refresh"),
+                        QStringLiteral("--compact")};
   const QString systemdRun =
       QStandardPaths::findExecutable(QStringLiteral("systemd-run"));
   if (!systemdRun.isEmpty()) {
@@ -2713,7 +3271,9 @@ void FileCatalog::requestShadowRefresh() {
                        QStringLiteral("--property=IOSchedulingClass=idle"),
                        QStringLiteral("--property=CPUWeight=10"),
                        QStringLiteral("--property=IOWeight=10"),
-                       QStringLiteral("--property=CPUQuota=200%")};
+                       QStringLiteral("--property=CPUQuota=50%"),
+                       QStringLiteral("--property=MemoryHigh=1536M"),
+                       QStringLiteral("--property=MemoryMax=2G")};
     const QByteArray catalogHome = qgetenv("SYNCHRO_HOME");
     if (!catalogHome.isEmpty())
       broker.append(QStringLiteral("--setenv=SYNCHRO_HOME=%1")
@@ -2727,9 +3287,99 @@ void FileCatalog::requestShadowRefresh() {
 
 void FileCatalog::scheduleSnapshot() { m_snapshotTimer.start(); }
 
+void FileCatalog::rememberHotDirectory(const QString &path) {
+  const QString normalized = normalizedPath(path);
+  if (normalized.isEmpty() || DirectoryModel::isVirtualPath(normalized))
+    return;
+  m_writerPool.start([normalized] { markHotDirectory(normalized); });
+}
+
 void FileCatalog::refreshCurrent() {
   m_snapshotTimer.stop();
   captureSnapshot();
+}
+
+void FileCatalog::reconcileDirectories(const QStringList &rawPaths) {
+  QStringList paths;
+  paths.reserve(rawPaths.size());
+  for (const QString &raw : rawPaths) {
+    const QString path = normalizedPath(raw);
+    if (!path.isEmpty() && !DirectoryModel::isVirtualPath(path) &&
+        !paths.contains(path))
+      paths.append(path);
+  }
+  if (paths.isEmpty())
+    return;
+  QPointer<FileCatalog> self(this);
+  m_writerPool.start([self, paths] {
+    sqlite3 *db = openCatalog();
+    if (!db)
+      return;
+    int changedRows = 0;
+    int removedRows = 0;
+    for (const QString &path : paths) {
+      const QFileInfo directory(path);
+      if (!directory.exists() || !directory.isDir()) {
+        removedRows += deleteCatalogPath(db, path, true);
+        continue;
+      }
+      QHash<QString, bool> existing;
+      sqlite3_stmt *childQuery = nullptr;
+      if (sqlite3_prepare_v2(db,
+                             "SELECT path,is_dir FROM files WHERE parent=?;",
+                             -1, &childQuery, nullptr) == SQLITE_OK) {
+        bindText(childQuery, 1, path);
+        while (sqlite3_step(childQuery) == SQLITE_ROW) {
+          const auto *text = sqlite3_column_text(childQuery, 0);
+          if (text)
+            existing.insert(
+                QString::fromUtf8(reinterpret_cast<const char *>(text)),
+                sqlite3_column_int(childQuery, 1) != 0);
+        }
+      }
+      if (childQuery)
+        sqlite3_finalize(childQuery);
+
+      const QFileInfoList entries =
+          QDir(path).entryInfoList(QDir::AllEntries | QDir::Hidden |
+                                       QDir::System | QDir::NoDotAndDotDot,
+                                   QDir::NoSort);
+      QVector<CatalogRow> rows;
+      rows.reserve(entries.size());
+      QSet<QString> current;
+      current.reserve(entries.size());
+      for (const QFileInfo &entry : entries) {
+        CatalogRow row = rowForInfo(entry);
+        if (row.path.isEmpty())
+          continue;
+        current.insert(row.path);
+        rows.append(std::move(row));
+      }
+      for (auto it = existing.cbegin(); it != existing.cend(); ++it) {
+        if (!current.contains(it.key()))
+          removedRows += deleteCatalogPath(db, it.key(), it.value());
+      }
+      upsertChangedRows(db, rows, QString(), false, &changedRows);
+    }
+    if (changedRows > 0 || removedRows > 0) {
+      execSql(db, "BEGIN IMMEDIATE;");
+      const bool bumped = bumpCatalogRevision(db);
+      execSql(db, bumped ? "COMMIT;" : "ROLLBACK;");
+    }
+    sqlite3_close(db);
+    if (self && (changedRows > 0 || removedRows > 0)) {
+      QMetaObject::invokeMethod(
+          self,
+          [self] {
+            if (self) {
+              self->m_shadowDebounceTimer.start();
+              self->m_statusText = QStringLiteral("hot set reconciled");
+              emit self->statusChanged();
+            }
+          },
+          Qt::QueuedConnection);
+    }
+  });
 }
 
 void FileCatalog::captureSnapshot() {
@@ -2778,22 +3428,10 @@ void FileCatalog::enqueueDelete(const QStringList &rawPaths) {
     sqlite3 *db = openCatalog();
     if (!db)
       return;
-    sqlite3_stmt *st = nullptr;
-    if (sqlite3_prepare_v2(db, "DELETE FROM files WHERE path=?;", -1, &st,
-                           nullptr) != SQLITE_OK) {
-      sqlite3_close(db);
-      return;
-    }
     execSql(db, "BEGIN IMMEDIATE;");
     int removedRows = 0;
-    for (const QString &path : paths) {
-      sqlite3_reset(st);
-      sqlite3_clear_bindings(st);
-      bindText(st, 1, normalizedPath(path));
-      if (sqlite3_step(st) == SQLITE_DONE)
-        removedRows += sqlite3_changes(db);
-    }
-    sqlite3_finalize(st);
+    for (const QString &path : paths)
+      removedRows += deleteCatalogPath(db, normalizedPath(path), false);
     const bool ok = removedRows == 0 || bumpCatalogRevision(db);
     execSql(db, ok ? "COMMIT;" : "ROLLBACK;");
     sqlite3_close(db);
@@ -3626,8 +4264,27 @@ void FileCatalog::scanTree(const QString &rawRoot, int maxEntries) {
     // previous tail because absence beyond the cap does not mean deletion.
     if (!capped && !cancelled->load()) {
       int staleRows = 0;
+      QStringList stalePaths;
+      sqlite3_stmt *staleQuery = nullptr;
+      const bool staleQueryReady = sqlite3_prepare_v2(
+              db,
+              "SELECT path FROM files WHERE scan_root=? AND seen_at<>?;", -1,
+              &staleQuery, nullptr) == SQLITE_OK;
+      if (staleQueryReady) {
+        bindText(staleQuery, 1, root);
+        sqlite3_bind_int64(staleQuery, 2, scanToken);
+        while (sqlite3_step(staleQuery) == SQLITE_ROW) {
+          const auto *text = sqlite3_column_text(staleQuery, 0);
+          if (text)
+            stalePaths.append(
+                QString::fromUtf8(reinterpret_cast<const char *>(text)));
+        }
+      }
+      if (staleQuery)
+        sqlite3_finalize(staleQuery);
       sqlite3_stmt *st = nullptr;
-      if (sqlite3_prepare_v2(
+      execSql(db, "BEGIN IMMEDIATE;");
+      if (staleQueryReady && sqlite3_prepare_v2(
               db, "DELETE FROM files WHERE scan_root=? AND seen_at<>?;", -1,
               &st, nullptr) == SQLITE_OK) {
         bindText(st, 1, root);
@@ -3637,9 +4294,17 @@ void FileCatalog::scanTree(const QString &rawRoot, int maxEntries) {
       }
       if (st)
         sqlite3_finalize(st);
-      if (scanWrites > 0 || staleRows > 0)
-        bumpCatalogRevision(db);
-      persistScanState(db, root, count, true);
+      bool finalWriteOk = staleQueryReady;
+      if (staleRows > 0) {
+        const qint64 sequence = nextChangeSequence(db);
+        finalWriteOk = sequence > 0 &&
+                       recordCatalogChanges(db, stalePaths, 0, sequence);
+      }
+      if (finalWriteOk && (scanWrites > 0 || staleRows > 0))
+        finalWriteOk = bumpCatalogRevision(db);
+      if (finalWriteOk)
+        persistScanState(db, root, count, true);
+      execSql(db, finalWriteOk ? "COMMIT;" : "ROLLBACK;");
     } else if (!cancelled->load() && scanWrites > 0) {
       // A bounded scan is intentionally incomplete, but its newly available
       // rows still need to invalidate the shadow once—not once per batch.

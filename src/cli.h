@@ -6,3 +6,4 @@ int runLauncherCli(int argc, char **argv);
 int runMcpCli(int argc, char **argv);
 int runAgentCli(int argc, char **argv);
 int runCatalogCli(int argc, char **argv);
+int runIndexCli(int argc, char **argv);

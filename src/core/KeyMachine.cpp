@@ -1593,7 +1593,7 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
     revealCurrent();
     return true;
   }
-  if (key == Qt::Key_D && ctrl && !alt && !meta) {
+  if ((key == Qt::Key_B || key == Qt::Key_D) && ctrl && !alt && !meta) {
     QString info;
     runPinCommand(QStringLiteral("pin"), &info);
     if (!info.isEmpty())

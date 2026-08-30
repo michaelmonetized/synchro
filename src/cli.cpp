@@ -4,6 +4,7 @@
 #include "AgentIntegration.h"
 #include "Config.h"
 #include "FileCatalog.h"
+#include "HotSetWatcher.h"
 #include "HandlerInstall.h"
 #include "HandlerRegistry.h"
 #include "Manifest.h"
@@ -15,12 +16,17 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 
+#include <algorithm>
 #include <cstdio>
+#include <sys/resource.h>
+#include <utility>
 #include <unistd.h>
 
 namespace {
@@ -52,7 +58,18 @@ void launcherUsage() {
 void catalogUsage() {
   std::fprintf(stderr,
                "Usage: synchro catalog shadow status [--compact]\n"
+               "       synchro catalog shadow refresh [--compact]\n"
+               "       synchro catalog shadow compact [--compact]\n"
                "       synchro catalog shadow rebuild [--force] [--compact]\n");
+}
+
+void indexUsage() {
+  std::fprintf(stderr,
+               "Usage: synchro index serve [--no-scan]\n"
+               "       synchro index once [--compact]\n"
+               "       synchro index watch <folder> [--compact]\n"
+               "       synchro index unwatch <folder> [--compact]\n"
+               "       synchro index status [--compact]\n");
 }
 
 void mcpUsage() { std::fprintf(stderr, "Usage: synchro mcp [--stdio]\n"); }
@@ -809,6 +826,10 @@ int runCatalogCli(int argc, char **argv) {
   QVariantMap result;
   if (command == QLatin1String("status"))
     result = FileCatalog::shadowStatus();
+  else if (command == QLatin1String("refresh"))
+    result = FileCatalog::refreshShadow();
+  else if (command == QLatin1String("compact"))
+    result = FileCatalog::rebuildShadow(true);
   else if (command == QLatin1String("rebuild"))
     result = FileCatalog::rebuildShadow(force);
   else {
@@ -827,6 +848,175 @@ int runCatalogCli(int argc, char **argv) {
   std::fwrite(encoded.constData(), 1, static_cast<size_t>(encoded.size()),
               stdout);
   return result.value(QStringLiteral("ok")).toBool() ? 0 : 1;
+}
+
+int runIndexCli(int argc, char **argv) {
+  Q_UNUSED(argc);
+  Q_UNUSED(argv);
+  const QStringList args = QCoreApplication::arguments().mid(2);
+  if (args.isEmpty()) {
+    indexUsage();
+    return 2;
+  }
+  const QString command = args.first();
+  bool compact = false;
+  bool scan = true;
+  const int optionStart =
+      command == QLatin1String("watch") || command == QLatin1String("unwatch")
+          ? 2
+          : 1;
+  for (const QString &arg : args.mid(optionStart)) {
+    if (arg == QLatin1String("--compact"))
+      compact = true;
+    else if (arg == QLatin1String("--no-scan"))
+      scan = false;
+    else if (arg == QLatin1String("-h") || arg == QLatin1String("--help")) {
+      indexUsage();
+      return 0;
+    } else {
+      std::fprintf(stderr, "synchro: unknown index option %s\n",
+                   qPrintable(arg));
+      indexUsage();
+      return 2;
+    }
+  }
+
+  const QString lockPath = FileCatalog::dbPath() + QStringLiteral(".indexd.lock");
+  if (command == QLatin1String("status")) {
+    QLockFile probe(lockPath);
+    probe.setStaleLockTime(30000);
+    const bool acquired = probe.tryLock(0);
+    QVariantMap result = FileCatalog::shadowStatus();
+    result.insert(QStringLiteral("ok"), true);
+    result.insert(QStringLiteral("running"), !acquired);
+    result.insert(QStringLiteral("lockPath"), lockPath);
+    result.insert(QStringLiteral("hotDirectoryHints"),
+                  FileCatalog::hotDirectories(2048).size());
+    if (!acquired) {
+      qint64 pid = 0;
+      QString host;
+      QString app;
+      if (probe.getLockInfo(&pid, &host, &app)) {
+        result.insert(QStringLiteral("ownerPid"), pid);
+        result.insert(QStringLiteral("ownerHost"), host);
+      }
+    }
+    if (acquired)
+      probe.unlock();
+    writeJson(QJsonObject::fromVariantMap(result), compact);
+    return 0;
+  }
+  if (command == QLatin1String("once")) {
+    const QVariantMap result = FileCatalog::refreshShadow();
+    writeJson(QJsonObject::fromVariantMap(result), compact);
+    return result.value(QStringLiteral("ok")).toBool() ? 0 : 1;
+  }
+  if (command == QLatin1String("watch")) {
+    QVariantMap result;
+    const QString path = args.size() >= 2 ? args.at(1) : QString();
+    const bool ok = FileCatalog::markHotDirectory(path);
+    result.insert(QStringLiteral("ok"), ok);
+    result.insert(QStringLiteral("path"), QFileInfo(path).absoluteFilePath());
+    if (!ok)
+      result.insert(QStringLiteral("error"),
+                    QStringLiteral("folder is unavailable"));
+    writeJson(QJsonObject::fromVariantMap(result), compact);
+    return ok ? 0 : 1;
+  }
+  if (command == QLatin1String("unwatch")) {
+    QVariantMap result;
+    const QString path = args.size() >= 2 ? args.at(1) : QString();
+    const bool ok = FileCatalog::forgetHotDirectory(path);
+    result.insert(QStringLiteral("ok"), ok);
+    result.insert(QStringLiteral("path"), QFileInfo(path).absoluteFilePath());
+    writeJson(QJsonObject::fromVariantMap(result), compact);
+    return ok ? 0 : 1;
+  }
+  if (command != QLatin1String("serve")) {
+    indexUsage();
+    return 2;
+  }
+
+  QLockFile owner(lockPath);
+  owner.setStaleLockTime(30000);
+  if (!owner.tryLock(0)) {
+    std::fprintf(stderr, "synchro-indexd: another owner is already running\n");
+    return 0;
+  }
+
+  ::setpriority(PRIO_PROCESS, 0, 15);
+
+  FileCatalog catalog(nullptr, nullptr, true);
+  const auto environmentInterval = [](const char *name, int fallback) {
+    bool ok = false;
+    const int value = qEnvironmentVariableIntValue(name, &ok);
+    return ok && value >= 0 ? value : fallback;
+  };
+  const int maxWatches = environmentInterval("SYNCHRO_INDEX_MAX_WATCHES", 2048);
+  const int debounceMs =
+      environmentInterval("SYNCHRO_INDEX_WATCH_DEBOUNCE_MS", 650);
+  const int neighborhood =
+      environmentInterval("SYNCHRO_INDEX_WATCH_NEIGHBORHOOD", 128);
+  HotSetWatcher hotSet(maxWatches, debounceMs);
+  QObject::connect(&hotSet, &HotSetWatcher::directoriesChanged, &catalog,
+                   &FileCatalog::reconcileDirectories);
+  QObject::connect(&hotSet, &HotSetWatcher::directoriesDiscovered, &hotSet,
+                   [&hotSet, neighborhood](const QStringList &paths) {
+                     for (const QString &path : paths)
+                       hotSet.addNeighborhood(path, qMin(neighborhood, 32));
+                   });
+
+  QTimer hotSeed;
+  hotSeed.setInterval(
+      environmentInterval("SYNCHRO_INDEX_WATCH_SEED_MS", 10000));
+  const auto seedHotSet = [&hotSet, neighborhood] {
+    Config current;
+    QStringList candidates;
+    for (const QVariant &value : current.sqlBookmarks())
+      candidates.append(value.toMap().value(QStringLiteral("cwd")).toString());
+    for (const QString &pin : current.pins()) {
+      const QFileInfo info(pin);
+      candidates.append(info.isDir() ? info.absoluteFilePath()
+                                     : info.absolutePath());
+    }
+    candidates.append(current.lastPath());
+    QStringList recent = FileCatalog::hotDirectories(32);
+    std::reverse(recent.begin(), recent.end());
+    candidates.append(recent);
+    candidates.removeAll(QString());
+    candidates.removeDuplicates();
+    for (const QString &path : std::as_const(candidates))
+      hotSet.addNeighborhood(path, neighborhood);
+  };
+  QObject::connect(&hotSeed, &QTimer::timeout, &hotSet, seedHotSet);
+  seedHotSet();
+  hotSeed.start();
+
+  QTimer recursiveScan;
+  recursiveScan.setSingleShot(true);
+  const int initialDelay = environmentInterval(
+      "SYNCHRO_INDEX_INITIAL_SCAN_DELAY_MS", 15 * 60 * 1000);
+  const int scanInterval = environmentInterval(
+      "SYNCHRO_INDEX_SCAN_INTERVAL_MS", 6 * 60 * 60 * 1000);
+  if (scan && !catalog.indexedRoot().isEmpty()) {
+    QObject::connect(&recursiveScan, &QTimer::timeout, &catalog, [&catalog] {
+      if (!catalog.indexing() && !catalog.indexedRoot().isEmpty())
+        catalog.scanTree(catalog.indexedRoot());
+    });
+    QObject::connect(&catalog, &FileCatalog::statusChanged, &recursiveScan,
+                     [&catalog, &recursiveScan, scanInterval] {
+                       if (!catalog.indexing() && scanInterval > 0)
+                         recursiveScan.start(scanInterval);
+                     });
+    if (initialDelay >= 0)
+      recursiveScan.start(initialDelay);
+  }
+  std::fprintf(stderr,
+               "synchro-indexd: catalog owner ready · %d/%d hot watches · "
+               "%d ms debounce%s\n",
+               hotSet.watchCount(), hotSet.maxWatches(), hotSet.debounceMs(),
+               scan ? "" : " (recursive scans disabled)");
+  return QCoreApplication::instance()->exec();
 }
 
 int runMcpCli(int argc, char **argv) {

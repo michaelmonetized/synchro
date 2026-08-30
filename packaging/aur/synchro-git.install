@@ -1,0 +1,13 @@
+post_install() {
+  printf '%s\n' \
+    'Synchro installed.' \
+    'Run this once as your desktop user to enable the catalog indexer and agent integration:' \
+    '  synchro-omarchy-setup' \
+    'Add --menu to also install the optional Super+Space search provider.'
+}
+
+post_upgrade() {
+  printf '%s\n' \
+    'Synchro upgraded.' \
+    'Run synchro-omarchy-setup to reload and verify the user catalog service.'
+}

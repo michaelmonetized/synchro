@@ -27,8 +27,11 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QGuiApplication>
+#include <QLockFile>
+#include <QProcess>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QStandardPaths>
 #include <QSurfaceFormat>
 #include <QTimer>
 #include <QVariantMap>
@@ -57,6 +60,7 @@ int main(int argc, char *argv[]) {
       (std::strcmp(argv[1], "handler") == 0 ||
        std::strcmp(argv[1], "agent") == 0 ||
        std::strcmp(argv[1], "catalog") == 0 ||
+       std::strcmp(argv[1], "index") == 0 ||
        std::strcmp(argv[1], "launcher") == 0 ||
        std::strcmp(argv[1], "query") == 0 ||
        std::strcmp(argv[1], "mcp") == 0)) {
@@ -73,6 +77,8 @@ int main(int argc, char *argv[]) {
       return runAgentCli(argc, argv);
     if (std::strcmp(argv[1], "catalog") == 0)
       return runCatalogCli(argc, argv);
+    if (std::strcmp(argv[1], "index") == 0)
+      return runIndexCli(argc, argv);
     if (std::strcmp(argv[1], "mcp") == 0)
       return runMcpCli(argc, argv);
     return runHandlerCli(argc, argv);
@@ -226,6 +232,28 @@ int main(int argc, char *argv[]) {
   // links current on ordinary browser startup; preserve any user-owned path
   // collision and expose it through `synchro agent doctor`.
   AgentIntegration::installSkill();
+  if (!qEnvironmentVariableIsSet("SYNCHRO_DISABLE_INDEX_SERVICE")) {
+    const QString executable = QCoreApplication::applicationFilePath();
+    const QString systemctl =
+        QStandardPaths::findExecutable(QStringLiteral("systemctl"));
+    if (!systemctl.isEmpty())
+      QProcess::startDetached(systemctl,
+                              {QStringLiteral("--user"),
+                               QStringLiteral("start"),
+                               QStringLiteral("synchro-indexd.service")});
+    // A source-tree run may not have the packaged unit installed. The lock
+    // makes this delayed fallback harmless when systemd won the race.
+    QTimer::singleShot(750, &app, [executable] {
+      QLockFile probe(FileCatalog::dbPath() + QStringLiteral(".indexd.lock"));
+      probe.setStaleLockTime(30000);
+      if (!probe.tryLock(0))
+        return;
+      probe.unlock();
+      QProcess::startDetached(executable,
+                              {QStringLiteral("index"),
+                               QStringLiteral("serve")});
+    });
+  }
 
   Config config;
   QString startPath = QDir::homePath();

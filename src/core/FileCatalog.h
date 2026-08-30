@@ -24,7 +24,8 @@ class FileCatalog : public QObject {
   Q_PROPERTY(QString analysisStatus READ analysisStatus NOTIFY analysisChanged)
 
 public:
-  explicit FileCatalog(DirectoryModel *model, QObject *parent = nullptr);
+  explicit FileCatalog(DirectoryModel *model, QObject *parent = nullptr,
+                       bool maintenanceOwner = false);
   ~FileCatalog() override;
 
   static QString dbPath();
@@ -33,6 +34,9 @@ public:
   // atomically promote it. Readers that already opened the previous inode are
   // unaffected; subsequent queries see the new generation.
   static QVariantMap rebuildShadow(bool force = false);
+  // Patch a cloned generation from the persistent SQLite change ledger.
+  // Falls back to a bounded full build only when no compatible baseline exists.
+  static QVariantMap refreshShadow();
   static QVariantMap shadowStatus();
   // Headless query seam shared by the SQL panel, CLI, and MCP server. It
   // reads only the durable catalog and does not require a GUI model.
@@ -51,6 +55,10 @@ public:
   static QVariantMap contentSearchSync(const QString &query,
                                        const QString &cwd = {}, int maxRows = 8,
                                        int timeoutMs = 5000);
+  // Persistent bounded recency used by the daemon's inotify hot set.
+  static QStringList hotDirectories(int limit = 64);
+  static bool markHotDirectory(const QString &path);
+  static bool forgetHotDirectory(const QString &path);
   // Cheap syntax/safety validation for handoff surfaces that should not open
   // the multi-gigabyte catalog merely to decide whether a query may launch.
   static bool validateReadOnlySql(const QString &sql, QString *error = nullptr);
@@ -87,6 +95,9 @@ public:
   // useful for explicit bounded scans and tests.
   Q_INVOKABLE void scanTree(const QString &root, int maxEntries = 0);
   Q_INVOKABLE void refreshCurrent();
+  // Reconcile only the immediate children of changed directories. This is the
+  // low-latency counterpart to scanTree's durable full-tree reconciliation.
+  void reconcileDirectories(const QStringList &paths);
   // Analyze a deliberately bounded image batch below root. Visible thumbnail
   // work fills the same facts table automatically.
   Q_INVOKABLE void analyzeImages(const QString &root, int maxFiles = 500);
@@ -108,12 +119,14 @@ private:
   void restoreScanState();
   void rememberCompleteRoot(const QString &root);
   void requestShadowRefresh();
+  void rememberHotDirectory(const QString &path);
   void setStatus(bool indexing, const QString &root, int count,
                  const QString &text);
 
   DirectoryModel *m_model = nullptr;
   QTimer m_snapshotTimer;
   QTimer m_shadowRefreshTimer;
+  QTimer m_shadowDebounceTimer;
   QThreadPool m_scanPool;
   QThreadPool m_writerPool;
   QThreadPool m_queryPool;
@@ -132,5 +145,6 @@ private:
   int m_indexedCount = 0;
   QString m_statusText = QStringLiteral("current folder is live");
   bool m_analyzing = false;
+  bool m_maintenanceOwner = false;
   QString m_analysisStatus;
 };

@@ -704,7 +704,13 @@ void LocationAdaptersTest::colonPinAndShiftPToggle() {
   QVERIFY(chips.isPinned(proj));
   QCOMPARE(keys.statusMessage(), QStringLiteral("pinned proj"));
 
+  QVERIFY(keys.handleListKey(Qt::Key_B, Qt::ControlModifier, QString()));
+  QVERIFY(!chips.isPinned(proj));
+
+  // Keep the previous shortcut compatible for existing muscle memory.
   QVERIFY(keys.handleListKey(Qt::Key_D, Qt::ControlModifier, QString()));
+  QVERIFY(chips.isPinned(proj));
+  QVERIFY(keys.handleListKey(Qt::Key_B, Qt::ControlModifier, QString()));
   QVERIFY(!chips.isPinned(proj));
 }
 

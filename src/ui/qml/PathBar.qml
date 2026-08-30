@@ -15,6 +15,15 @@ Item {
     readonly property var placeChips: root.locationChips ? root.locationChips.placeChips : []
     readonly property var diskChips: root.locationChips ? root.locationChips.diskChips : []
     readonly property var volumesChip: root.locationChips ? root.locationChips.volumesChip : ({})
+    readonly property bool currentFolderCanBePinned: !!root.locationChips &&
+                                                       !root.locationChips.chooserMode &&
+                                                       root.path.indexOf("/") === 0
+    readonly property bool currentFolderPinned: {
+        // placeChips is the change notification dependency for pin/unpin.
+        var pinGeneration = root.placeChips.length
+        return root.currentFolderCanBePinned &&
+               root.locationChips.isPinned(root.path)
+    }
     readonly property bool hasDisks: (root.diskChips && root.diskChips.length > 0) ||
                                      !!(root.volumesChip && root.volumesChip.id)
     readonly property bool compactTabs: width < Theme.space(760)
@@ -120,6 +129,15 @@ Item {
             root.navStack.navigate("volumes://")
     }
 
+    function toggleCurrentFolderPin() {
+        if (!root.currentFolderCanBePinned)
+            return
+        if (root.currentFolderPinned)
+            root.locationChips.unpin(root.path)
+        else
+            root.locationChips.pin(root.path)
+    }
+
     Rectangle {
         anchors.fill: parent
         color: Theme.darkBackground
@@ -192,7 +210,9 @@ Item {
             Text {
                 id: removeGlyph
                 objectName: "remove:" + tab.tabId
-                visible: tab.removable && (!root.compactTabs || tab.current)
+                // Compact tabs are intentionally single-action: a left click
+                // always opens them. Middle-click remains the compact unpin.
+                visible: tab.removable && !root.compactTabs
                 opacity: tabHover.hovered ? 1 : 0
                 text: "×"
                 color: Theme.muted
@@ -230,7 +250,7 @@ Item {
             onClicked: function (mouse) {
                 var closePoint = mapToItem(removeGlyph, mouse.x, mouse.y)
                 var closePad = Theme.spaceSM
-                var onClose = tab.removable &&
+                var onClose = removeGlyph.visible &&
                               closePoint.x >= -closePad &&
                               closePoint.x <= removeGlyph.width + closePad &&
                               closePoint.y >= -closePad &&
@@ -292,6 +312,23 @@ Item {
                 enabled: !!root.navStack
                 toolTip: "Parent folder  ·  Alt+Up"
                 onTriggered: if (root.navStack) root.navStack.goUp()
+            }
+
+            ChromeButton {
+                objectName: "bookmarkCurrentFolder"
+                visible: root.currentFolderCanBePinned
+                width: visible ? Theme.controlHeight : 0
+                height: Theme.controlHeight
+                compact: true
+                iconName: root.currentFolderPinned
+                          ? "xsi-starred-symbolic"
+                          : "xsi-non-starred-symbolic"
+                fallbackGlyph: root.currentFolderPinned ? "★" : "☆"
+                checked: root.currentFolderPinned
+                toolTip: root.currentFolderPinned
+                         ? "Remove bookmark  ·  Ctrl+B"
+                         : "Bookmark this folder  ·  Ctrl+B"
+                onTriggered: root.toggleCurrentFolderPin()
             }
         }
 

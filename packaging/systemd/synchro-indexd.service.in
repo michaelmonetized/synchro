@@ -1,0 +1,20 @@
+[Unit]
+Description=Synchro indexed catalog maintenance
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_BINDIR@/synchro index serve
+Restart=on-failure
+RestartSec=5
+Nice=15
+IOSchedulingClass=idle
+CPUWeight=20
+IOWeight=20
+CPUQuota=50%
+MemoryHigh=1536M
+MemoryMax=2G
+
+[Install]
+WantedBy=graphical-session.target

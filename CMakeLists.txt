@@ -83,6 +83,7 @@ qt_add_executable(synchro
     ${SYNCHRO_FS_SOURCES}
     src/core/DirectoryLister.cpp
     src/core/DirectoryWatcher.cpp
+    src/core/HotSetWatcher.cpp
     src/core/NavStack.cpp
     src/core/FilterProxy.cpp
     src/core/KeyMachine.cpp
@@ -876,6 +877,7 @@ if(BUILD_TESTING)
         src/AgentBridge.cpp
         src/core/Config.cpp
         src/core/FileCatalog.cpp
+        src/core/HotSetWatcher.cpp
         ${SYNCHRO_FS_SOURCES}
         src/core/DirectoryLister.cpp
         src/core/DirectoryWatcher.cpp
@@ -931,11 +933,18 @@ set_target_properties(synchro PROPERTIES
 
 include(GNUInstallDirs)
 
+set(SYNCHRO_SYSTEMD_USER_UNIT_DIR "${CMAKE_INSTALL_LIBDIR}/systemd/user"
+    CACHE PATH "Install location for the Synchro systemd user unit")
+
 # Exec is baked at configure time; use -DCMAKE_INSTALL_PREFIX=... (not only
 # cmake --install --prefix) so the D-Bus service points at the installed binary.
 configure_file(
     packaging/dbus/org.freedesktop.impl.portal.desktop.synchro.service.in
     ${CMAKE_CURRENT_BINARY_DIR}/org.freedesktop.impl.portal.desktop.synchro.service
+    @ONLY)
+configure_file(
+    packaging/systemd/synchro-indexd.service.in
+    ${CMAKE_CURRENT_BINARY_DIR}/synchro-indexd.service
     @ONLY)
 
 install(TARGETS synchro RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
@@ -949,6 +958,8 @@ install(FILES packaging/portals/synchro.portal
         DESTINATION ${CMAKE_INSTALL_DATADIR}/xdg-desktop-portal/portals)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.freedesktop.impl.portal.desktop.synchro.service
         DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/services)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/synchro-indexd.service
+        DESTINATION ${SYNCHRO_SYSTEMD_USER_UNIT_DIR})
 install(FILES packaging/icons/org.omarchy.synchro.svg
         DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
 install(FILES packaging/brand/NOTICE.md
@@ -961,6 +972,9 @@ install(PROGRAMS
         packaging/omarchy/omarchy-launch-synchro
         packaging/omarchy/omarchy-launch-synchro-cwd
         DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS packaging/omarchy/install.sh
+        DESTINATION ${CMAKE_INSTALL_BINDIR}
+        RENAME synchro-omarchy-setup)
 install(PROGRAMS packaging/omarchy/menu/install.sh
         DESTINATION ${CMAKE_INSTALL_BINDIR}
         RENAME synchro-omarchy-menu-install)
