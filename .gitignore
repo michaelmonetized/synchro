@@ -13,3 +13,5 @@ ui_*.h
 *.o
 *.a
 *.so
+__pycache__/
+*.py[cod]

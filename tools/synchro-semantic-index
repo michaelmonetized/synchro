@@ -1,0 +1,769 @@
+#!/usr/bin/env python3
+"""Build and query Synchro's local CLIP image index.
+
+The canonical file catalog remains small and operational. Dense vectors live in
+semantic.sqlite and are keyed by the stable filesystem identity plus source
+size/mtime, so moved files are reused and changed files are recomputed. Text
+queries use the matching CLIP encoder and exact, folder-scoped cosine ranking.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import heapq
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sqlite3
+import sys
+import tempfile
+import time
+import urllib.request
+
+
+IMAGE_MODEL_ID = "Qdrant/clip-ViT-B-32-vision"
+IMAGE_MODEL_URL = (
+    "https://huggingface.co/Qdrant/clip-ViT-B-32-vision/resolve/main/model.onnx"
+)
+IMAGE_MODEL_SHA256 = "c68d3d9a200ddd2a8c8a5510b576d4c94d1ae383bf8b36dd8c084f94e1fb4d63"
+IMAGE_MODEL_BYTES = 351_686_194
+TEXT_MODEL_ID = "Qdrant/clip-ViT-B-32-text"
+TEXT_MODEL_URL = (
+    "https://huggingface.co/Qdrant/clip-ViT-B-32-text/resolve/main/model.onnx"
+)
+TEXT_MODEL_SHA256 = "4dbe762b11e36488304471e439cde89da053ad7acaddbf9e096745d142ec8d8b"
+TEXT_MODEL_BYTES = 254_102_519
+TOKENIZER_URL = (
+    "https://huggingface.co/Qdrant/clip-ViT-B-32-text/resolve/main/tokenizer.json"
+)
+TOKENIZER_SHA256 = "b68d571997a1f81bf521fb73806740ddb91e4ed6666cb6e996c066bb289cf55b"
+TOKENIZER_BYTES = 2_224_147
+IMAGE_EXTENSIONS = (
+    "avif",
+    "bmp",
+    "gif",
+    "heic",
+    "heif",
+    "jpeg",
+    "jpg",
+    "png",
+    "tif",
+    "tiff",
+    "webp",
+)
+MEAN = (0.48145466, 0.4578275, 0.40821073)
+STD = (0.26862954, 0.26130258, 0.27577711)
+
+
+def data_home() -> Path:
+    override = os.environ.get("SYNCHRO_HOME", "").strip()
+    if override:
+        return Path(override).expanduser()
+    xdg = os.environ.get("XDG_DATA_HOME", "").strip()
+    return (Path(xdg).expanduser() if xdg else Path.home() / ".local/share") / "synchro"
+
+
+def default_catalog() -> Path:
+    return data_home() / "catalog.sqlite"
+
+
+def default_database() -> Path:
+    return data_home() / "semantic.sqlite"
+
+
+def default_model() -> Path:
+    return data_home() / "models/clip-vit-b32-vision/model.onnx"
+
+
+def default_text_model() -> Path:
+    return data_home() / "models/clip-vit-b32-text/model.onnx"
+
+
+def default_tokenizer() -> Path:
+    return data_home() / "models/clip-vit-b32-text/tokenizer.json"
+
+
+def emit(payload: dict) -> None:
+    print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+
+
+def dependencies() -> dict[str, bool]:
+    return {
+        "numpy": importlib.util.find_spec("numpy") is not None,
+        "onnxruntime": importlib.util.find_spec("onnxruntime") is not None,
+        "PIL": importlib.util.find_spec("PIL") is not None,
+        "tokenizers": importlib.util.find_spec("tokenizers") is not None,
+    }
+
+
+def required_dependencies(text: bool = False) -> tuple[str, ...]:
+    base = ("numpy", "onnxruntime", "PIL")
+    return (*base, "tokenizers") if text else base
+
+
+def maybe_reexec_runtime(text: bool = False) -> None:
+    present = dependencies()
+    if all(present[name] for name in required_dependencies(text)):
+        return
+    python = data_home() / "semantic-runtime/bin/python"
+    if python.is_file() and Path(sys.executable).resolve() != python.resolve():
+        os.execv(str(python), [str(python), *sys.argv])
+
+
+def connect_database(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path, timeout=10)
+    os.chmod(path, 0o600)
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA synchronous=NORMAL")
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS image_embeddings (
+          file_id TEXT NOT NULL,
+          path TEXT NOT NULL,
+          model TEXT NOT NULL,
+          dimension INTEGER NOT NULL,
+          source_size INTEGER NOT NULL,
+          source_mtime INTEGER NOT NULL,
+          vector BLOB NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY(file_id, model)
+        );
+        CREATE INDEX IF NOT EXISTS image_embeddings_path
+          ON image_embeddings(path);
+        CREATE INDEX IF NOT EXISTS image_embeddings_source
+          ON image_embeddings(source_size, source_mtime);
+        CREATE TABLE IF NOT EXISTS semantic_meta (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        """
+    )
+    return db
+
+
+def meta_get(db: sqlite3.Connection, key: str, fallback: str = "0") -> str:
+    row = db.execute("SELECT value FROM semantic_meta WHERE key=?", (key,)).fetchone()
+    return str(row[0]) if row else fallback
+
+
+def meta_set(db: sqlite3.Connection, key: str, value: object) -> None:
+    db.execute(
+        "INSERT INTO semantic_meta(key,value) VALUES(?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, str(value)),
+    )
+
+
+def semantic_status(
+    catalog_path: Path,
+    database_path: Path,
+    model_path: Path,
+    text_model_path: Path,
+    tokenizer_path: Path,
+) -> dict:
+    result: dict[str, object] = {
+        "available": database_path.is_file(),
+        "catalogPath": str(catalog_path),
+        "databasePath": str(database_path),
+        "model": IMAGE_MODEL_ID,
+        "modelPath": str(model_path),
+        "modelAvailable": model_path.is_file(),
+        "modelBytes": IMAGE_MODEL_BYTES,
+        "textModel": TEXT_MODEL_ID,
+        "textModelPath": str(text_model_path),
+        "textModelAvailable": text_model_path.is_file(),
+        "textModelBytes": TEXT_MODEL_BYTES,
+        "tokenizerPath": str(tokenizer_path),
+        "tokenizerAvailable": tokenizer_path.is_file(),
+        "dependencies": dependencies(),
+        "embeddedImages": 0,
+        "running": False,
+    }
+    if not database_path.is_file():
+        return result
+    try:
+        db = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True, timeout=2)
+        result["embeddedImages"] = db.execute(
+            "SELECT count(*) FROM image_embeddings WHERE model=?", (IMAGE_MODEL_ID,)
+        ).fetchone()[0]
+        if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='semantic_meta'"
+        ).fetchone():
+            for key, value in db.execute("SELECT key,value FROM semantic_meta"):
+                if key in {
+                    "last_run_at",
+                    "last_duration_ms",
+                    "last_embedded",
+                    "last_failed",
+                    "image_cursor",
+                    "image_sweeps",
+                    "change_sequence",
+                }:
+                    try:
+                        result[key] = int(value)
+                    except ValueError:
+                        result[key] = value
+                elif key in {"last_error"}:
+                    result[key] = value
+        if catalog_path.is_file():
+            catalog_uri = f"file:{catalog_path}?mode=ro"
+            db.execute("ATTACH DATABASE ? AS catalog", (catalog_uri,))
+            placeholders = ",".join("?" for _ in IMAGE_EXTENSIONS)
+            coverage = db.execute(
+                f"""
+                SELECT count(*),count(e.file_id),coalesce(max(f.rowid),0)
+                FROM catalog.files f LEFT JOIN image_embeddings e ON
+                  e.file_id=coalesce(nullif(f.file_id,''),f.path)
+                  AND e.path=f.path AND e.model=?
+                  AND e.source_size=f.size AND e.source_mtime=f.mtime
+                WHERE f.is_dir=0 AND f.is_symlink=0
+                  AND f.extension IN ({placeholders})
+                """,
+                (IMAGE_MODEL_ID, *IMAGE_EXTENSIONS),
+            ).fetchone()
+            eligible = int(coverage[0])
+            current = int(coverage[1])
+            stored = int(result["embeddedImages"])
+            result["eligibleImages"] = eligible
+            result["currentEmbeddings"] = current
+            result["pendingImages"] = max(0, eligible - current)
+            result["staleEmbeddings"] = max(0, stored - current)
+            result["coveragePercent"] = (
+                round(100.0 * current / eligible, 2) if eligible else 100.0
+            )
+            result["catalogMaxImageRowid"] = int(coverage[2])
+            catalog_sequence = current_change_sequence(db)
+            semantic_sequence = int(result.get("change_sequence", 0))
+            result["catalogChangeSequence"] = catalog_sequence
+            result["catalogSequenceLag"] = max(
+                0, catalog_sequence - semantic_sequence
+            )
+        db.close()
+    except sqlite3.Error as error:
+        result["error"] = str(error)
+    return result
+
+
+def ensure_artifact(
+    path: Path,
+    url: str,
+    sha256: str,
+    expected_bytes: int,
+    label: str,
+    allow_download: bool,
+) -> None:
+    stamp = path.with_suffix(path.suffix + ".verified")
+
+    def verification_token() -> str:
+        stat = path.stat()
+        return f"{sha256}:{stat.st_size}:{stat.st_mtime_ns}\n"
+
+    if path.is_file() and path.stat().st_size == expected_bytes:
+        try:
+            if stamp.read_text(encoding="utf-8") == verification_token():
+                return
+        except OSError:
+            pass
+        checksum = hashlib.sha256()
+        with path.open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                checksum.update(chunk)
+        digest = checksum.hexdigest()
+        if digest == sha256:
+            stamp.write_text(verification_token(), encoding="utf-8")
+            os.chmod(stamp, 0o600)
+            return
+    if not allow_download:
+        raise RuntimeError(f"{label} is not installed yet")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix="model-", suffix=".onnx", dir=path.parent)
+    os.close(fd)
+    temp_path = Path(temporary)
+    try:
+        digest = hashlib.sha256()
+        with urllib.request.urlopen(url, timeout=60) as response, temp_path.open(
+            "wb"
+        ) as output:
+            while chunk := response.read(1024 * 1024):
+                output.write(chunk)
+                digest.update(chunk)
+        if temp_path.stat().st_size != expected_bytes or digest.hexdigest() != sha256:
+            raise RuntimeError(f"downloaded {label} failed integrity verification")
+        os.chmod(temp_path, 0o600)
+        temp_path.replace(path)
+        stamp.write_text(verification_token(), encoding="utf-8")
+        os.chmod(stamp, 0o600)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def open_catalog(path: Path) -> sqlite3.Connection:
+    if not path.is_file():
+        raise RuntimeError(f"Synchro catalog is unavailable: {path}")
+    uri = f"file:{path}?mode=ro"
+    db = sqlite3.connect(uri, uri=True, timeout=10)
+    db.execute("PRAGMA query_only=ON")
+    db.execute("PRAGMA busy_timeout=10000")
+    return db
+
+
+def current_change_sequence(catalog: sqlite3.Connection) -> int:
+    try:
+        row = catalog.execute(
+            "SELECT CAST(value AS INTEGER) FROM catalog_meta WHERE key='change_sequence'"
+        ).fetchone()
+        return int(row[0]) if row else 0
+    except sqlite3.Error:
+        return 0
+
+
+def embedding_current(
+    semantic: sqlite3.Connection,
+    file_id: str,
+    path: str,
+    size: int,
+    mtime: int,
+) -> bool:
+    return (
+        semantic.execute(
+            "SELECT 1 FROM image_embeddings WHERE file_id=? AND path=? AND model=? "
+            "AND source_size=? AND source_mtime=?",
+            (file_id, path, IMAGE_MODEL_ID, size, mtime),
+        ).fetchone()
+        is not None
+    )
+
+
+def changed_candidates(
+    catalog: sqlite3.Connection,
+    semantic: sqlite3.Connection,
+    after_sequence: int,
+    limit: int,
+) -> tuple[list[tuple[int, str, str, int, int]], int]:
+    sequence = current_change_sequence(catalog)
+    if sequence <= after_sequence or limit <= 0:
+        return [], sequence
+    pending = catalog.execute(
+        "SELECT count(*) FROM catalog_changes WHERE sequence>?", (after_sequence,)
+    ).fetchone()[0]
+    # Recursive reconciliation may produce a huge single ledger generation.
+    # The bounded rowid sweep is safer for that; this path prioritizes live
+    # edits without letting one generation get partially acknowledged.
+    if pending > 4096:
+        return [], sequence
+    placeholders = ",".join("?" for _ in IMAGE_EXTENSIONS)
+    sql = f"""
+      SELECT f.rowid,coalesce(nullif(f.file_id,''),f.path),f.path,f.size,f.mtime
+      FROM catalog_changes c JOIN files f ON f.path=c.path
+      WHERE c.sequence>? AND c.operation=1 AND f.is_dir=0 AND f.is_symlink=0
+        AND lower(f.extension) IN ({placeholders})
+      ORDER BY c.sequence,f.rowid LIMIT ?
+    """
+    rows = catalog.execute(sql, (after_sequence, *IMAGE_EXTENSIONS, limit * 4)).fetchall()
+    candidates = [
+        row
+        for row in rows
+        if not embedding_current(
+            semantic, str(row[1]), str(row[2]), int(row[3]), int(row[4])
+        )
+    ][:limit]
+    deleted = catalog.execute(
+        "SELECT path FROM catalog_changes WHERE sequence>? AND operation=0",
+        (after_sequence,),
+    ).fetchall()
+    if deleted:
+        semantic.executemany(
+            "DELETE FROM image_embeddings WHERE path=?", ((row[0],) for row in deleted)
+        )
+    return candidates, sequence
+
+
+def sweep_candidates(
+    catalog: sqlite3.Connection,
+    semantic: sqlite3.Connection,
+    cursor: int,
+    scan_window: int,
+    limit: int,
+) -> tuple[list[tuple[int, str, str, int, int]], int, bool]:
+    placeholders = ",".join("?" for _ in IMAGE_EXTENSIONS)
+    sql = f"""
+      SELECT rowid,coalesce(nullif(file_id,''),path),path,size,mtime
+      FROM files WHERE rowid>? AND is_dir=0 AND is_symlink=0
+        AND lower(extension) IN ({placeholders})
+      ORDER BY rowid LIMIT ?
+    """
+    rows = catalog.execute(sql, (cursor, *IMAGE_EXTENSIONS, scan_window)).fetchall()
+    if not rows:
+        return [], 0, True
+    candidates: list[tuple[int, str, str, int, int]] = []
+    next_cursor = cursor
+    for row in rows:
+        next_cursor = int(row[0])
+        if not embedding_current(
+            semantic, str(row[1]), str(row[2]), int(row[3]), int(row[4])
+        ):
+            candidates.append(row)
+            if len(candidates) >= limit:
+                break
+    return candidates, next_cursor, False
+
+
+def preprocess(paths: list[str]):
+    import numpy as np
+    from PIL import Image, ImageOps
+
+    tensors = []
+    accepted = []
+    for path in paths:
+        try:
+            with Image.open(path) as source:
+                image = ImageOps.exif_transpose(source).convert("RGB")
+                width, height = image.size
+                scale = 224.0 / min(width, height)
+                resized = image.resize(
+                    (round(width * scale), round(height * scale)),
+                    Image.Resampling.BICUBIC,
+                )
+                left = max(0, (resized.width - 224) // 2)
+                top = max(0, (resized.height - 224) // 2)
+                cropped = resized.crop((left, top, left + 224, top + 224))
+                array = np.asarray(cropped, dtype=np.float32) / 255.0
+                array = (array - np.asarray(MEAN, dtype=np.float32)) / np.asarray(
+                    STD, dtype=np.float32
+                )
+                tensors.append(np.transpose(array, (2, 0, 1)))
+                accepted.append(path)
+        except (OSError, ValueError):
+            continue
+    if not tensors:
+        return accepted, None
+    return accepted, np.stack(tensors).astype(np.float32, copy=False)
+
+
+def embed_rows(rows, model_path: Path, threads: int):
+    import numpy as np
+    import onnxruntime as ort
+
+    accepted, pixels = preprocess([str(row[2]) for row in rows])
+    if pixels is None:
+        return [], len(rows)
+    by_path = {str(row[2]): row for row in rows}
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = max(1, threads)
+    options.inter_op_num_threads = 1
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    session = ort.InferenceSession(
+        str(model_path), sess_options=options, providers=["CPUExecutionProvider"]
+    )
+    vectors = session.run(["image_embeds"], {"pixel_values": pixels})[0].astype(
+        np.float32, copy=False
+    )
+    vectors /= np.maximum(np.linalg.norm(vectors, axis=1, keepdims=True), 1e-12)
+    return [(by_path[path], vector.tobytes()) for path, vector in zip(accepted, vectors)], len(rows) - len(accepted)
+
+
+def embed_text(query: str, model_path: Path, tokenizer_path: Path, threads: int):
+    import numpy as np
+    import onnxruntime as ort
+    from tokenizers import Tokenizer
+
+    tokenizer = Tokenizer.from_file(str(tokenizer_path))
+    tokenizer.enable_truncation(max_length=77)
+    tokenizer.enable_padding(
+        length=77, pad_id=49407, pad_token="<|endoftext|>"
+    )
+    encoded = tokenizer.encode(query)
+    input_ids = np.asarray([encoded.ids], dtype=np.int64)
+    attention_mask = np.asarray([encoded.attention_mask], dtype=np.int64)
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = max(1, threads)
+    options.inter_op_num_threads = 1
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    session = ort.InferenceSession(
+        str(model_path), sess_options=options, providers=["CPUExecutionProvider"]
+    )
+    available = {item.name for item in session.get_inputs()}
+    inputs = {"input_ids": input_ids}
+    if "attention_mask" in available:
+        inputs["attention_mask"] = attention_mask
+    vector = session.run(None, inputs)[0]
+    vector = np.asarray(vector, dtype=np.float32).reshape(-1)
+    if vector.size != 512:
+        raise RuntimeError(f"text encoder returned {vector.size} values, expected 512")
+    vector /= max(float(np.linalg.norm(vector)), 1e-12)
+    return vector
+
+
+def _path_bounds(cwd: str) -> tuple[str, str]:
+    prefix = os.path.normpath(cwd)
+    if prefix != os.sep:
+        prefix += os.sep
+    return prefix, prefix + "\U0010ffff"
+
+
+def rank_image_embeddings(
+    semantic: sqlite3.Connection, query_vector, cwd: str, limit: int
+) -> tuple[list[tuple[float, str]], int]:
+    """Return exact top-k matches without materializing the vector table."""
+    import numpy as np
+
+    start, end = _path_bounds(cwd)
+    cursor = semantic.execute(
+        "SELECT path,vector FROM image_embeddings "
+        "WHERE model=? AND path>=? AND path<? ORDER BY path",
+        (IMAGE_MODEL_ID, start, end),
+    )
+    best: list[tuple[float, str]] = []
+    searched = 0
+    while rows := cursor.fetchmany(2048):
+        paths: list[str] = []
+        vectors = []
+        for path, blob in rows:
+            vector = np.frombuffer(blob, dtype=np.float32)
+            if vector.size != 512:
+                continue
+            paths.append(str(path))
+            vectors.append(vector)
+        if not vectors:
+            continue
+        matrix = np.stack(vectors)
+        scores = matrix @ query_vector
+        searched += len(paths)
+        for path, score in zip(paths, scores):
+            item = (float(score), path)
+            if len(best) < limit:
+                heapq.heappush(best, item)
+            elif item > best[0]:
+                heapq.heapreplace(best, item)
+    return sorted(best, reverse=True), searched
+
+
+def catalog_rows(
+    catalog: sqlite3.Connection, ranked: list[tuple[float, str]]
+) -> list[dict]:
+    rows = []
+    for score, path in ranked:
+        item = catalog.execute(
+            "SELECT name,path,parent,extension,size,mtime,is_dir,is_hidden,is_symlink "
+            "FROM files WHERE path=? LIMIT 1",
+            (path,),
+        ).fetchone()
+        if not item:
+            continue
+        rows.append(
+            {
+                "name": item[0],
+                "path": item[1],
+                "parent": item[2],
+                "extension": item[3],
+                "size": item[4],
+                "mtime": item[5],
+                "is_dir": bool(item[6]),
+                "is_hidden": bool(item[7]),
+                "is_symlink": bool(item[8]),
+                "similarity": round(score, 6),
+            }
+        )
+    return rows
+
+
+def search_images(args) -> dict:
+    started = time.monotonic()
+    present = dependencies()
+    missing = [
+        name for name in required_dependencies(True) if not present.get(name, False)
+    ]
+    if missing:
+        raise RuntimeError("missing optional Python packages: " + ", ".join(missing))
+    if not args.database.is_file():
+        raise RuntimeError("semantic image index is unavailable; enable it in Settings")
+    ensure_artifact(
+        args.text_model,
+        TEXT_MODEL_URL,
+        TEXT_MODEL_SHA256,
+        TEXT_MODEL_BYTES,
+        "CLIP text model",
+        not args.no_download,
+    )
+    ensure_artifact(
+        args.tokenizer,
+        TOKENIZER_URL,
+        TOKENIZER_SHA256,
+        TOKENIZER_BYTES,
+        "CLIP tokenizer",
+        not args.no_download,
+    )
+    query_vector = embed_text(
+        args.search.strip(), args.text_model, args.tokenizer, args.threads
+    )
+    semantic = sqlite3.connect(
+        f"file:{args.database}?mode=ro", uri=True, timeout=10
+    )
+    catalog = open_catalog(args.catalog)
+    try:
+        ranked, searched = rank_image_embeddings(
+            semantic, query_vector, str(args.cwd), args.limit
+        )
+        rows = catalog_rows(catalog, ranked)
+    finally:
+        semantic.close()
+        catalog.close()
+    return {
+        "ok": True,
+        "query": args.search.strip(),
+        "cwd": str(args.cwd),
+        "label": f"Images like {args.search.strip()}",
+        "sourceRelation": "semantic_images",
+        "columns": [
+            "name",
+            "path",
+            "extension",
+            "size",
+            "mtime",
+            "similarity",
+        ],
+        "rows": rows,
+        "searched": searched,
+        "count": len(rows),
+        "truncated": searched > len(rows),
+        "model": TEXT_MODEL_ID,
+        "imageModel": IMAGE_MODEL_ID,
+        "durationMs": int((time.monotonic() - started) * 1000),
+    }
+
+
+def run_once(args) -> dict:
+    started = time.monotonic()
+    present = dependencies()
+    missing = [
+        name for name in required_dependencies(False) if not present.get(name, False)
+    ]
+    if missing:
+        raise RuntimeError("missing optional Python packages: " + ", ".join(missing))
+    ensure_artifact(
+        args.model,
+        IMAGE_MODEL_URL,
+        IMAGE_MODEL_SHA256,
+        IMAGE_MODEL_BYTES,
+        "CLIP vision model",
+        not args.no_download,
+    )
+    catalog = open_catalog(args.catalog)
+    semantic = connect_database(args.database)
+    try:
+        cursor = int(meta_get(semantic, "image_cursor"))
+        prior_sequence = int(meta_get(semantic, "change_sequence"))
+        rows, sequence = changed_candidates(
+            catalog, semantic, prior_sequence, args.limit
+        )
+        swept = False
+        if len(rows) < args.limit:
+            sweep, cursor, swept = sweep_candidates(
+                catalog,
+                semantic,
+                cursor,
+                args.scan_window,
+                args.limit - len(rows),
+            )
+            known = {str(row[1]) for row in rows}
+            rows.extend(row for row in sweep if str(row[1]) not in known)
+        embedded, failed = embed_rows(rows, args.model, args.threads)
+        now = int(time.time() * 1000)
+        semantic.executemany(
+            "INSERT INTO image_embeddings(file_id,path,model,dimension,"
+            "source_size,source_mtime,vector,updated_at) VALUES(?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(file_id,model) DO UPDATE SET path=excluded.path,"
+            "dimension=excluded.dimension,source_size=excluded.source_size,"
+            "source_mtime=excluded.source_mtime,vector=excluded.vector,"
+            "updated_at=excluded.updated_at",
+            (
+                (str(row[1]), str(row[2]), IMAGE_MODEL_ID, 512, int(row[3]), int(row[4]), vector, now)
+                for row, vector in embedded
+            ),
+        )
+        if swept:
+            meta_set(semantic, "image_sweeps", int(meta_get(semantic, "image_sweeps")) + 1)
+        meta_set(semantic, "image_cursor", cursor)
+        meta_set(semantic, "change_sequence", sequence)
+        meta_set(semantic, "last_run_at", now)
+        meta_set(semantic, "last_duration_ms", int((time.monotonic() - started) * 1000))
+        meta_set(semantic, "last_embedded", len(embedded))
+        meta_set(semantic, "last_failed", failed)
+        meta_set(semantic, "last_error", "")
+        meta_set(semantic, "model", IMAGE_MODEL_ID)
+        semantic.commit()
+        return {
+            "ok": True,
+            "embedded": len(embedded),
+            "failed": failed,
+            "cursor": cursor,
+            "sweepComplete": swept,
+            "durationMs": int((time.monotonic() - started) * 1000),
+            "databasePath": str(args.database),
+            "model": IMAGE_MODEL_ID,
+        }
+    except Exception as error:
+        try:
+            meta_set(semantic, "last_run_at", int(time.time() * 1000))
+            meta_set(semantic, "last_error", str(error))
+            semantic.commit()
+        except sqlite3.Error:
+            pass
+        raise
+    finally:
+        catalog.close()
+        semantic.close()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--status", action="store_true")
+    parser.add_argument("--once", action="store_true")
+    parser.add_argument("--search", default="")
+    parser.add_argument("--cwd", type=Path, default=Path.cwd())
+    parser.add_argument("--no-download", action="store_true")
+    parser.add_argument("--catalog", type=Path, default=default_catalog())
+    parser.add_argument("--database", type=Path, default=default_database())
+    parser.add_argument("--model", type=Path, default=default_model())
+    parser.add_argument("--text-model", type=Path, default=default_text_model())
+    parser.add_argument("--tokenizer", type=Path, default=default_tokenizer())
+    parser.add_argument("--limit", type=int, default=16)
+    parser.add_argument("--scan-window", type=int, default=50_000)
+    parser.add_argument("--threads", type=int, default=2)
+    args = parser.parse_args()
+    args.limit = max(1, min(args.limit, 200 if args.search else 64))
+    args.scan_window = max(args.limit, min(args.scan_window, 1_000_000))
+    args.threads = max(1, min(args.threads, 4))
+    return args
+
+
+def main() -> int:
+    args = parse_args()
+    maybe_reexec_runtime(bool(args.search))
+    if args.status:
+        emit(
+            semantic_status(
+                args.catalog,
+                args.database,
+                args.model,
+                args.text_model,
+                args.tokenizer,
+            )
+        )
+        return 0
+    try:
+        if args.search.strip():
+            emit(search_images(args))
+        else:
+            emit(run_once(args))
+        return 0
+    except Exception as error:
+        emit({"ok": False, "error": str(error), "model": IMAGE_MODEL_ID})
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -8,6 +8,7 @@ FocusScope {
     property string label: ""
     property string toolTip: ""
     property bool checked: false
+    property bool checkedOutline: false
     property bool compact: label.length === 0
     signal triggered()
 
@@ -24,11 +25,15 @@ FocusScope {
                                            : (hover.hovered || root.activeFocus
                                               ? Theme.hoverFill : Theme.normalFill))
         border.color: root.activeFocus ? Theme.focusBorder
+                                      : (root.checked && root.checkedOutline
+                                         ? Theme.alpha(Theme.accent, 0.78)
                                       : (hover.hovered ? Theme.hoverBorder
-                                                       : Theme.normalBorder)
+                                                       : Theme.normalBorder))
         border.width: root.activeFocus ? Math.max(1, Theme.focusBorderWidth)
+                                      : (root.checked && root.checkedOutline
+                                         ? Math.max(1, Theme.normalBorderWidth)
                                       : (hover.hovered ? Theme.hoverBorderWidth
-                                                       : Theme.normalBorderWidth)
+                                                       : Theme.normalBorderWidth))
         radius: Theme.radius
     }
 

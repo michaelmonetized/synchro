@@ -77,6 +77,7 @@ private slots:
   void proxyRowMapFollowsSort();
   void configPersistsHiddenAndSort();
   void configPersistsPanelLook();
+  void configPersistsIndexerSettings();
   void lastPathNeverPersistsSearch();
   void pinChipAfterHomeAndActivate();
   void pinPersistsInConfig();
@@ -509,6 +510,54 @@ void LocationAdaptersTest::configPersistsPanelLook() {
   QCOMPARE(loaded.lookSize(), 240);
   loaded.setLookSide(QStringLiteral("diagonal"));
   QVERIFY(loaded.lookSide().isEmpty());
+}
+
+void LocationAdaptersTest::configPersistsIndexerSettings() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString path = tmp.filePath(QStringLiteral("config.json"));
+  {
+    Config cfg(path);
+    QSignalSpy changed(&cfg, &Config::indexersChanged);
+    QVariantMap settings = cfg.indexerSettings();
+    settings.insert(QStringLiteral("foregroundThumbnailWorkers"), 4);
+    settings.insert(QStringLiteral("foregroundImageFacts"), false);
+    settings.insert(QStringLiteral("backgroundCatalogEnabled"), false);
+    settings.insert(QStringLiteral("backgroundRecursiveScan"), false);
+    settings.insert(QStringLiteral("backgroundScanIntervalMinutes"), 90);
+    settings.insert(QStringLiteral("backgroundWatchDebounceMs"), 225);
+    settings.insert(QStringLiteral("backgroundWatchNeighborhood"), 32);
+    settings.insert(QStringLiteral("backgroundMaxWatches"), 4096);
+    settings.insert(QStringLiteral("semanticImageEmbeddings"), true);
+    settings.insert(QStringLiteral("semanticBatchSize"), 8);
+    settings.insert(QStringLiteral("semanticIntervalSeconds"), 30);
+    QVERIFY(cfg.applyIndexerSettings(settings));
+    QCOMPARE(changed.count(), 1);
+  }
+
+  Config loaded(path);
+  QCOMPARE(loaded.foregroundThumbnailWorkers(), 4);
+  QVERIFY(!loaded.foregroundImageFacts());
+  QVERIFY(!loaded.backgroundCatalogEnabled());
+  QVERIFY(!loaded.backgroundRecursiveScan());
+  QCOMPARE(loaded.backgroundScanIntervalMinutes(), 90);
+  QCOMPARE(loaded.backgroundWatchDebounceMs(), 225);
+  QCOMPARE(loaded.backgroundWatchNeighborhood(), 32);
+  QCOMPARE(loaded.backgroundMaxWatches(), 4096);
+  QVERIFY(loaded.semanticImageEmbeddings());
+  QCOMPARE(loaded.semanticBatchSize(), 8);
+  QCOMPARE(loaded.semanticIntervalSeconds(), 30);
+
+  QVariantMap clamped = loaded.indexerSettings();
+  clamped.insert(QStringLiteral("foregroundThumbnailWorkers"), 99);
+  clamped.insert(QStringLiteral("backgroundScanIntervalMinutes"), 1);
+  clamped.insert(QStringLiteral("backgroundWatchDebounceMs"), 0);
+  clamped.insert(QStringLiteral("semanticBatchSize"), 0);
+  QVERIFY(loaded.applyIndexerSettings(clamped));
+  QCOMPARE(loaded.foregroundThumbnailWorkers(), 4);
+  QCOMPARE(loaded.backgroundScanIntervalMinutes(), 15);
+  QCOMPARE(loaded.backgroundWatchDebounceMs(), 25);
+  QCOMPARE(loaded.semanticBatchSize(), 1);
 }
 
 void LocationAdaptersTest::lastPathNeverPersistsSearch() {

@@ -4,6 +4,9 @@
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
+#include <QVariantMap>
+
+class QProcess;
 
 // ~/.config/synchro/config.json. Unknown future versions are read-only
 // so we never clobber a newer file.
@@ -40,6 +43,32 @@ class Config : public QObject {
   Q_PROPERTY(QString lookSide READ lookSide WRITE setLookSide NOTIFY
                  panelChanged)
   Q_PROPERTY(int gridSize READ gridSize WRITE setGridSize NOTIFY gridSizeChanged)
+  Q_PROPERTY(int foregroundThumbnailWorkers READ foregroundThumbnailWorkers
+                 NOTIFY indexersChanged)
+  Q_PROPERTY(bool foregroundImageFacts READ foregroundImageFacts NOTIFY
+                 indexersChanged)
+  Q_PROPERTY(bool backgroundCatalogEnabled READ backgroundCatalogEnabled NOTIFY
+                 indexersChanged)
+  Q_PROPERTY(bool backgroundRecursiveScan READ backgroundRecursiveScan NOTIFY
+                 indexersChanged)
+  Q_PROPERTY(int backgroundScanIntervalMinutes READ
+                 backgroundScanIntervalMinutes NOTIFY indexersChanged)
+  Q_PROPERTY(int backgroundWatchDebounceMs READ backgroundWatchDebounceMs
+                 NOTIFY indexersChanged)
+  Q_PROPERTY(int backgroundWatchNeighborhood READ backgroundWatchNeighborhood
+                 NOTIFY indexersChanged)
+  Q_PROPERTY(int backgroundMaxWatches READ backgroundMaxWatches NOTIFY
+                 indexersChanged)
+  Q_PROPERTY(bool semanticImageEmbeddings READ semanticImageEmbeddings NOTIFY
+                 indexersChanged)
+  Q_PROPERTY(int semanticBatchSize READ semanticBatchSize NOTIFY indexersChanged)
+  Q_PROPERTY(int semanticIntervalSeconds READ semanticIntervalSeconds NOTIFY
+                 indexersChanged)
+  Q_PROPERTY(QString semanticImageModel READ semanticImageModel CONSTANT)
+  Q_PROPERTY(QVariantMap currentIndexerStatus READ currentIndexerStatus NOTIFY
+                 indexerStatusChanged)
+  Q_PROPERTY(bool indexerStatusLoading READ indexerStatusLoading NOTIFY
+                 indexerStatusChanged)
 
 public:
   explicit Config(QObject *parent = nullptr);
@@ -69,6 +98,30 @@ public:
   int lookSize() const { return m_lookSize; }
   QString lookSide() const { return m_lookSide; }
   int gridSize() const { return m_gridSize; }
+  int foregroundThumbnailWorkers() const {
+    return m_foregroundThumbnailWorkers;
+  }
+  bool foregroundImageFacts() const { return m_foregroundImageFacts; }
+  bool backgroundCatalogEnabled() const { return m_backgroundCatalogEnabled; }
+  bool backgroundRecursiveScan() const { return m_backgroundRecursiveScan; }
+  int backgroundScanIntervalMinutes() const {
+    return m_backgroundScanIntervalMinutes;
+  }
+  int backgroundWatchDebounceMs() const {
+    return m_backgroundWatchDebounceMs;
+  }
+  int backgroundWatchNeighborhood() const {
+    return m_backgroundWatchNeighborhood;
+  }
+  int backgroundMaxWatches() const { return m_backgroundMaxWatches; }
+  bool semanticImageEmbeddings() const { return m_semanticImageEmbeddings; }
+  int semanticBatchSize() const { return m_semanticBatchSize; }
+  int semanticIntervalSeconds() const { return m_semanticIntervalSeconds; }
+  QString semanticImageModel() const {
+    return QStringLiteral("Qdrant/clip-ViT-B-32-vision");
+  }
+  QVariantMap currentIndexerStatus() const { return m_indexerStatus; }
+  bool indexerStatusLoading() const { return m_indexerStatusLoading; }
 
   Q_INVOKABLE void setShowHidden(bool show);
   Q_INVOKABLE void setView(const QString &view);
@@ -90,6 +143,10 @@ public:
   Q_INVOKABLE void setLookSize(int px);
   Q_INVOKABLE void setLookSide(const QString &side);
   Q_INVOKABLE void setGridSize(int px);
+  Q_INVOKABLE QVariantMap indexerSettings() const;
+  Q_INVOKABLE bool applyIndexerSettings(const QVariantMap &settings);
+  Q_INVOKABLE QVariantMap indexerStatus() const;
+  Q_INVOKABLE void refreshIndexerStatus();
   static QString normalizePin(const QString &path);
 
   bool load();
@@ -105,6 +162,8 @@ signals:
   void lastPathChanged();
   void panelChanged();
   void gridSizeChanged();
+  void indexersChanged();
+  void indexerStatusChanged();
 
 private:
   void applyDefaults();
@@ -129,4 +188,18 @@ private:
   int m_lookSize = 360;
   QString m_lookSide;
   int m_gridSize = 132;
+  int m_foregroundThumbnailWorkers = 2;
+  bool m_foregroundImageFacts = true;
+  bool m_backgroundCatalogEnabled = true;
+  bool m_backgroundRecursiveScan = true;
+  int m_backgroundScanIntervalMinutes = 360;
+  int m_backgroundWatchDebounceMs = 650;
+  int m_backgroundWatchNeighborhood = 128;
+  int m_backgroundMaxWatches = 2048;
+  bool m_semanticImageEmbeddings = false;
+  int m_semanticBatchSize = 16;
+  int m_semanticIntervalSeconds = 60;
+  QVariantMap m_indexerStatus;
+  bool m_indexerStatusLoading = false;
+  QProcess *m_indexerStatusProcess = nullptr;
 };

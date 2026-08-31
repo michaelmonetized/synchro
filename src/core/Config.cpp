@@ -1,13 +1,16 @@
 #include "Config.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QUuid>
 
 namespace {
@@ -110,6 +113,17 @@ void Config::applyDefaults() {
   m_lookSize = 360;
   m_lookSide.clear();
   m_gridSize = 132;
+  m_foregroundThumbnailWorkers = 2;
+  m_foregroundImageFacts = true;
+  m_backgroundCatalogEnabled = true;
+  m_backgroundRecursiveScan = true;
+  m_backgroundScanIntervalMinutes = 360;
+  m_backgroundWatchDebounceMs = 650;
+  m_backgroundWatchNeighborhood = 128;
+  m_backgroundMaxWatches = 2048;
+  m_semanticImageEmbeddings = false;
+  m_semanticBatchSize = 16;
+  m_semanticIntervalSeconds = 60;
 }
 
 static QString normalizePanelSide(const QString &side) {
@@ -180,6 +194,46 @@ bool Config::load() {
   }
   if (obj.contains(QStringLiteral("gridSize")))
     m_gridSize = qBound(88, obj.value(QStringLiteral("gridSize")).toInt(132), 240);
+  const QJsonObject indexers = obj.value(QStringLiteral("indexers")).toObject();
+  const QJsonObject foreground =
+      indexers.value(QStringLiteral("foreground")).toObject();
+  if (!foreground.isEmpty()) {
+    m_foregroundThumbnailWorkers = qBound(
+        1, foreground.value(QStringLiteral("thumbnailWorkers")).toInt(2), 4);
+    m_foregroundImageFacts =
+        foreground.value(QStringLiteral("imageFacts")).toBool(true);
+  }
+  const QJsonObject background =
+      indexers.value(QStringLiteral("background")).toObject();
+  if (!background.isEmpty()) {
+    m_backgroundCatalogEnabled =
+        background.value(QStringLiteral("catalogEnabled")).toBool(true);
+    m_backgroundRecursiveScan =
+        background.value(QStringLiteral("recursiveScan")).toBool(true);
+    m_backgroundScanIntervalMinutes = qBound(
+        15, background.value(QStringLiteral("scanIntervalMinutes")).toInt(360),
+        7 * 24 * 60);
+    m_backgroundWatchDebounceMs = qBound(
+        25, background.value(QStringLiteral("watchDebounceMs")).toInt(650),
+        10000);
+    m_backgroundWatchNeighborhood = qBound(
+        0, background.value(QStringLiteral("watchNeighborhood")).toInt(128),
+        2048);
+    m_backgroundMaxWatches = qBound(
+        16, background.value(QStringLiteral("maxWatches")).toInt(2048),
+        65536);
+  }
+  const QJsonObject semantic =
+      indexers.value(QStringLiteral("semantic")).toObject();
+  if (!semantic.isEmpty()) {
+    m_semanticImageEmbeddings =
+        semantic.value(QStringLiteral("imageEmbeddings")).toBool(false);
+    m_semanticBatchSize = qBound(
+        1, semantic.value(QStringLiteral("batchSize")).toInt(16), 64);
+    m_semanticIntervalSeconds = qBound(
+        15, semantic.value(QStringLiteral("intervalSeconds")).toInt(60),
+        60 * 60);
+  }
   if (obj.contains(QStringLiteral("pins"))) {
     QStringList pins;
     for (const QString &raw :
@@ -239,6 +293,34 @@ bool Config::save() const {
   panel.insert(QStringLiteral("lookSide"), m_lookSide);
   obj.insert(QStringLiteral("panel"), panel);
   obj.insert(QStringLiteral("gridSize"), m_gridSize);
+  QJsonObject foreground;
+  foreground.insert(QStringLiteral("thumbnailWorkers"),
+                    m_foregroundThumbnailWorkers);
+  foreground.insert(QStringLiteral("imageFacts"), m_foregroundImageFacts);
+  QJsonObject background;
+  background.insert(QStringLiteral("catalogEnabled"),
+                    m_backgroundCatalogEnabled);
+  background.insert(QStringLiteral("recursiveScan"),
+                    m_backgroundRecursiveScan);
+  background.insert(QStringLiteral("scanIntervalMinutes"),
+                    m_backgroundScanIntervalMinutes);
+  background.insert(QStringLiteral("watchDebounceMs"),
+                    m_backgroundWatchDebounceMs);
+  background.insert(QStringLiteral("watchNeighborhood"),
+                    m_backgroundWatchNeighborhood);
+  background.insert(QStringLiteral("maxWatches"), m_backgroundMaxWatches);
+  QJsonObject semantic;
+  semantic.insert(QStringLiteral("imageEmbeddings"),
+                  m_semanticImageEmbeddings);
+  semantic.insert(QStringLiteral("batchSize"), m_semanticBatchSize);
+  semantic.insert(QStringLiteral("intervalSeconds"),
+                  m_semanticIntervalSeconds);
+  semantic.insert(QStringLiteral("imageModel"), semanticImageModel());
+  QJsonObject indexers;
+  indexers.insert(QStringLiteral("foreground"), foreground);
+  indexers.insert(QStringLiteral("background"), background);
+  indexers.insert(QStringLiteral("semantic"), semantic);
+  obj.insert(QStringLiteral("indexers"), indexers);
   QSaveFile out(m_path);
   if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
     return false;
@@ -434,4 +516,160 @@ void Config::setGridSize(int px) {
     return;
   m_gridSize = next;
   emit gridSizeChanged();
+}
+
+QVariantMap Config::indexerSettings() const {
+  return {{QStringLiteral("foregroundThumbnailWorkers"),
+           m_foregroundThumbnailWorkers},
+          {QStringLiteral("foregroundImageFacts"), m_foregroundImageFacts},
+          {QStringLiteral("backgroundCatalogEnabled"),
+           m_backgroundCatalogEnabled},
+          {QStringLiteral("backgroundRecursiveScan"),
+           m_backgroundRecursiveScan},
+          {QStringLiteral("backgroundScanIntervalMinutes"),
+           m_backgroundScanIntervalMinutes},
+          {QStringLiteral("backgroundWatchDebounceMs"),
+           m_backgroundWatchDebounceMs},
+          {QStringLiteral("backgroundWatchNeighborhood"),
+           m_backgroundWatchNeighborhood},
+          {QStringLiteral("backgroundMaxWatches"), m_backgroundMaxWatches},
+          {QStringLiteral("semanticImageEmbeddings"),
+           m_semanticImageEmbeddings},
+          {QStringLiteral("semanticBatchSize"), m_semanticBatchSize},
+          {QStringLiteral("semanticIntervalSeconds"),
+           m_semanticIntervalSeconds},
+          {QStringLiteral("semanticImageModel"), semanticImageModel()}};
+}
+
+bool Config::applyIndexerSettings(const QVariantMap &settings) {
+  if (!m_writable)
+    return false;
+  const int foregroundWorkers = qBound(
+      1, settings.value(QStringLiteral("foregroundThumbnailWorkers"),
+                        m_foregroundThumbnailWorkers)
+             .toInt(),
+      4);
+  const bool foregroundFacts =
+      settings.value(QStringLiteral("foregroundImageFacts"),
+                     m_foregroundImageFacts)
+          .toBool();
+  const bool backgroundEnabled =
+      settings.value(QStringLiteral("backgroundCatalogEnabled"),
+                     m_backgroundCatalogEnabled)
+          .toBool();
+  const bool recursiveScan =
+      settings.value(QStringLiteral("backgroundRecursiveScan"),
+                     m_backgroundRecursiveScan)
+          .toBool();
+  const int scanMinutes = qBound(
+      15, settings.value(QStringLiteral("backgroundScanIntervalMinutes"),
+                         m_backgroundScanIntervalMinutes)
+              .toInt(),
+      7 * 24 * 60);
+  const int debounce = qBound(
+      25, settings.value(QStringLiteral("backgroundWatchDebounceMs"),
+                         m_backgroundWatchDebounceMs)
+              .toInt(),
+      10000);
+  const int neighborhood = qBound(
+      0, settings.value(QStringLiteral("backgroundWatchNeighborhood"),
+                        m_backgroundWatchNeighborhood)
+             .toInt(),
+      2048);
+  const int maxWatches = qBound(
+      16, settings.value(QStringLiteral("backgroundMaxWatches"),
+                         m_backgroundMaxWatches)
+              .toInt(),
+      65536);
+  const bool semanticImages =
+      settings.value(QStringLiteral("semanticImageEmbeddings"),
+                     m_semanticImageEmbeddings)
+          .toBool();
+  const int semanticBatch = qBound(
+      1, settings.value(QStringLiteral("semanticBatchSize"),
+                        m_semanticBatchSize)
+             .toInt(),
+      64);
+  const int semanticInterval = qBound(
+      15, settings.value(QStringLiteral("semanticIntervalSeconds"),
+                         m_semanticIntervalSeconds)
+              .toInt(),
+      60 * 60);
+
+  const QVariantMap before = indexerSettings();
+  m_foregroundThumbnailWorkers = foregroundWorkers;
+  m_foregroundImageFacts = foregroundFacts;
+  m_backgroundCatalogEnabled = backgroundEnabled;
+  m_backgroundRecursiveScan = recursiveScan;
+  m_backgroundScanIntervalMinutes = scanMinutes;
+  m_backgroundWatchDebounceMs = debounce;
+  m_backgroundWatchNeighborhood = neighborhood;
+  m_backgroundMaxWatches = maxWatches;
+  m_semanticImageEmbeddings = semanticImages;
+  m_semanticBatchSize = semanticBatch;
+  m_semanticIntervalSeconds = semanticInterval;
+  if (before != indexerSettings())
+    emit indexersChanged();
+  return save();
+}
+
+QVariantMap Config::indexerStatus() const {
+  QVariantMap result;
+  QProcess process;
+  process.setProgram(QCoreApplication::applicationFilePath());
+  process.setArguments({QStringLiteral("index"), QStringLiteral("status"),
+                        QStringLiteral("--compact")});
+  process.start();
+  if (!process.waitForStarted(1000) || !process.waitForFinished(3000)) {
+    process.kill();
+    result.insert(QStringLiteral("ok"), false);
+    result.insert(QStringLiteral("error"),
+                  QStringLiteral("index service did not answer"));
+    return result;
+  }
+  const QJsonDocument doc = QJsonDocument::fromJson(process.readAllStandardOutput());
+  if (!doc.isObject()) {
+    result.insert(QStringLiteral("ok"), false);
+    result.insert(QStringLiteral("error"),
+                  QString::fromUtf8(process.readAllStandardError()).trimmed());
+    return result;
+  }
+  return doc.object().toVariantMap();
+}
+
+void Config::refreshIndexerStatus() {
+  if (m_indexerStatusProcess &&
+      m_indexerStatusProcess->state() != QProcess::NotRunning)
+    return;
+  if (!m_indexerStatusProcess) {
+    m_indexerStatusProcess = new QProcess(this);
+    connect(m_indexerStatusProcess,
+            qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
+            [this](int, QProcess::ExitStatus) {
+              const QJsonDocument doc = QJsonDocument::fromJson(
+                  m_indexerStatusProcess->readAllStandardOutput());
+              m_indexerStatus = doc.isObject()
+                                    ? doc.object().toVariantMap()
+                                    : QVariantMap{
+                                          {QStringLiteral("ok"), false},
+                                          {QStringLiteral("error"),
+                                           QString::fromUtf8(
+                                               m_indexerStatusProcess
+                                                   ->readAllStandardError())
+                                               .trimmed()}};
+              m_indexerStatusLoading = false;
+              emit indexerStatusChanged();
+            });
+  }
+  m_indexerStatusLoading = true;
+  emit indexerStatusChanged();
+  m_indexerStatusProcess->start(
+      QCoreApplication::applicationFilePath(),
+      {QStringLiteral("index"), QStringLiteral("status"),
+       QStringLiteral("--quick"), QStringLiteral("--compact")});
+  QTimer::singleShot(3500, m_indexerStatusProcess, [this] {
+    if (m_indexerStatusProcess &&
+        m_indexerStatusProcess->state() != QProcess::NotRunning)
+      m_indexerStatusProcess->kill();
+  });
 }

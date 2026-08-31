@@ -5,6 +5,7 @@
 #include "NavStack.h"
 #include "PeekHost.h"
 #include "RecentStore.h"
+#include "SelectionModel.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -204,6 +205,8 @@ private slots:
   void sqlPanelCommand();
   void sqlPanelPublishesBusyAndUsesProminentEditor();
   void agentSearchCommand();
+  void semanticSearchCommand();
+  void settingsCommand();
   void flowPanelCommand();
   void escCommandSingleStep();
   void colonTakesPriorityOverPrintableFilter();
@@ -214,6 +217,7 @@ private slots:
   void successfulCommandClearsStatus();
   void mainQmlColonEntersCommand();
   void mainQmlGridClickAfterColonPops();
+  void quickFilterStaysInCurrentFolder();
   void leadingQuestionPromotesToFieldSearch();
   void questionQuestionIsContentSearch();
 };
@@ -482,6 +486,34 @@ void CommandFieldTest::typingStartsLocalFilterAndEscapeRestoresSelection() {
   QVERIFY(keys.fieldText().isEmpty());
   QCOMPARE(proxy.rowCount(), 3);
   QCOMPARE(proxy.currentName(), QStringLiteral("aaa.txt"));
+}
+
+void CommandFieldTest::quickFilterStaysInCurrentFolder() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  QVERIFY(QDir(tmp.path()).mkdir(QStringLiteral("Downloads")));
+  QVERIFY(QDir(tmp.path()).mkpath(QStringLiteral("aaa/Downloads-inside")));
+  QVERIFY(writeFile(tmp.filePath(QStringLiteral("random-download-note.txt"))));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+  const QString home = model.path();
+  proxy.setCurrentIndex(findProxy(proxy, QStringLiteral("aaa")));
+
+  QVERIFY(keys.handleListKey(Qt::Key_D, Qt::NoModifier,
+                             QStringLiteral("d")));
+  keys.setFieldText(QStringLiteral("downloads"));
+
+  QCOMPARE(model.path(), home);
+  QCOMPARE(proxy.rowCount(), 1);
+  QCOMPARE(proxy.currentName(), QStringLiteral("Downloads"));
+  QVERIFY(findProxy(proxy, QStringLiteral("Downloads-inside")) < 0);
 }
 
 void CommandFieldTest::printableLettersAreNotModalVerbs() {
@@ -802,9 +834,12 @@ void CommandFieldTest::mainQmlSlashThenSrcFilters() {
   proxy.setDirectoryModel(&model);
   NavStack nav(&model);
   KeyMachine keys(&model, &proxy, &nav);
+  SelectionModel selection(&proxy, &model);
+  keys.setSelection(&selection);
 
   model.setPath(tmp.path());
   QVERIFY(waitListingDone(model));
+  selection.click(findProxy(proxy, QStringLiteral("src")));
 
   QQmlApplicationEngine engine;
   engine.addImportPath(QCoreApplication::applicationDirPath() +
@@ -815,6 +850,8 @@ void CommandFieldTest::mainQmlSlashThenSrcFilters() {
                                            &proxy);
   engine.rootContext()->setContextProperty(QStringLiteral("navStack"), &nav);
   engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"), &keys);
+  engine.rootContext()->setContextProperty(QStringLiteral("selectionModel"),
+                                           &selection);
   engine.rootContext()->setContextProperty(QStringLiteral("hostApi"), nullptr);
 
   QString errors;
@@ -841,6 +878,9 @@ void CommandFieldTest::mainQmlSlashThenSrcFilters() {
            "FileList.filterProxy must be the context FilterProxy");
   QVERIFY2(list->property("navStack").value<QObject *>() == &nav,
            "FileList.navStack must be the context NavStack");
+  QCOMPARE(list->property("outboundDragAction").toInt(),
+           int(Qt::CopyAction));
+  QVERIFY(window->property("lookWanted").toBool());
 
   auto *field = window->findChild<QQuickItem *>(QStringLiteral("commandField"));
   QVERIFY2(field, "CommandField objectName commandField");
@@ -852,6 +892,7 @@ void CommandFieldTest::mainQmlSlashThenSrcFilters() {
   QTest::keyClick(window, Qt::Key_Slash);
   QVERIFY(QTest::qWaitFor(
       [&] { return keys.mode() == QStringLiteral("field-filter"); }, 1000));
+  QTRY_VERIFY(!window->property("lookWanted").toBool());
 
   auto *input = window->findChild<QQuickItem *>(QStringLiteral("commandInput"));
   QVERIFY(input);
@@ -1639,6 +1680,53 @@ void CommandFieldTest::agentSearchCommand() {
            QStringLiteral("no agent search in picker windows"));
 }
 
+void CommandFieldTest::semanticSearchCommand() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  QSignalSpy searchSpy(&keys, &KeyMachine::semanticSearchRequested);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":see blue industrial buildings"));
+  keys.acceptField();
+  QCOMPARE(searchSpy.size(), 1);
+  QCOMPARE(searchSpy.takeFirst().at(0).toString(),
+           QStringLiteral("blue industrial buildings"));
+  QVERIFY(keys.fieldText().isEmpty());
+  QVERIFY(keys.helpText().contains(QStringLiteral(":see blue images")));
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":semantic"));
+  keys.acceptField();
+  QCOMPARE(keys.statusMessage(),
+           QStringLiteral(":see <visual description>"));
+
+  keys.setChooserMode(true);
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":see cats"));
+  keys.acceptField();
+  QCOMPARE(keys.statusMessage(),
+           QStringLiteral("no semantic search in picker windows"));
+}
+
+void CommandFieldTest::settingsCommand() {
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  NavStack nav(&model);
+  KeyMachine keys(&model, &proxy, &nav);
+  QSignalSpy settingsSpy(&keys, &KeyMachine::settingsRequested);
+
+  keys.focusCommand();
+  keys.setFieldText(QStringLiteral(":settings"));
+  keys.acceptField();
+  QCOMPARE(settingsSpy.size(), 1);
+  QVERIFY(keys.fieldText().isEmpty());
+  QVERIFY(keys.helpText().contains(QStringLiteral("Ctrl+,")));
+}
+
 void CommandFieldTest::flowPanelCommand() {
   DirectoryModel model;
   FilterProxy proxy;
@@ -1936,6 +2024,8 @@ void CommandFieldTest::mainQmlGridClickAfterColonPops() {
   keys.setGridMode(true);
   auto *grid = window->findChild<QQuickItem *>(QStringLiteral("fileGrid"));
   QVERIFY2(grid, "FileGrid objectName fileGrid");
+  QCOMPARE(grid->property("outboundDragAction").toInt(),
+           int(Qt::CopyAction));
   QVERIFY(QTest::qWaitFor(
       [&] {
         return grid->isVisible() && grid->width() > 0 && grid->height() > 0;

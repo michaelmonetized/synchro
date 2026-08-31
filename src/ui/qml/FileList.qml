@@ -25,6 +25,9 @@ ListView {
                                     !fileModel.isTrash && !fileModel.isRecent &&
                                     !fileModel.isSearch && !fileModel.isVolumes &&
                                     !fileModel.isSql
+    // Default to copy for external applications. FileDropSurface recognizes
+    // Synchro's private MIME marker and still resolves internal drops as auto.
+    readonly property int outboundDragAction: Qt.CopyAction
     readonly property bool searching: fileModel && fileModel.isSearch
 
     signal viewToggleRequested()
@@ -428,7 +431,7 @@ ListView {
         Drag.dragType: Drag.Automatic
         Drag.active: dragArea.drag.active && list.dndLive
         Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
-        Drag.proposedAction: Qt.MoveAction
+        Drag.proposedAction: list.outboundDragAction
         Drag.hotSpot.x: width / 2
         Drag.hotSpot.y: height / 2
 

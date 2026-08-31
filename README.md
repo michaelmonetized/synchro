@@ -622,7 +622,10 @@ recently browsed folders, pins, and saved-query roots. Events are coalesced for
 the watched neighborhood automatically. The default ceiling is 2,048 watches,
 so the durable sweep remains the correctness backstop rather than attempting an
 inotify watch for every directory in a multi-million-row catalog. Useful tuning
-and diagnostics are available without adding browser chrome:
+and diagnostics are available from **Indexer settings** (`Ctrl+,` or
+`:settings`). Saving writes `~/.config/synchro/config.json`; the user daemon
+watches that directory and retunes itself without sudo or a service restart.
+The command-line seams remain available:
 
 ```bash
 synchro index watch /path/to/a/project
@@ -635,6 +638,27 @@ SYNCHRO_INDEX_MAX_WATCHES=4096 synchro index serve
 `SYNCHRO_INDEX_WATCH_NEIGHBORHOOD` tune batching and the number of immediate
 child directories retained around each hot root. Ordinary installs should keep
 the defaults.
+
+The same settings surface contains an opt-in semantic-image experiment. It
+stores normalized 512-dimensional CLIP vectors in a separate
+`~/.local/share/synchro/semantic.sqlite`, never in the operational catalog or
+DuckDB shadow. Work is incremental, low-priority, and source-versioned by file
+identity, size, and mtime. The first run downloads and SHA-256 verifies a 336
+MiB MIT-licensed `Qdrant/clip-ViT-B-32-vision` ONNX model. `:see blue images`
+runs the matching local text encoder, compares only vectors beneath the current
+folder, and opens the ranked images as a normal navigable pseudo-folder. The
+same seam is scriptable:
+
+```bash
+synchro semantic search "blue images" --cwd "$HOME/Pictures" --limit 60
+synchro semantic status --compact
+```
+
+The first semantic query downloads and verifies the companion 242 MiB text
+encoder and its fixed 77-token tokenizer. Arch users need the optional
+`python-numpy`, `python-pillow`, `python-onnxruntime-cpu`, and
+`python-tokenizers` packages. The feature remains off when they are absent and
+background image indexing is disabled by default.
 
 The built-in **Agent** action runs `omarchy agent prompt`, so it always follows
 Omarchy's current default agent. It starts in the selected folder (or a selected

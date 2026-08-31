@@ -13,6 +13,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileSystemWatcher>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -67,6 +68,15 @@ void searchUsage() {
       "       synchro search describe [--compact]\n");
 }
 
+void semanticUsage() {
+  std::fprintf(
+      stderr,
+      "Usage: synchro semantic search <description> [--cwd <folder>]\n"
+      "                              [--limit <1-200>] [--no-download]\n"
+      "                              [--compact]\n"
+      "       synchro semantic status [--compact]\n");
+}
+
 void catalogUsage() {
   std::fprintf(stderr,
                "Usage: synchro catalog shadow status [--compact]\n"
@@ -81,7 +91,7 @@ void indexUsage() {
                "       synchro index once [--compact]\n"
                "       synchro index watch <folder> [--compact]\n"
                "       synchro index unwatch <folder> [--compact]\n"
-               "       synchro index status [--compact]\n");
+               "       synchro index status [--quick] [--compact]\n");
 }
 
 void mcpUsage() { std::fprintf(stderr, "Usage: synchro mcp [--stdio]\n"); }
@@ -96,6 +106,55 @@ void agentUsage() {
       "[--label <name>] [--compact]\n"
       "       synchro agent install [--json]\n"
       "       synchro agent doctor [--json]\n");
+}
+
+QString semanticWorkerExecutable() {
+  const QString override =
+      qEnvironmentVariable("SYNCHRO_SEMANTIC_WORKER").trimmed();
+  if (!override.isEmpty() && QFileInfo(override).isExecutable())
+    return override;
+  const QString installed = QStandardPaths::findExecutable(
+      QStringLiteral("synchro-semantic-index"));
+  if (!installed.isEmpty())
+    return installed;
+  const QString sibling =
+      QDir(QCoreApplication::applicationDirPath())
+          .filePath(QStringLiteral("synchro-semantic-index"));
+  if (QFileInfo(sibling).isExecutable())
+    return sibling;
+#ifdef SYNCHRO_SEMANTIC_WORKER_SOURCE
+  const QString source = QStringLiteral(SYNCHRO_SEMANTIC_WORKER_SOURCE);
+  if (QFileInfo(source).isExecutable())
+    return source;
+#endif
+  return {};
+}
+
+QVariantMap semanticStatus() {
+  QVariantMap result;
+  const QString worker = semanticWorkerExecutable();
+  result.insert(QStringLiteral("workerAvailable"), !worker.isEmpty());
+  result.insert(QStringLiteral("workerPath"), worker);
+  if (worker.isEmpty())
+    return result;
+  QProcess process;
+  process.start(worker, {QStringLiteral("--status")});
+  if (!process.waitForStarted(500) || !process.waitForFinished(2000)) {
+    process.kill();
+    result.insert(QStringLiteral("error"),
+                  QStringLiteral("semantic worker did not answer"));
+    return result;
+  }
+  const QJsonDocument document =
+      QJsonDocument::fromJson(process.readAllStandardOutput());
+  if (document.isObject()) {
+    const QVariantMap status = document.object().toVariantMap();
+    for (auto it = status.cbegin(); it != status.cend(); ++it)
+      result.insert(it.key(), it.value());
+  } else
+    result.insert(QStringLiteral("error"),
+                  QString::fromUtf8(process.readAllStandardError()).trimmed());
+  return result;
 }
 
 int runAgentBrokered(const QStringList &command) {
@@ -916,6 +975,114 @@ int runSearchCli(int argc, char **argv) {
   return runSearchCommand(false);
 }
 
+int runSemanticCli(int argc, char **argv) {
+  Q_UNUSED(argc);
+  Q_UNUSED(argv);
+  const QStringList args = QCoreApplication::arguments().mid(2);
+  if (args.isEmpty() || args.first() == QLatin1String("-h") ||
+      args.first() == QLatin1String("--help") ||
+      args.first() == QLatin1String("help")) {
+    semanticUsage();
+    return args.isEmpty() ? 2 : 0;
+  }
+
+  const QString command = args.first().toLower();
+  QString cwd = QDir::currentPath();
+  QStringList terms;
+  int limit = 60;
+  bool noDownload = false;
+  for (int i = 1; i < args.size(); ++i) {
+    const QString arg = args.at(i);
+    auto next = [&](const char *option) -> QString {
+      if (i + 1 >= args.size()) {
+        std::fprintf(stderr, "synchro: %s needs a value\n", option);
+        return {};
+      }
+      return args.at(++i);
+    };
+    if (arg == QLatin1String("--cwd")) {
+      cwd = next("--cwd");
+      if (cwd.isNull())
+        return 2;
+    } else if (arg == QLatin1String("--limit")) {
+      bool ok = false;
+      const QString value = next("--limit");
+      if (value.isNull())
+        return 2;
+      limit = value.toInt(&ok);
+      if (!ok || limit < 1 || limit > 200) {
+        std::fprintf(stderr, "synchro: --limit must be between 1 and 200\n");
+        return 2;
+      }
+    } else if (arg == QLatin1String("--no-download")) {
+      noDownload = true;
+    } else if (arg == QLatin1String("--compact") ||
+               arg == QLatin1String("--json")) {
+      // The semantic worker always returns compact JSON.
+    } else if (arg.startsWith(QLatin1Char('-'))) {
+      std::fprintf(stderr, "synchro: unknown semantic option %s\n",
+                   qPrintable(arg));
+      semanticUsage();
+      return 2;
+    } else {
+      terms.append(arg);
+    }
+  }
+
+  const QString worker = semanticWorkerExecutable();
+  if (worker.isEmpty()) {
+    writeJson(QJsonObject{{QStringLiteral("ok"), false},
+                          {QStringLiteral("error"),
+                           QStringLiteral("semantic worker is not installed")}},
+              true);
+    return 1;
+  }
+  QStringList workerArgs;
+  if (command == QLatin1String("status")) {
+    if (!terms.isEmpty()) {
+      semanticUsage();
+      return 2;
+    }
+    workerArgs.append(QStringLiteral("--status"));
+  } else if (command == QLatin1String("search")) {
+    const QString query = terms.join(QLatin1Char(' ')).trimmed();
+    if (query.isEmpty()) {
+      semanticUsage();
+      return 2;
+    }
+    workerArgs = {QStringLiteral("--search"), query, QStringLiteral("--cwd"),
+                  QFileInfo(cwd).absoluteFilePath(), QStringLiteral("--limit"),
+                  QString::number(limit), QStringLiteral("--threads"),
+                  QStringLiteral("2")};
+    if (noDownload)
+      workerArgs.append(QStringLiteral("--no-download"));
+  } else {
+    std::fprintf(stderr, "synchro: unknown semantic command '%s'\n",
+                 qPrintable(command));
+    semanticUsage();
+    return 2;
+  }
+
+  QProcess process;
+  process.start(worker, workerArgs);
+  if (!process.waitForStarted(5000) || !process.waitForFinished(5 * 60 * 1000)) {
+    process.kill();
+    process.waitForFinished(1000);
+    writeJson(QJsonObject{{QStringLiteral("ok"), false},
+                          {QStringLiteral("error"),
+                           QStringLiteral("semantic worker timed out")}},
+              true);
+    return 1;
+  }
+  const QByteArray output = process.readAllStandardOutput();
+  const QByteArray error = process.readAllStandardError();
+  if (!output.isEmpty())
+    std::fwrite(output.constData(), 1, static_cast<size_t>(output.size()), stdout);
+  if (!error.isEmpty())
+    std::fwrite(error.constData(), 1, static_cast<size_t>(error.size()), stderr);
+  return process.exitStatus() == QProcess::NormalExit ? process.exitCode() : 1;
+}
+
 int runCatalogCli(int argc, char **argv) {
   Q_UNUSED(argc);
   Q_UNUSED(argv);
@@ -980,6 +1147,7 @@ int runIndexCli(int argc, char **argv) {
   const QString command = args.first();
   bool compact = false;
   bool scan = true;
+  bool quick = false;
   const int optionStart =
       command == QLatin1String("watch") || command == QLatin1String("unwatch")
           ? 2
@@ -987,6 +1155,8 @@ int runIndexCli(int argc, char **argv) {
   for (const QString &arg : args.mid(optionStart)) {
     if (arg == QLatin1String("--compact"))
       compact = true;
+    else if (arg == QLatin1String("--quick"))
+      quick = true;
     else if (arg == QLatin1String("--no-scan"))
       scan = false;
     else if (arg == QLatin1String("-h") || arg == QLatin1String("--help")) {
@@ -1005,12 +1175,21 @@ int runIndexCli(int argc, char **argv) {
     QLockFile probe(lockPath);
     probe.setStaleLockTime(30000);
     const bool acquired = probe.tryLock(0);
-    QVariantMap result = FileCatalog::shadowStatus();
+    QVariantMap result = quick ? FileCatalog::catalogStatus()
+                               : FileCatalog::shadowStatus();
+    if (quick && result.contains(QStringLiteral("indexedRows")))
+      result.insert(QStringLiteral("rowCount"),
+                    result.value(QStringLiteral("indexedRows")));
     result.insert(QStringLiteral("ok"), true);
     result.insert(QStringLiteral("running"), !acquired);
     result.insert(QStringLiteral("lockPath"), lockPath);
     result.insert(QStringLiteral("hotDirectoryHints"),
                   FileCatalog::hotDirectories(2048).size());
+    Config current;
+    result.insert(QStringLiteral("settings"), current.indexerSettings());
+    result.insert(QStringLiteral("semantic"), semanticStatus());
+    result.insert(QStringLiteral("enrichment"),
+                  FileCatalog::enrichmentStatus());
     if (!acquired) {
       qint64 pid = 0;
       QString host;
@@ -1078,16 +1257,36 @@ int runIndexCli(int argc, char **argv) {
     const int value = qEnvironmentVariableIntValue(name, &ok);
     return ok && value >= 0 ? value : fallback;
   };
-  const int maxWatches = environmentInterval("SYNCHRO_INDEX_MAX_WATCHES", 2048);
-  const int debounceMs =
-      environmentInterval("SYNCHRO_INDEX_WATCH_DEBOUNCE_MS", 650);
-  const int neighborhood =
-      environmentInterval("SYNCHRO_INDEX_WATCH_NEIGHBORHOOD", 128);
+  Config initialConfig;
+  int neighborhood = environmentInterval(
+      "SYNCHRO_INDEX_WATCH_NEIGHBORHOOD",
+      initialConfig.backgroundWatchNeighborhood());
+  bool backgroundEnabled = initialConfig.backgroundCatalogEnabled();
+  bool recursiveEnabled =
+      scan && backgroundEnabled && initialConfig.backgroundRecursiveScan();
+  int scanIntervalMs = environmentInterval(
+      "SYNCHRO_INDEX_SCAN_INTERVAL_MS",
+      initialConfig.backgroundScanIntervalMinutes() * 60 * 1000);
+  int semanticBatch = initialConfig.semanticBatchSize();
+  int semanticIntervalMs = initialConfig.semanticIntervalSeconds() * 1000;
+  bool semanticEnabled =
+      backgroundEnabled && initialConfig.semanticImageEmbeddings();
+  const int maxWatches = environmentInterval(
+      "SYNCHRO_INDEX_MAX_WATCHES", initialConfig.backgroundMaxWatches());
+  const int debounceMs = environmentInterval(
+      "SYNCHRO_INDEX_WATCH_DEBOUNCE_MS",
+      initialConfig.backgroundWatchDebounceMs());
   HotSetWatcher hotSet(maxWatches, debounceMs);
   QObject::connect(&hotSet, &HotSetWatcher::directoriesChanged, &catalog,
-                   &FileCatalog::reconcileDirectories);
+                   [&catalog, &backgroundEnabled](const QStringList &paths) {
+                     if (backgroundEnabled)
+                       catalog.reconcileDirectories(paths);
+                   });
   QObject::connect(&hotSet, &HotSetWatcher::directoriesDiscovered, &hotSet,
-                   [&hotSet, neighborhood](const QStringList &paths) {
+                   [&hotSet, &neighborhood,
+                    &backgroundEnabled](const QStringList &paths) {
+                     if (!backgroundEnabled)
+                       return;
                      for (const QString &path : paths)
                        hotSet.addNeighborhood(path, qMin(neighborhood, 32));
                    });
@@ -1095,7 +1294,9 @@ int runIndexCli(int argc, char **argv) {
   QTimer hotSeed;
   hotSeed.setInterval(
       environmentInterval("SYNCHRO_INDEX_WATCH_SEED_MS", 10000));
-  const auto seedHotSet = [&hotSet, neighborhood] {
+  const auto seedHotSet = [&hotSet, &neighborhood, &backgroundEnabled] {
+    if (!backgroundEnabled)
+      return;
     Config current;
     QStringList candidates;
     for (const QVariant &value : current.sqlBookmarks())
@@ -1115,33 +1316,158 @@ int runIndexCli(int argc, char **argv) {
       hotSet.addNeighborhood(path, neighborhood);
   };
   QObject::connect(&hotSeed, &QTimer::timeout, &hotSet, seedHotSet);
-  seedHotSet();
-  hotSeed.start();
 
   QTimer recursiveScan;
   recursiveScan.setSingleShot(true);
   const int initialDelay = environmentInterval(
       "SYNCHRO_INDEX_INITIAL_SCAN_DELAY_MS", 15 * 60 * 1000);
-  const int scanInterval = environmentInterval(
-      "SYNCHRO_INDEX_SCAN_INTERVAL_MS", 6 * 60 * 60 * 1000);
-  if (scan && !catalog.indexedRoot().isEmpty()) {
-    QObject::connect(&recursiveScan, &QTimer::timeout, &catalog, [&catalog] {
-      if (!catalog.indexing() && !catalog.indexedRoot().isEmpty())
-        catalog.scanTree(catalog.indexedRoot());
-    });
-    QObject::connect(&catalog, &FileCatalog::statusChanged, &recursiveScan,
-                     [&catalog, &recursiveScan, scanInterval] {
-                       if (!catalog.indexing() && scanInterval > 0)
-                         recursiveScan.start(scanInterval);
-                     });
-    if (initialDelay >= 0)
-      recursiveScan.start(initialDelay);
-  }
+  QObject::connect(&recursiveScan, &QTimer::timeout, &catalog,
+                   [&catalog, &recursiveEnabled] {
+                     if (recursiveEnabled && !catalog.indexing() &&
+                         !catalog.indexedRoot().isEmpty())
+                       catalog.scanTree(catalog.indexedRoot());
+                   });
+  QObject::connect(
+      &catalog, &FileCatalog::statusChanged, &recursiveScan,
+      [&catalog, &recursiveScan, &recursiveEnabled, &scanIntervalMs] {
+        if (recursiveEnabled && !catalog.indexing() && scanIntervalMs > 0 &&
+            !catalog.indexedRoot().isEmpty())
+          recursiveScan.start(scanIntervalMs);
+      });
+
+  QProcess semanticWorker;
+  QTimer semanticTimer;
+  semanticTimer.setSingleShot(true);
+  const auto scheduleSemantic = [&semanticTimer, &semanticEnabled,
+                                 &semanticIntervalMs](int firstDelay = -1) {
+    if (!semanticEnabled) {
+      semanticTimer.stop();
+      return;
+    }
+    semanticTimer.start(firstDelay >= 0 ? firstDelay : semanticIntervalMs);
+  };
+  QObject::connect(
+      &semanticTimer, &QTimer::timeout, &semanticWorker,
+      [&semanticWorker, &semanticEnabled, &semanticBatch, &scheduleSemantic] {
+        if (!semanticEnabled ||
+            semanticWorker.state() != QProcess::NotRunning)
+          return;
+        const QString worker = semanticWorkerExecutable();
+        if (worker.isEmpty()) {
+          std::fprintf(stderr,
+                       "synchro-indexd: semantic worker is not installed\n");
+          scheduleSemantic();
+          return;
+        }
+        semanticWorker.setProgram(worker);
+        semanticWorker.setArguments(
+            {QStringLiteral("--once"), QStringLiteral("--limit"),
+             QString::number(semanticBatch), QStringLiteral("--scan-window"),
+             QStringLiteral("50000"), QStringLiteral("--threads"),
+             QStringLiteral("2")});
+        semanticWorker.start();
+      });
+  QObject::connect(
+      &semanticWorker,
+      qOverload<int, QProcess::ExitStatus>(&QProcess::finished), &semanticTimer,
+      [&semanticWorker, &scheduleSemantic](int code, QProcess::ExitStatus) {
+        const QByteArray output = semanticWorker.readAllStandardOutput().trimmed();
+        const QByteArray error = semanticWorker.readAllStandardError().trimmed();
+        if (code != 0)
+          std::fprintf(stderr, "synchro-indexd: semantic: %s%s%s\n",
+                       output.constData(),
+                       !output.isEmpty() && !error.isEmpty() ? " · " : "",
+                       error.constData());
+        scheduleSemantic();
+      });
+
+  QFileSystemWatcher configWatcher;
+  const QString configPath = Config::defaultPath();
+  const QString configDirectory = QFileInfo(Config::defaultPath()).absolutePath();
+  QDir().mkpath(configDirectory);
+  configWatcher.addPath(configDirectory);
+  if (QFileInfo::exists(configPath))
+    configWatcher.addPath(configPath);
+  QTimer configReload;
+  configReload.setSingleShot(true);
+  configReload.setInterval(250);
+  const auto configChanged = [&configWatcher, &configReload, &configPath] {
+    if (QFileInfo::exists(configPath) &&
+        !configWatcher.files().contains(configPath))
+      configWatcher.addPath(configPath);
+    configReload.start();
+  };
+  QObject::connect(&configWatcher, &QFileSystemWatcher::directoryChanged,
+                   &configReload,
+                   [&configChanged](const QString &) { configChanged(); });
+  QObject::connect(&configWatcher, &QFileSystemWatcher::fileChanged,
+                   &configReload,
+                   [&configChanged](const QString &) { configChanged(); });
+  const auto applyConfig = [&] {
+    if (QFileInfo::exists(configPath) &&
+        !configWatcher.files().contains(configPath))
+      configWatcher.addPath(configPath);
+    Config current;
+    backgroundEnabled = current.backgroundCatalogEnabled();
+    recursiveEnabled =
+        scan && backgroundEnabled && current.backgroundRecursiveScan();
+    neighborhood = environmentInterval(
+        "SYNCHRO_INDEX_WATCH_NEIGHBORHOOD",
+        current.backgroundWatchNeighborhood());
+    hotSet.setMaxWatches(environmentInterval(
+        "SYNCHRO_INDEX_MAX_WATCHES", current.backgroundMaxWatches()));
+    hotSet.setDebounceMs(environmentInterval(
+        "SYNCHRO_INDEX_WATCH_DEBOUNCE_MS",
+        current.backgroundWatchDebounceMs()));
+    scanIntervalMs = environmentInterval(
+        "SYNCHRO_INDEX_SCAN_INTERVAL_MS",
+        current.backgroundScanIntervalMinutes() * 60 * 1000);
+    semanticBatch = current.semanticBatchSize();
+    semanticIntervalMs = current.semanticIntervalSeconds() * 1000;
+    semanticEnabled =
+        backgroundEnabled && current.semanticImageEmbeddings();
+
+    if (backgroundEnabled) {
+      seedHotSet();
+      hotSeed.start();
+    } else {
+      hotSeed.stop();
+    }
+    if (!recursiveEnabled)
+      recursiveScan.stop();
+    else if (!catalog.indexing() && !catalog.indexedRoot().isEmpty())
+      recursiveScan.start(scanIntervalMs);
+    if (semanticEnabled) {
+      if (semanticWorker.state() == QProcess::NotRunning)
+        scheduleSemantic(1000);
+    } else {
+      semanticTimer.stop();
+      if (semanticWorker.state() != QProcess::NotRunning)
+        semanticWorker.terminate();
+    }
+    std::fprintf(stderr,
+                 "synchro-indexd: config reloaded · %d watches · %d ms "
+                 "debounce · catalog %s · scan %s · embeddings %s\n",
+                 hotSet.maxWatches(), hotSet.debounceMs(),
+                 backgroundEnabled ? "on" : "off",
+                 recursiveEnabled ? "on" : "off",
+                 semanticEnabled ? "on" : "off");
+  };
+  QObject::connect(&configReload, &QTimer::timeout, &catalog, applyConfig);
+
+  seedHotSet();
+  if (backgroundEnabled)
+    hotSeed.start();
+  if (recursiveEnabled && !catalog.indexedRoot().isEmpty() && initialDelay >= 0)
+    recursiveScan.start(initialDelay);
+  if (semanticEnabled)
+    scheduleSemantic(1000);
   std::fprintf(stderr,
                "synchro-indexd: Search1 ready · %d/%d hot watches · "
-               "%d ms debounce%s\n",
+               "%d ms debounce%s%s\n",
                hotSet.watchCount(), hotSet.maxWatches(), hotSet.debounceMs(),
-               scan ? "" : " (recursive scans disabled)");
+               recursiveEnabled ? "" : " · recursive scan off",
+               semanticEnabled ? " · image embeddings on" : "");
   return QCoreApplication::instance()->exec();
 }
 

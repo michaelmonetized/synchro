@@ -80,6 +80,7 @@ qt_add_executable(synchro
     src/ui/FsnRhiItem.cpp
     src/AgentBridge.cpp
     src/integrations/AgentIntegration.cpp
+    src/integrations/SemanticSearchBridge.cpp
     ${SYNCHRO_FS_SOURCES}
     src/core/DirectoryLister.cpp
     src/core/DirectoryWatcher.cpp
@@ -130,6 +131,7 @@ target_include_directories(synchro PRIVATE
 target_compile_definitions(synchro PRIVATE
     SYNCHRO_FIRST_PARTY_HANDLER_DIR="${CMAKE_SOURCE_DIR}/handlers"
     SYNCHRO_AGENT_SKILL_SOURCE="${CMAKE_SOURCE_DIR}/agents/synchro"
+    SYNCHRO_SEMANTIC_WORKER_SOURCE="${CMAKE_SOURCE_DIR}/tools/synchro-semantic-index"
     SYNCHRO_VERSION="${PROJECT_VERSION}"
 )
 
@@ -154,6 +156,7 @@ qt_add_qml_module(synchro
         src/ui/qml/FolderLens.qml
         src/ui/qml/QueryBusy.qml
         src/ui/qml/AgentSearchOverlay.qml
+        src/ui/qml/IndexerSettingsOverlay.qml
         src/ui/qml/StatusLine.qml
         src/ui/qml/Confirm.qml
         src/ui/qml/ChooserWindow.qml
@@ -926,6 +929,20 @@ if(BUILD_TESTING)
         target_compile_options(archive_meta_test PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME archive_meta_test COMMAND archive_meta_test)
+
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME semantic_index_status
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_SOURCE_DIR}/tools/synchro-semantic-index
+                    --status)
+        set_tests_properties(semantic_index_status PROPERTIES
+            ENVIRONMENT "SYNCHRO_HOME=${CMAKE_BINARY_DIR}/semantic-test-home")
+        add_test(NAME semantic_index_ranking
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_SOURCE_DIR}/tests/semantic_index_test.py
+                    ${CMAKE_SOURCE_DIR}/tools/synchro-semantic-index)
+    endif()
 endif()
 
 set_target_properties(synchro PROPERTIES
@@ -954,6 +971,8 @@ configure_file(
     @ONLY)
 
 install(TARGETS synchro RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS tools/synchro-semantic-index
+        DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES packaging/org.omarchy.synchro.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(DIRECTORY handlers/

@@ -50,6 +50,8 @@ public:
   void requestVisible(const QVector<ThumbnailJob> &jobs);
   void invalidate(const QString &path);
   void cancelAll();
+  void setMaxWorkers(int workers);
+  void setImageFactsEnabled(bool enabled);
   void setThumbnailerDirectories(const QStringList &dirs);
   void setHandlerThumbnailers(const QVector<ExecThumbnailer> &list);
 
@@ -105,6 +107,8 @@ signals:
                        const QVariantMap &facts);
   void submitted(const QVector<ThumbnailJob> &jobs, bool exclusive);
   void cancelRequested();
+  void maxWorkersChanged(int workers);
+  void imageFactsEnabledChanged(bool enabled);
   void invalidateRequested(const QString &path);
   void thumbnailerDirectoriesChanged(const QStringList &dirs);
   void handlerThumbnailersChanged(const QVector<ExecThumbnailer> &list);

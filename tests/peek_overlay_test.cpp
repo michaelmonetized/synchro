@@ -225,6 +225,7 @@ class PeekOverlayTest : public QObject {
 
 private slots:
   void tooltipRemapsAfterDockMoves();
+  void indexerSettingsControlsDoNotDismiss();
   void omaflowGraphAdaptsToDockShape();
   void omaflowStepInspectorEscapesGraphClip();
   void omaflowPanelReviewsStagedRule();
@@ -313,6 +314,7 @@ Window {
         label: "Dock action"
     }
 }
+
 )QML",
                     QUrl(QStringLiteral("inline:tooltip-remap.qml")));
 
@@ -350,6 +352,70 @@ Window {
                           .arg(tooltipCenter)
                           .arg(anchorCenter)));
   QVERIFY(tooltipScene.y() > anchorScene.y());
+}
+
+void PeekOverlayTest::indexerSettingsControlsDoNotDismiss() {
+  QQmlEngine engine;
+  engine.addImportPath(QCoreApplication::applicationDirPath() +
+                       QStringLiteral("/qml"));
+  QQmlComponent component(&engine);
+  const QUrl base = QUrl::fromLocalFile(
+      QFileInfo(QStringLiteral(SYNCHRO_MAIN_QML)).absolutePath() +
+      QStringLiteral("/IndexerSettingsHarness.qml"));
+  component.setData(R"QML(
+import QtQuick
+import "."
+
+Window {
+    width: 900
+    height: 760
+    visible: true
+
+    IndexerSettingsOverlay {
+        anchors.fill: parent
+        visible: true
+    }
+}
+)QML",
+                    base);
+  QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+  std::unique_ptr<QObject> instance(component.create());
+  QVERIFY2(instance, qPrintable(component.errorString()));
+  auto *window = qobject_cast<QQuickWindow *>(instance.get());
+  QVERIFY(window);
+  QVERIFY(QTest::qWaitForWindowExposed(window));
+
+  auto *overlay =
+      window->findChild<QQuickItem *>(QStringLiteral("indexerSettingsOverlay"));
+  auto *workers =
+      window->findChild<QQuickItem *>(QStringLiteral("thumbnailWorkerControl"));
+  auto *monitor =
+      window->findChild<QQuickItem *>(QStringLiteral("enrichmentMonitor"));
+  QVERIFY(overlay);
+  QVERIFY(workers);
+  QVERIFY(monitor);
+  QVERIFY(overlay->isVisible());
+  QVERIFY(workers->property("outlineSelection").toBool());
+
+  QQuickItem *one = nullptr;
+  QVERIFY(QTest::qWaitFor(
+      [&] {
+        const auto matches =
+            visualNamed(workers, QStringLiteral("segment-1"));
+        one = matches.isEmpty() ? nullptr : matches.constFirst();
+        return one != nullptr;
+      },
+      1000));
+  const QPoint oneCenter =
+      one->mapToScene(QPointF(one->width() / 2, one->height() / 2)).toPoint();
+  QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, oneCenter);
+  QTRY_COMPARE(overlay->property("foregroundWorkers").toInt(), 1);
+  QVERIFY(overlay->isVisible());
+  QVERIFY(one->property("checked").toBool());
+  QVERIFY(one->property("checkedOutline").toBool());
+
+  QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, QPoint(4, 4));
+  QTRY_VERIFY(!overlay->isVisible());
 }
 
 void PeekOverlayTest::omaflowGraphAdaptsToDockShape() {

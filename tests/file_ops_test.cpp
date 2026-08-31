@@ -72,6 +72,7 @@ private slots:
   void ctrlSpaceTogglesCursor();
   void ctrlASelectsFiltered();
   void conventionalRangeSelection();
+  void selectionSurvivesProxyResort();
   void escCollapsesMultiSetThenFilter();
   void leavingDirCollapsesSelection();
   void clickAndShiftClickAndCtrlClick();
@@ -350,6 +351,49 @@ void FileOpsTest::clickAndShiftClickAndCtrlClick() {
   sel.click(2);
   sel.click(2);
   QCOMPARE(sel.selectedCount(), 1);
+}
+
+void FileOpsTest::selectionSurvivesProxyResort() {
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  const QString alpha = tmp.filePath(QStringLiteral("alpha.txt"));
+  const QString beta = tmp.filePath(QStringLiteral("beta.txt"));
+  const QString gamma = tmp.filePath(QStringLiteral("gamma.txt"));
+  QVERIFY(writeFile(alpha, QByteArray(10, 'a')));
+  QVERIFY(writeFile(beta, QByteArray(20, 'b')));
+  QVERIFY(writeFile(gamma, QByteArray(30, 'g')));
+
+  DirectoryModel model;
+  FilterProxy proxy;
+  proxy.setDirectoryModel(&model);
+  SelectionModel selection(&proxy, &model);
+  model.setPath(tmp.path());
+  QVERIFY(waitListingDone(model));
+
+  selection.click(findProxy(proxy, QStringLiteral("alpha.txt")));
+  selection.ctrlClick(findProxy(proxy, QStringLiteral("gamma.txt")));
+  QCOMPARE(selection.selectedCount(), 2);
+  const QStringList selectedBefore = selection.selectedPaths();
+  QCOMPARE(QSet<QString>(selectedBefore.cbegin(), selectedBefore.cend()),
+           QSet<QString>({alpha, gamma}));
+
+  proxy.setSortRoleName(QStringLiteral("size"));
+  proxy.setSortOrder(QStringLiteral("desc"));
+
+  QCOMPARE(selection.selectedCount(), 2);
+  const QStringList selectedAfter = selection.selectedPaths();
+  QCOMPARE(QSet<QString>(selectedAfter.cbegin(), selectedAfter.cend()),
+           QSet<QString>({alpha, gamma}));
+  QVERIFY(selection.isSelected(findProxy(proxy, QStringLiteral("alpha.txt"))));
+  QVERIFY(selection.isSelected(findProxy(proxy, QStringLiteral("gamma.txt"))));
+  QVERIFY(!selection.isSelected(findProxy(proxy, QStringLiteral("beta.txt"))));
+
+  // A second re-layout must use the remapped rows, not the original ones.
+  proxy.setSortRoleName(QStringLiteral("name"));
+  proxy.setSortOrder(QStringLiteral("desc"));
+  const QStringList selectedAgain = selection.selectedPaths();
+  QCOMPARE(QSet<QString>(selectedAgain.cbegin(), selectedAgain.cend()),
+           QSet<QString>({alpha, gamma}));
 }
 
 void FileOpsTest::recursivePathSelectionIsFirstClass() {

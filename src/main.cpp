@@ -17,6 +17,7 @@
 #include "RecentStore.h"
 #include "SearchModel.h"
 #include "SelectionModel.h"
+#include "SemanticSearchBridge.h"
 #include "ThumbnailService.h"
 #include "ThumbImageProvider.h"
 #include "VolumeStore.h"
@@ -62,6 +63,7 @@ int main(int argc, char *argv[]) {
        std::strcmp(argv[1], "catalog") == 0 ||
        std::strcmp(argv[1], "index") == 0 ||
        std::strcmp(argv[1], "launcher") == 0 ||
+       std::strcmp(argv[1], "semantic") == 0 ||
        std::strcmp(argv[1], "search") == 0 ||
        std::strcmp(argv[1], "query") == 0 ||
        std::strcmp(argv[1], "mcp") == 0)) {
@@ -76,6 +78,8 @@ int main(int argc, char *argv[]) {
       return runLauncherCli(argc, argv);
     if (std::strcmp(argv[1], "search") == 0)
       return runSearchCli(argc, argv);
+    if (std::strcmp(argv[1], "semantic") == 0)
+      return runSemanticCli(argc, argv);
     if (std::strcmp(argv[1], "agent") == 0)
       return runAgentCli(argc, argv);
     if (std::strcmp(argv[1], "catalog") == 0)
@@ -281,6 +285,7 @@ int main(int argc, char *argv[]) {
   DirectoryModel directoryModel;
   FileCatalog fileCatalog(&directoryModel);
   AgentSearchBridge agentSearch;
+  SemanticSearchBridge semanticSearch;
   OmaflowBridge omaflow;
   SearchModel searchModel;
   directoryModel.setSearchModel(&searchModel);
@@ -321,6 +326,15 @@ int main(int argc, char *argv[]) {
   }
 
   if (ThumbnailService *thumbs = directoryModel.thumbnailService()) {
+    thumbs->setMaxWorkers(config.foregroundThumbnailWorkers());
+    thumbs->setImageFactsEnabled(config.foregroundImageFacts());
+    QObject::connect(&config, &Config::indexersChanged, thumbs,
+                     [&config, thumbs] {
+                       thumbs->setMaxWorkers(
+                           config.foregroundThumbnailWorkers());
+                       thumbs->setImageFactsEnabled(
+                           config.foregroundImageFacts());
+                     });
     QVector<ExecThumbnailer> extra;
     for (const auto &rec : handlerRegistry.handlers()) {
       if (!rec.enabled || !rec.manifest.hasKind(QStringLiteral("thumbnail")))
@@ -378,6 +392,8 @@ int main(int argc, char *argv[]) {
                                            &fileCatalog);
   engine.rootContext()->setContextProperty(QStringLiteral("agentSearch"),
                                            &agentSearch);
+  engine.rootContext()->setContextProperty(QStringLiteral("semanticSearch"),
+                                           &semanticSearch);
   engine.rootContext()->setContextProperty(QStringLiteral("omaflow"),
                                            &omaflow);
 
@@ -478,6 +494,8 @@ int main(int argc, char *argv[]) {
   QObject::connect(&config, &Config::sqlBookmarksChanged, &config,
                    [&] { schedulePersist(); });
   QObject::connect(&config, &Config::gridSizeChanged, &config,
+                   [&] { schedulePersist(); });
+  QObject::connect(&config, &Config::indexersChanged, &config,
                    [&] { schedulePersist(); });
   QObject::connect(&app, &QCoreApplication::aboutToQuit, &config, [&] {
     persistTimer.stop();

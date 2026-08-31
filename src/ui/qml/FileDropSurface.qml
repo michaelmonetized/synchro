@@ -42,11 +42,11 @@ DropArea {
     function actionFrom(drop) {
         var formats = drop.formats || []
         var synchro = formats.indexOf("application/x-synchro-drop") >= 0
-        if (synchro) {
-            if (drop.proposedAction === Qt.CopyAction)
-                return "copy"
+        if (synchro)
+            // The source proposes Copy so external applications accept the
+            // drag. Inside Synchro, auto preserves the established behavior:
+            // move on the same device and copy across devices.
             return "auto"
-        }
         if (drop.proposedAction === Qt.MoveAction)
             return "move"
         return "copy"

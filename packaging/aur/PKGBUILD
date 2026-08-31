@@ -35,6 +35,10 @@ makedepends=(
 )
 optdepends=(
   'libnotify: desktop completion notifications'
+  'python-numpy: opt-in local image embeddings'
+  'python-onnxruntime-cpu: opt-in local CLIP inference'
+  'python-pillow: opt-in image decoding for embeddings'
+  'python-tokenizers: opt-in visual-description search over image embeddings'
   'udisks2: unmount and power off removable volumes'
 )
 provides=('synchro')

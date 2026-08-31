@@ -14,6 +14,8 @@ Window {
     readonly property var selection: typeof selectionModel !== "undefined" ? selectionModel : null
     readonly property var config: typeof appConfig !== "undefined" ? appConfig : null
     readonly property var finder: typeof agentSearch !== "undefined" ? agentSearch : null
+    readonly property var semanticFinder: typeof semanticSearch !== "undefined"
+                                          ? semanticSearch : null
     readonly property string startupRevealPath: startupSelectPath
     readonly property bool startupReveal: startupRevealPath.length > 0
     readonly property bool gridMode: root.keys ? root.keys.gridMode : false
@@ -34,7 +36,8 @@ Window {
     minimumHeight: 320
     visible: true
     title: root.files && root.files.isSql
-           ? "SQL " + root.files.sqlLabel + " — " + root.files.sqlContext +
+           ? (root.files.isSemantic ? "SEE " : "SQL ") +
+             root.files.sqlLabel + " — " + root.files.sqlContext +
              " — Synchro"
            : (root.files && root.files.path.length
               ? root.files.path + " — Synchro" : "Synchro")
@@ -67,6 +70,7 @@ Window {
         onLookToggleRequested: root.setLookOpen(!root.lookEnabled, true)
         agentAvailable: typeof agentSearch !== "undefined" && !!agentSearch
         onAgentRequested: root.openAgentSearch()
+        onSettingsRequested: indexerSettings.open()
     }
 
     Rectangle {
@@ -123,8 +127,12 @@ Window {
     readonly property bool lookDockVertical: lookDockLeft || lookDockRight
     // Action Deck is a true overlay: keep the browser composition and its
     // loaded Look companion intact underneath it.
+    // A local quick-filter owns the browser canvas. The proxy cursor advances
+    // through candidates as text changes, but that must not make LOOK resemble
+    // a recursive search inside whichever candidate happens to sort first.
     readonly property bool lookWanted: lookEnabled && selectionCount > 0 &&
-                                       root.keys && !root.keys.peekOpen
+                                       root.keys && !root.keys.peekOpen &&
+                                       !root.keys.fieldFocused
     readonly property bool lookInPanel: lookWanted && root.panelOpen &&
                                        panelDock.lookSupported &&
                                        panelDock.lookHasRoom &&
@@ -189,6 +197,9 @@ Window {
     // from HostApi.inlineFolderLoading: a workbench query updates the browser
     // and its Miller companion, while a preview-only drill marks Miller alone.
     property bool mainSqlBusy: false
+    readonly property bool browserQueryBusy: root.mainSqlBusy ||
+                                             !!(root.semanticFinder &&
+                                                root.semanticFinder.running)
 
     function setLookOpen(open, persist) {
         root.lookSessionOpen = !!open
@@ -207,6 +218,18 @@ Window {
                     ? root.files.sqlContext
                     : (root.files && root.files.path ? root.files.path : "")
         agentOverlay.openFor(scope)
+    }
+
+    function startSemanticSearch(query) {
+        if (!root.semanticFinder || !root.keys)
+            return
+        var scope = root.files && root.files.isSql
+                    ? root.files.sqlContext
+                    : (root.files && root.files.path ? root.files.path : "")
+        if (root.semanticFinder.start(query, scope, 60))
+            root.keys.setStatusMessage("Looking through indexed images…")
+        else if (root.semanticFinder.error.length)
+            root.keys.setStatusMessage(root.semanticFinder.error)
     }
 
     function toggleLookFromBrowser() {
@@ -456,8 +479,10 @@ Window {
     QueryBusy {
         objectName: "mainQueryBusy"
         anchors.fill: listingLoader
-        running: root.mainSqlBusy
-        label: "Updating browser results…"
+        running: root.browserQueryBusy
+        label: root.semanticFinder && root.semanticFinder.running
+               ? "Finding images by visual meaning…"
+               : "Updating browser results…"
         z: 3
     }
 
@@ -551,6 +576,14 @@ Window {
         anchors.fill: parent
         z: 130
         bridge: root.finder
+        onDismissed: Qt.callLater(root.focusListingForce)
+    }
+
+    IndexerSettingsOverlay {
+        id: indexerSettings
+        anchors.fill: parent
+        z: 132
+        config: root.config
         onDismissed: Qt.callLater(root.focusListingForce)
     }
 
@@ -997,7 +1030,7 @@ Window {
         selectionModel: root.selection
         horizontalSplit: root.lookInPanel ? root.panelHorizontal
                                            : !root.lookDockVertical
-        mainQueryBusy: root.mainSqlBusy
+        mainQueryBusy: root.browserQueryBusy
         onCollapseRequested: root.setLookOpen(false, true)
         onDockDragStarted: function(sceneX, sceneY) {
             root.panelDragX = sceneX
@@ -1310,6 +1343,7 @@ Window {
     readonly property bool hoverFocusAllowed: panelOpen && keys &&
                                               !panelDragging &&
                                               !agentOverlay.visible &&
+                                              !indexerSettings.visible &&
                                               !keys.fieldFocused &&
                                               !keys.peekOpen &&
                                               !keys.actionOpen &&
@@ -1321,6 +1355,10 @@ Window {
         target: root.keys
         function onLookToggleRequested() { root.toggleLookFromBrowser() }
         function onAgentSearchRequested() { root.openAgentSearch() }
+        function onSemanticSearchRequested(query) {
+            root.startSemanticSearch(query)
+        }
+        function onSettingsRequested() { indexerSettings.open() }
         function onPanelFocusRequested() { Qt.callLater(root.focusPanel) }
         function onSqlScanRequested() {
             root.pendingSqlScan = true
@@ -1371,6 +1409,13 @@ Window {
     }
 
     Shortcut {
+        sequence: "Ctrl+,"
+        enabled: root.config && !indexerSettings.visible &&
+                 root.keys && !root.keys.peekOpen && !root.keys.actionOpen
+        onActivated: indexerSettings.open()
+    }
+
+    Shortcut {
         sequence: "Ctrl+K"
         enabled: root.keys && !root.keys.peekOpen && !root.keys.actionOpen &&
                  !panelDock.activeFocus
@@ -1396,6 +1441,23 @@ Window {
         function onResultReady(label, sql, cwd) {
             root.openSqlBookmark(label, sql, cwd, "agent")
             agentOverlay.complete()
+        }
+    }
+
+    Connections {
+        target: root.semanticFinder
+        function onResultReady(label, result) {
+            if (root.files)
+                root.files.showSqlResult(result, label)
+            var count = Number(result.count || 0)
+            var searched = Number(result.searched || 0)
+            root.keys.setStatusMessage(count + " semantic matches · " +
+                                       searched + " indexed images compared")
+            Qt.callLater(root.focusListingForce)
+        }
+        function onChanged() {
+            if (!root.semanticFinder.running && root.semanticFinder.error.length)
+                root.keys.setStatusMessage(root.semanticFinder.error)
         }
     }
 

@@ -27,6 +27,8 @@ public:
 
   bool addDirectory(const QString &path);
   int addNeighborhood(const QString &path, int maxChildren = 128);
+  void setMaxWatches(int maxWatches);
+  void setDebounceMs(int debounceMs);
 
 signals:
   void directoriesChanged(const QStringList &paths);

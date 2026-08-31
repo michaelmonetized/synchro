@@ -52,7 +52,6 @@
 
 namespace {
 
-constexpr int kMaxWorkers = 2;
 constexpr int kTimeoutMs = 8000;
 
 const struct {
@@ -875,6 +874,19 @@ public:
   std::function<void(const QVector<ThumbnailResult> &)> notifyBatch;
   std::function<void(const QString &, qint64, const QVariantMap &)> notifyFacts;
 
+  void setMaxWorkers(int workers) {
+    m_maxWorkers = qBound(1, workers, 4);
+    kick();
+  }
+
+  void setImageFactsEnabled(bool enabled) {
+    m_imageFactsEnabled = enabled;
+    if (!enabled) {
+      m_factPending.clear();
+      m_factDrainScheduled = false;
+    }
+  }
+
   void setThumbnailerDirectories(const QStringList &dirs) {
     m_thumbnailerDirs = dirs;
     m_thumbnailers.clear();
@@ -1145,7 +1157,7 @@ private:
   }
 
   void publishFacts(const Job &job, const QImage &image) {
-    if (!notifyFacts || image.isNull())
+    if (!m_imageFactsEnabled || !notifyFacts || image.isNull())
       return;
     const QString key = factKey(job);
     if (m_factsPublished.contains(key))
@@ -1159,7 +1171,8 @@ private:
   }
 
   void queueCachedFacts(const Job &job) {
-    if (!looksLikeImage(job.path, job.mime) || !notifyFacts)
+    if (!m_imageFactsEnabled || !looksLikeImage(job.path, job.mime) ||
+        !notifyFacts)
       return;
     const QString key = factKey(job);
     if (m_factsPublished.contains(key) || m_factPending.contains(key))
@@ -1174,6 +1187,10 @@ private:
 
   void drainCachedFacts() {
     m_factDrainScheduled = false;
+    if (!m_imageFactsEnabled) {
+      m_factPending.clear();
+      return;
+    }
     int remaining = 6;
     while (remaining-- > 0 && !m_factPending.isEmpty()) {
       auto it = m_factPending.begin();
@@ -1262,7 +1279,7 @@ private:
   }
 
   void kick() {
-    while (m_active.size() < kMaxWorkers && !m_pending.isEmpty()) {
+    while (m_active.size() < m_maxWorkers && !m_pending.isEmpty()) {
       auto best = m_pending.end();
       int bestPri = std::numeric_limits<int>::max();
       for (auto it = m_pending.begin(); it != m_pending.end();) {
@@ -1283,6 +1300,9 @@ private:
       startGenerate(job);
     }
   }
+
+  int m_maxWorkers = 2;
+  bool m_imageFactsEnabled = true;
 
   void startGenerate(const Job &job) {
     if (isStaleVisible(job)) {
@@ -2385,6 +2405,14 @@ ThumbnailService::ThumbnailService(QObject *parent) : QObject(parent) {
   connect(
       this, &ThumbnailService::cancelRequested, m_engine,
       [eng = m_engine] { eng->cancelAll(); }, Qt::QueuedConnection);
+  connect(this, &ThumbnailService::maxWorkersChanged, m_engine,
+          [eng = m_engine](int workers) { eng->setMaxWorkers(workers); },
+          Qt::QueuedConnection);
+  connect(this, &ThumbnailService::imageFactsEnabledChanged, m_engine,
+          [eng = m_engine](bool enabled) {
+            eng->setImageFactsEnabled(enabled);
+          },
+          Qt::QueuedConnection);
   connect(
       this, &ThumbnailService::thumbnailerDirectoriesChanged, m_engine,
       [eng = m_engine](const QStringList &dirs) {
@@ -2549,6 +2577,14 @@ QString ThumbnailService::displayUrl(const QString &path,
 void ThumbnailService::cancelAll() {
   m_visibleGeneration.fetch_add(1, std::memory_order_acq_rel);
   emit cancelRequested();
+}
+
+void ThumbnailService::setMaxWorkers(int workers) {
+  emit maxWorkersChanged(qBound(1, workers, 4));
+}
+
+void ThumbnailService::setImageFactsEnabled(bool enabled) {
+  emit imageFactsEnabledChanged(enabled);
 }
 
 void ThumbnailService::setThumbnailerDirectories(const QStringList &dirs) {

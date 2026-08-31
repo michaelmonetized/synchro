@@ -176,6 +176,8 @@ signals:
   void panelFocusRequested();
   void sqlScanRequested();
   void agentSearchRequested();
+  void semanticSearchRequested(const QString &query);
+  void settingsRequested();
   void panelFocusedChanged();
   void lookKeyModeChanged();
   void lookToggleRequested();

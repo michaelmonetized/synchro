@@ -73,7 +73,7 @@ Item {
     Drag.dragType: Drag.Automatic
     Drag.active: dragArea.drag.active && listing.dndLive
     Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
-    Drag.proposedAction: Qt.MoveAction
+    Drag.proposedAction: listing.outboundDragAction
     Drag.hotSpot.x: width / 2
     Drag.hotSpot.y: height / 2
 

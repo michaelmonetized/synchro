@@ -2687,6 +2687,57 @@ QVariantMap FileCatalog::catalogStatus(const QString &rawCwd) {
   return out;
 }
 
+QVariantMap FileCatalog::enrichmentStatus() {
+  QVariantMap out;
+  sqlite3 *db = openCatalogReadOnly();
+  out.insert(QStringLiteral("available"), db != nullptr);
+  if (!db)
+    return out;
+
+  sqlite3_stmt *eligibleQuery = nullptr;
+  if (sqlite3_prepare_v2(
+          db,
+          "SELECT count(*) FROM files WHERE is_dir=0 AND is_symlink=0 AND "
+          "extension IN ('avif','bmp','gif','heic','heif','jpeg','jpg','png',"
+          "'tif','tiff','webp');",
+          -1, &eligibleQuery, nullptr) == SQLITE_OK &&
+      sqlite3_step(eligibleQuery) == SQLITE_ROW) {
+    out.insert(QStringLiteral("eligibleImages"),
+               sqlite3_column_int64(eligibleQuery, 0));
+  } else {
+    out.insert(QStringLiteral("error"),
+               QString::fromUtf8(sqlite3_errmsg(db)));
+  }
+  if (eligibleQuery)
+    sqlite3_finalize(eligibleQuery);
+
+  sqlite3_stmt *stored = nullptr;
+  if (sqlite3_prepare_v2(
+          db,
+          "SELECT count(DISTINCT file_id),count(*),max(updated_at) FROM "
+          "file_facts WHERE analyzer='image.visual' AND analyzer_version=2;",
+          -1, &stored, nullptr) == SQLITE_OK &&
+      sqlite3_step(stored) == SQLITE_ROW) {
+    out.insert(QStringLiteral("visualFactsStoredFiles"),
+               sqlite3_column_int64(stored, 0));
+    out.insert(QStringLiteral("visualFactValues"),
+               sqlite3_column_int64(stored, 1));
+    out.insert(QStringLiteral("visualFactsUpdatedAt"),
+               sqlite3_column_int64(stored, 2));
+  }
+  if (stored)
+    sqlite3_finalize(stored);
+  const qint64 eligible = out.value(QStringLiteral("eligibleImages")).toLongLong();
+  const qint64 captured =
+      out.value(QStringLiteral("visualFactsStoredFiles")).toLongLong();
+  out.insert(QStringLiteral("visualFactsPendingEstimate"),
+             qMax<qint64>(0, eligible - captured));
+  out.insert(QStringLiteral("visualFactsPercent"),
+             eligible > 0 ? (100.0 * captured / eligible) : 100.0);
+  sqlite3_close(db);
+  return out;
+}
+
 QStringList FileCatalog::hotDirectories(int limit) {
   QStringList paths;
   sqlite3 *db = openCatalogReadOnly();

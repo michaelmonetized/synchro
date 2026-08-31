@@ -1,0 +1,4 @@
+fastembed==0.8.0
+numpy==2.5.2
+onnxruntime==1.29.0
+psutil==7.2.2

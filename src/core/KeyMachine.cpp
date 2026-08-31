@@ -1156,6 +1156,30 @@ void KeyMachine::runCommand(const QString &text) {
       emit agentSearchRequested();
       return;
     }
+    if (head == QLatin1String("semantic") || head == QLatin1String("see")) {
+      if (m_chooserMode) {
+        setStatusMessage(QStringLiteral("no semantic search in picker windows"));
+        return;
+      }
+      const QString query = stripped.mid(fsnToks.first().size()).trimmed();
+      if (query.isEmpty()) {
+        setStatusMessage(QStringLiteral(":see <visual description>"));
+        return;
+      }
+      finishCommand();
+      emit semanticSearchRequested(query);
+      return;
+    }
+    if (head == QLatin1String("settings") ||
+        head == QLatin1String("preferences")) {
+      if (fsnToks.size() > 1) {
+        setStatusMessage(QStringLiteral(":settings"));
+        return;
+      }
+      finishCommand();
+      emit settingsRequested();
+      return;
+    }
     if (head == QLatin1String("flow") || head == QLatin1String("flows") ||
         head == QLatin1String("omaflow")) {
       if (m_chooserMode) {

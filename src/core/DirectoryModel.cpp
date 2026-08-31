@@ -177,6 +177,10 @@ bool DirectoryModel::isSearch() const { return isSearchPath(m_path); }
 
 bool DirectoryModel::isSql() const { return isSqlPath(m_path); }
 
+bool DirectoryModel::isSemantic() const {
+  return isSql() && m_sqlSourceRelation == QLatin1String("semantic_images");
+}
+
 QString DirectoryModel::searchQuery() const {
   return m_search ? m_search->query() : QString();
 }
@@ -1153,6 +1157,7 @@ void DirectoryModel::showSqlResult(const QVariantMap &result,
   m_error.clear();
   m_sqlRows.clear();
   m_sqlContext = result.value(QStringLiteral("cwd")).toString();
+  m_sqlSourceRelation = result.value(QStringLiteral("sourceRelation")).toString();
   m_sqlSelection = result.value(QStringLiteral("selection")).toStringList();
   if (m_sqlContext.isEmpty())
     m_sqlContext = m_returnPath;

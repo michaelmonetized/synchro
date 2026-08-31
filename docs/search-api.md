@@ -103,6 +103,24 @@ index. `Describe` reports this explicitly as `contentIndexed:false`, leaving a
 future content/semantic index free to improve the implementation without
 changing the API.
 
+## Optional visual-description search
+
+The semantic image sidecar is intentionally separate from Search1 and the
+load-bearing filename catalog. When enabled in Indexer Settings, it is exposed
+through a stable local CLI:
+
+```bash
+synchro semantic search "blue industrial buildings" --cwd "$HOME/Pictures" \
+  --limit 60 --compact
+synchro semantic status --compact
+```
+
+The command compares the matching local CLIP text vector against normalized
+image vectors beneath `cwd` and returns ordinary file rows with `similarity`,
+`searched`, and `truncated` metadata. It does no filesystem discovery. The GUI
+command `:see <description>` runs this asynchronously and renders the response
+in the current window as a previewable result folder.
+
 `Open`, `Reveal`, and `Show` currently launch an application or a new Synchro
 window. Their receipts report `currentWindow:false` where relevant. A future
 browser-instance routing layer can improve that behavior without changing the

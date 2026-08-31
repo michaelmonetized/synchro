@@ -41,6 +41,10 @@ public:
   // Cheap generation and coverage envelope for operational API consumers.
   // Unlike shadowStatus(), this never starts DuckDB.
   static QVariantMap catalogStatus(const QString &cwd = {});
+  // Deterministic enrichment coverage for diagnostics. Raster candidates are
+  // exact; foreground visual facts are reported as captured files so this
+  // remains cheap even for multi-million-row catalogs.
+  static QVariantMap enrichmentStatus();
   // Headless query seam shared by the SQL panel, CLI, and MCP server. It
   // reads only the durable catalog and does not require a GUI model.
   static QVariantMap querySync(const QString &sql, const QString &cwd,

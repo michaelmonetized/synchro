@@ -22,6 +22,10 @@ Item {
                                     !fileModel.isTrash && !fileModel.isRecent &&
                                     !fileModel.isSearch && !fileModel.isVolumes &&
                                     !fileModel.isSql
+    // Inter-application drags should advertise the non-destructive action
+    // every ordinary image/editor target accepts. Synchro drop targets use
+    // the private MIME marker to retain same-device move semantics.
+    readonly property int outboundDragAction: Qt.CopyAction
     readonly property bool searching: fileModel && fileModel.isSearch
     readonly property var rows: filterProxy ? filterProxy : fileModel
     readonly property bool showCursorChrome: !keyMachine || keyMachine.listFocused

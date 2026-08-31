@@ -14,6 +14,7 @@ Item {
     property bool agentAvailable: false
     signal lookToggleRequested()
     signal agentRequested()
+    signal settingsRequested()
 
     readonly property bool fieldActive: keyMachine && keyMachine.fieldFocused
     readonly property bool typingSearch: keyMachine && keyMachine.mode === "field-search"
@@ -91,7 +92,11 @@ Item {
         if (root.typingSearch) return root.contentSearch ? "Content search" : "Name search"
         if (root.viewingSearch) return root.fileModel.isContentSearch ? "Content results"
                                                                       : "Search results"
-        if (root.keyMachine && root.keyMachine.mode === "field-filter") return "Filtering"
+        if (root.keyMachine && root.keyMachine.mode === "field-filter") {
+            var here = root.fileModel && root.fileModel.path
+                       ? root.fileModel.path : "this folder"
+            return "Filtering " + here
+        }
         if (root.keyMachine && root.keyMachine.mode === "field-command") return "Command"
         if (root.keyMachine && root.keyMachine.mode === "field-jump") return "Path"
         return ""
@@ -180,6 +185,16 @@ Item {
                         : (checked ? "Hide Look preview"
                                    : "Show Look preview"))
             onTriggered: root.lookToggleRequested()
+        }
+
+        ChromeButton {
+            objectName: "indexerSettingsButton"
+            visible: !root.tightChrome && root.viewToggle
+            height: Theme.controlHeight
+            iconName: "settings-configure-symbolic"
+            fallbackGlyph: "⚙"
+            toolTip: "Indexer settings  ·  Ctrl+,"
+            onTriggered: root.settingsRequested()
         }
 
         Rectangle {

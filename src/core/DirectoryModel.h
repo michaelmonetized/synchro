@@ -36,6 +36,7 @@ class DirectoryModel : public QAbstractListModel {
   Q_PROPERTY(bool isRecent READ isRecent NOTIFY pathChanged)
   Q_PROPERTY(bool isSearch READ isSearch NOTIFY pathChanged)
   Q_PROPERTY(bool isSql READ isSql NOTIFY pathChanged)
+  Q_PROPERTY(bool isSemantic READ isSemantic NOTIFY pathChanged)
   Q_PROPERTY(QString sqlContext READ sqlContext NOTIFY pathChanged)
   Q_PROPERTY(QString sqlLabel READ sqlLabel NOTIFY pathChanged)
   Q_PROPERTY(int currentSqlRow READ currentSqlRow NOTIFY currentIndexChanged)
@@ -100,6 +101,7 @@ public:
   bool isRecent() const;
   bool isSearch() const;
   bool isSql() const;
+  bool isSemantic() const;
   bool isVolumes() const;
   QString sqlContext() const { return m_sqlContext; }
   QString sqlLabel() const { return m_sqlLabel; }
@@ -253,6 +255,7 @@ private:
   QString m_volumeRoot;
   QString m_sqlContext;
   QString m_sqlLabel;
+  QString m_sqlSourceRelation;
   QStringList m_sqlSelection;
   QHash<QString, QVariantMap> m_sqlRows;
   quint64 m_sqlEpoch = 0;

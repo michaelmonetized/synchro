@@ -55,6 +55,22 @@ To hand a useful result back as a navigable Synchro pseudo-folder:
   "select name,path,extension,kind,mb from tree where not is_dir and extension in ('jpg','jpeg','png','gif','webp','avif','bmp','tif','tiff','heic','heif','svg') order by size desc limit 20"
 ```
 
+## Search images by visual meaning
+
+When the request describes image contents or appearance rather than filenames,
+use Synchro's optional local semantic index instead of inventing filename SQL:
+
+```bash
+"${SYNCHRO_BIN:-synchro}" semantic search "blue industrial buildings" \
+  --cwd "$SYNCHRO_CWD" --limit 60 --compact
+```
+
+This is a recursive, current-folder-scoped exact ranking over image vectors. It
+returns ordinary file rows plus a `similarity` score, `searched` candidate count,
+and `truncated` result-limit flag. If the semantic index or optional local model
+dependencies are unavailable, report that explicitly and fall back to
+deterministic metadata only when that still answers the request.
+
 Use filesystem reads only when the indexed metadata is insufficient. The
 optional `synchro mcp --stdio` surface offers typed conveniences, but never
 assume it is registered or require it for ordinary work.

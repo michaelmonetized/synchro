@@ -49,6 +49,20 @@ HotSetWatcher::~HotSetWatcher() {
     ::close(m_fd);
 }
 
+void HotSetWatcher::setMaxWatches(int maxWatches) {
+  m_maxWatches = qBound(16, maxWatches, 65536);
+  while (m_byPath.size() > m_maxWatches) {
+    const int before = m_byPath.size();
+    evictOldest();
+    if (m_byPath.size() == before)
+      break;
+  }
+}
+
+void HotSetWatcher::setDebounceMs(int debounceMs) {
+  m_debounce.setInterval(qBound(25, debounceMs, 10000));
+}
+
 void HotSetWatcher::touch(const QString &path) {
   m_recency.insert(path, ++m_clock);
 }

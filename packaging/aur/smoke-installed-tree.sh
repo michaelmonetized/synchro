@@ -5,6 +5,7 @@ set -euo pipefail
 root=${1:?usage: smoke-installed-tree.sh PACKAGE_ROOT}
 required=(
   usr/bin/synchro
+  usr/bin/synchro-semantic-index
   usr/bin/omarchy-launch-synchro
   usr/bin/omarchy-launch-synchro-cwd
   usr/bin/synchro-omarchy-menu-install

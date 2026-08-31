@@ -211,6 +211,12 @@ void FileCatalogTest::hotSetWatcherCoalescesAndReconciles() {
 
   HotSetWatcher watcher(32, 80);
   QVERIFY(watcher.available());
+  QCOMPARE(watcher.maxWatches(), 32);
+  QCOMPARE(watcher.debounceMs(), 80);
+  watcher.setMaxWatches(16);
+  watcher.setDebounceMs(25);
+  QCOMPARE(watcher.maxWatches(), 16);
+  QCOMPARE(watcher.debounceMs(), 25);
   QVERIFY(watcher.addDirectory(root.path()));
   QSignalSpy changed(&watcher, &HotSetWatcher::directoriesChanged);
   connect(&watcher, &HotSetWatcher::directoriesChanged, &catalog,
@@ -415,6 +421,19 @@ void FileCatalogTest::deterministicImageFactsAreQueryable() {
   QCOMPARE(coverage.value(QStringLiteral("analyzed")).toLongLong(), 1);
   QCOMPARE(coverage.value(QStringLiteral("total")).toLongLong(), 1);
   QVERIFY(coverage.value(QStringLiteral("complete")).toBool());
+  const QVariantMap enrichment = FileCatalog::enrichmentStatus();
+  QVERIFY(enrichment.value(QStringLiteral("available")).toBool());
+  QCOMPARE(enrichment.value(QStringLiteral("eligibleImages")).toLongLong(), 1);
+  QCOMPARE(
+      enrichment.value(QStringLiteral("visualFactsStoredFiles")).toLongLong(),
+      1);
+  QCOMPARE(enrichment.value(QStringLiteral("visualFactsPendingEstimate"))
+               .toLongLong(),
+           0);
+  QCOMPARE(enrichment.value(QStringLiteral("visualFactsPercent")).toDouble(),
+           100.0);
+  QVERIFY(enrichment.value(QStringLiteral("visualFactValues")).toLongLong() >
+          1);
 }
 
 void FileCatalogTest::repeatedImageFactsOnlyInvalidateActualChanges() {

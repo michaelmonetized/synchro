@@ -17,6 +17,12 @@ SelectionModel::SelectionModel(FilterProxy *proxy, DirectoryModel *model,
             &SelectionModel::rematch);
     connect(m_proxy, &FilterProxy::filterChanged, this,
             &SelectionModel::rematch);
+    // Proxy rows are presentation coordinates, not item identity. A sort
+    // keeps the source entries intact while assigning them new proxy rows;
+    // remap the saved names after that layout settles so selection follows
+    // the files instead of remaining painted on the old row numbers.
+    connect(m_proxy, &QAbstractItemModel::layoutChanged, this,
+            &SelectionModel::rematch);
     connect(m_proxy, &FilterProxy::countChanged, this,
             &SelectionModel::statusTextChanged);
   }
