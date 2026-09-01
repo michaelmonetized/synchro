@@ -9,6 +9,7 @@
 #include "HandlerRegistry.h"
 #include "Manifest.h"
 #include "SearchApi.h"
+#include "ThumbnailService.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -18,6 +19,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QImage>
 #include <QLockFile>
 #include <QProcess>
 #include <QStandardPaths>
@@ -1252,6 +1254,35 @@ int runIndexCli(int argc, char **argv) {
   }
 
   FileCatalog catalog(nullptr, nullptr, true);
+  const auto semanticPriorityRoots = [] {
+    Config current;
+    QStringList candidates;
+    candidates.append(current.lastPath());
+    for (const QString &pin : current.pins()) {
+      const QFileInfo info(pin);
+      candidates.append(info.isDir() ? info.absoluteFilePath()
+                                     : info.absolutePath());
+    }
+    for (const QVariant &value : current.sqlBookmarks())
+      candidates.append(value.toMap().value(QStringLiteral("cwd")).toString());
+    candidates.append(FileCatalog::hotDirectories(24));
+
+    QStringList roots;
+    for (const QString &candidate : std::as_const(candidates)) {
+      const QFileInfo info(candidate);
+      const QString path = info.isDir() ? info.absoluteFilePath()
+                                        : info.absolutePath();
+      if (!path.isEmpty() && QFileInfo(path).isDir() && !roots.contains(path))
+        roots.append(path);
+    }
+    // Specific working folders should win over broad home/root pins.
+    std::stable_sort(roots.begin(), roots.end(),
+                     [](const QString &a, const QString &b) {
+                       return a.count(QLatin1Char('/')) >
+                              b.count(QLatin1Char('/'));
+                     });
+    return roots.mid(0, 12);
+  };
   const auto environmentInterval = [](const char *name, int fallback) {
     bool ok = false;
     const int value = qEnvironmentVariableIntValue(name, &ok);
@@ -1348,7 +1379,8 @@ int runIndexCli(int argc, char **argv) {
   };
   QObject::connect(
       &semanticTimer, &QTimer::timeout, &semanticWorker,
-      [&semanticWorker, &semanticEnabled, &semanticBatch, &scheduleSemantic] {
+      [&semanticWorker, &semanticEnabled, &semanticBatch, &scheduleSemantic,
+       &semanticPriorityRoots] {
         if (!semanticEnabled ||
             semanticWorker.state() != QProcess::NotRunning)
           return;
@@ -1360,19 +1392,51 @@ int runIndexCli(int argc, char **argv) {
           return;
         }
         semanticWorker.setProgram(worker);
-        semanticWorker.setArguments(
-            {QStringLiteral("--once"), QStringLiteral("--limit"),
-             QString::number(semanticBatch), QStringLiteral("--scan-window"),
-             QStringLiteral("50000"), QStringLiteral("--threads"),
-             QStringLiteral("2")});
+        QStringList workerArgs{
+            QStringLiteral("--once"), QStringLiteral("--limit"),
+            QString::number(semanticBatch), QStringLiteral("--scan-window"),
+            QStringLiteral("50000"), QStringLiteral("--threads"),
+            QStringLiteral("2")};
+        const Config current;
+        if (current.foregroundImageFacts())
+          workerArgs.append(QStringLiteral("--emit-facts"));
+        for (const QString &root : semanticPriorityRoots())
+          workerArgs.append({QStringLiteral("--priority-root"), root});
+        semanticWorker.setArguments(workerArgs);
         semanticWorker.start();
       });
   QObject::connect(
       &semanticWorker,
       qOverload<int, QProcess::ExitStatus>(&QProcess::finished), &semanticTimer,
-      [&semanticWorker, &scheduleSemantic](int code, QProcess::ExitStatus) {
+      [&semanticWorker, &scheduleSemantic,
+       &catalog](int code, QProcess::ExitStatus) {
         const QByteArray output = semanticWorker.readAllStandardOutput().trimmed();
         const QByteArray error = semanticWorker.readAllStandardError().trimmed();
+        if (code == 0) {
+          const QJsonDocument result = QJsonDocument::fromJson(output);
+          const QJsonArray samples =
+              result.isObject()
+                  ? result.object().value(QStringLiteral("factSamples")).toArray()
+                  : QJsonArray{};
+          for (const QJsonValue &value : samples) {
+            const QJsonObject sample = value.toObject();
+            const QString path = sample.value(QStringLiteral("path")).toString();
+            const qint64 mtime =
+                sample.value(QStringLiteral("mtime")).toVariant().toLongLong();
+            const QByteArray encoded =
+                sample.value(QStringLiteral("png")).toString().toLatin1();
+            if (path.isEmpty() || mtime <= 0 || encoded.isEmpty() ||
+                encoded.size() > 512 * 1024)
+              continue;
+            const QImage image =
+                QImage::fromData(QByteArray::fromBase64(encoded), "PNG");
+            if (image.isNull())
+              continue;
+            catalog.recordImageFacts(
+                path, mtime,
+                ThumbnailService::deterministicImageFacts(path, image));
+          }
+        }
         if (code != 0)
           std::fprintf(stderr, "synchro-indexd: semantic: %s%s%s\n",
                        output.constData(),

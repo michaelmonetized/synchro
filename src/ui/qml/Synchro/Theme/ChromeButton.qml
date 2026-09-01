@@ -10,6 +10,22 @@ FocusScope {
     property bool checked: false
     property bool checkedOutline: false
     property bool compact: label.length === 0
+    // A selected segment must remain selected-looking after a click gives it
+    // keyboard focus.  Selection is the persistent state; focus is only the
+    // transient input state and therefore cannot replace its outline.
+    readonly property color resolvedBorderColor:
+        checked && checkedOutline ? Theme.alpha(Theme.accent, 0.78)
+                                  : (activeFocus ? Theme.focusBorder
+                                                 : (hover.hovered
+                                                    ? Theme.hoverBorder
+                                                    : Theme.normalBorder))
+    readonly property real resolvedBorderWidth:
+        checked && checkedOutline
+        ? Math.max(1, Theme.normalBorderWidth,
+                   activeFocus ? Theme.focusBorderWidth : 0)
+        : (activeFocus ? Math.max(1, Theme.focusBorderWidth)
+                       : (hover.hovered ? Theme.hoverBorderWidth
+                                        : Theme.normalBorderWidth))
     signal triggered()
 
     implicitHeight: Theme.controlHeight
@@ -24,16 +40,8 @@ FocusScope {
                             : (tap.pressed ? Theme.pressedFill
                                            : (hover.hovered || root.activeFocus
                                               ? Theme.hoverFill : Theme.normalFill))
-        border.color: root.activeFocus ? Theme.focusBorder
-                                      : (root.checked && root.checkedOutline
-                                         ? Theme.alpha(Theme.accent, 0.78)
-                                      : (hover.hovered ? Theme.hoverBorder
-                                                       : Theme.normalBorder))
-        border.width: root.activeFocus ? Math.max(1, Theme.focusBorderWidth)
-                                      : (root.checked && root.checkedOutline
-                                         ? Math.max(1, Theme.normalBorderWidth)
-                                      : (hover.hovered ? Theme.hoverBorderWidth
-                                                       : Theme.normalBorderWidth))
+        border.color: root.resolvedBorderColor
+        border.width: root.resolvedBorderWidth
         radius: Theme.radius
     }
 

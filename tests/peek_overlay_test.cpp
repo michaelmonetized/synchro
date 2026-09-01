@@ -18,6 +18,7 @@
 #include "XdgOpen.h"
 
 #include <QClipboard>
+#include <QColor>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -371,6 +372,13 @@ Window {
     height: 760
     visible: true
 
+    Flickable {
+        objectName: "settingsUnderlay"
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: 3000
+    }
+
     IndexerSettingsOverlay {
         anchors.fill: parent
         visible: true
@@ -389,30 +397,96 @@ Window {
       window->findChild<QQuickItem *>(QStringLiteral("indexerSettingsOverlay"));
   auto *workers =
       window->findChild<QQuickItem *>(QStringLiteral("thumbnailWorkerControl"));
+  auto *scanCadence =
+      window->findChild<QQuickItem *>(QStringLiteral("scanCadenceControl"));
+  auto *hotSet =
+      window->findChild<QQuickItem *>(QStringLiteral("hotSetControl"));
+  auto *semanticBatch =
+      window->findChild<QQuickItem *>(QStringLiteral("semanticBatchControl"));
+  auto *semanticCadence =
+      window->findChild<QQuickItem *>(QStringLiteral("semanticCadenceControl"));
   auto *monitor =
       window->findChild<QQuickItem *>(QStringLiteral("enrichmentMonitor"));
+  auto *card =
+      window->findChild<QQuickItem *>(QStringLiteral("indexerSettingsCard"));
+  auto *scroll =
+      window->findChild<QQuickItem *>(QStringLiteral("indexerSettingsScroll"));
+  auto *underlay =
+      window->findChild<QQuickItem *>(QStringLiteral("settingsUnderlay"));
   QVERIFY(overlay);
   QVERIFY(workers);
+  QVERIFY(scanCadence);
+  QVERIFY(hotSet);
+  QVERIFY(semanticBatch);
+  QVERIFY(semanticCadence);
   QVERIFY(monitor);
+  QVERIFY(card);
+  QVERIFY(scroll);
+  QVERIFY(underlay);
   QVERIFY(overlay->isVisible());
   QVERIFY(workers->property("outlineSelection").toBool());
+  const QList<QQuickItem *> choiceControls{
+      workers, scanCadence, hotSet, semanticBatch, semanticCadence};
+  for (auto *control : choiceControls) {
+    QVERIFY(control->property("outlineSelection").toBool());
+    QVERIFY(control->property("fillWidth").toBool());
+  }
+
+  QCOMPARE(underlay->property("contentY").toReal(), 0.0);
+  QCOMPARE(scroll->property("contentY").toReal(), 0.0);
+  const QPoint cardCenter =
+      card->mapToScene(QPointF(card->width() / 2, card->height() / 2)).toPoint();
+  QTest::wheelEvent(window, cardCenter, QPoint(0, -120));
+  QTRY_VERIFY(scroll->property("contentY").toReal() > 0.0);
+  QCOMPARE(underlay->property("contentY").toReal(), 0.0);
+  scroll->setProperty("contentY", 0.0);
+
+  QTest::wheelEvent(window, QPoint(4, 4), QPoint(0, -120));
+  QCoreApplication::processEvents();
+  QCOMPARE(scroll->property("contentY").toReal(), 0.0);
+  QCOMPARE(underlay->property("contentY").toReal(), 0.0);
 
   QQuickItem *one = nullptr;
+  QQuickItem *two = nullptr;
   QVERIFY(QTest::qWaitFor(
       [&] {
-        const auto matches =
+        const auto oneMatches =
             visualNamed(workers, QStringLiteral("segment-1"));
-        one = matches.isEmpty() ? nullptr : matches.constFirst();
-        return one != nullptr;
+        const auto twoMatches =
+            visualNamed(workers, QStringLiteral("segment-2"));
+        one = oneMatches.isEmpty() ? nullptr : oneMatches.constFirst();
+        two = twoMatches.isEmpty() ? nullptr : twoMatches.constFirst();
+        return one != nullptr && two != nullptr;
       },
       1000));
+  QVERIFY(two->property("checked").toBool());
+  const QColor selectedBorder =
+      two->property("resolvedBorderColor").value<QColor>();
+  QVERIFY(selectedBorder.isValid());
   const QPoint oneCenter =
       one->mapToScene(QPointF(one->width() / 2, one->height() / 2)).toPoint();
   QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, oneCenter);
   QTRY_COMPARE(overlay->property("foregroundWorkers").toInt(), 1);
   QVERIFY(overlay->isVisible());
   QVERIFY(one->property("checked").toBool());
+  QVERIFY(!two->property("checked").toBool());
   QVERIFY(one->property("checkedOutline").toBool());
+  QVERIFY(one->property("activeFocus").toBool());
+  QCOMPARE(one->property("resolvedBorderColor").value<QColor>(),
+           selectedBorder);
+
+  const qreal regularCardHeight = card->height();
+  const qreal regularScrollHeight = scroll->height();
+  window->setHeight(1200);
+  QTRY_VERIFY(card->height() > regularCardHeight);
+  QTRY_VERIFY(scroll->height() > regularScrollHeight);
+  QVERIFY(card->height() <= window->height() - 34);
+
+  window->setHeight(420);
+  QTRY_VERIFY(card->height() <= window->height() - 34);
+  QVERIFY(scroll->property("contentHeight").toReal() > scroll->height());
+  window->setHeight(760);
+  QTRY_VERIFY(card->height() > 0);
 
   QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, QPoint(4, 4));
   QTRY_VERIFY(!overlay->isVisible());

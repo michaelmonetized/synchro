@@ -1447,12 +1447,34 @@ Window {
     Connections {
         target: root.semanticFinder
         function onResultReady(label, result) {
-            if (root.files)
-                root.files.showSqlResult(result, label)
             var count = Number(result.count || 0)
             var searched = Number(result.searched || 0)
-            root.keys.setStatusMessage(count + " semantic matches · " +
-                                       searched + " indexed images compared")
+            var eligible = Number(result.eligibleImages || 0)
+            var coverage = Number(result.coveragePercent || 0)
+            var duplicates = Number(result.nearDuplicatesCollapsed || 0)
+            var coverageText = eligible > searched
+                    ? " · " + coverage.toLocaleString(Qt.locale(), "f", 1) +
+                      "% indexed here"
+                    : ""
+            if (count <= 0) {
+                root.keys.setStatusMessage(
+                            "No confident semantic matches here · " +
+                            searched.toLocaleString(Qt.locale(), "f", 0) +
+                            " indexed images compared" + coverageText)
+                Qt.callLater(root.focusListingForce)
+                return
+            }
+            if (root.files)
+                root.files.showSqlResult(result, label)
+            var duplicateText = duplicates > 0
+                    ? " · " + duplicates.toLocaleString(Qt.locale(), "f", 0) +
+                      " near-duplicates hidden"
+                    : ""
+            root.keys.setStatusMessage(
+                        count.toLocaleString(Qt.locale(), "f", 0) +
+                        " semantic matches · " +
+                        searched.toLocaleString(Qt.locale(), "f", 0) +
+                        " indexed images compared" + coverageText + duplicateText)
             Qt.callLater(root.focusListingForce)
         }
         function onChanged() {

@@ -643,11 +643,15 @@ The same settings surface contains an opt-in semantic-image experiment. It
 stores normalized 512-dimensional CLIP vectors in a separate
 `~/.local/share/synchro/semantic.sqlite`, never in the operational catalog or
 DuckDB shadow. Work is incremental, low-priority, and source-versioned by file
-identity, size, and mtime. The first run downloads and SHA-256 verifies a 336
-MiB MIT-licensed `Qdrant/clip-ViT-B-32-vision` ONNX model. `:see blue images`
-runs the matching local text encoder, compares only vectors beneath the current
-folder, and opens the ranked images as a normal navigable pseudo-folder. The
-same seam is scriptable:
+identity, size, and mtime. Each pass considers changed files first, then images
+directly inside recently browsed, pinned, and saved-query folders before
+continuing the durable full-tree sweep. When visual facts are enabled, the same
+decoded pixels also feed palette, aspect, and perceptual-hash metadata instead
+of reading the image a second time. The first run downloads and SHA-256 verifies
+a 336 MiB MIT-licensed `Qdrant/clip-ViT-B-32-vision` ONNX model. `:see blue
+images` runs the matching local text encoder, compares only vectors beneath the
+current folder, and opens the ranked images as a normal navigable pseudo-folder.
+The same seam is scriptable:
 
 ```bash
 synchro semantic search "blue images" --cwd "$HOME/Pictures" --limit 60
@@ -659,6 +663,13 @@ encoder and its fixed 77-token tokenizer. Arch users need the optional
 `python-numpy`, `python-pillow`, `python-onnxruntime-cpu`, and
 `python-tokenizers` packages. The feature remains off when they are absent and
 background image indexing is disabled by default.
+
+Semantic search is deliberately allowed to return fewer rows than requested.
+Weak cosine matches are withheld instead of filling the browser with unrelated
+files, and near-identical resized or recompressed copies are collapsed to their
+best-ranked representative. Results report scoped eligible/indexed coverage,
+the confidence floor, and duplicate/weak-candidate counts so an incomplete or
+empty result is distinguishable from a failed search.
 
 The built-in **Agent** action runs `omarchy agent prompt`, so it always follows
 Omarchy's current default agent. It starts in the selected folder (or a selected

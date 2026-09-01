@@ -67,9 +67,12 @@ use Synchro's optional local semantic index instead of inventing filename SQL:
 
 This is a recursive, current-folder-scoped exact ranking over image vectors. It
 returns ordinary file rows plus a `similarity` score, `searched` candidate count,
-and `truncated` result-limit flag. If the semantic index or optional local model
-dependencies are unavailable, report that explicitly and fall back to
-deterministic metadata only when that still answers the request.
+`eligibleImages`/`coveragePercent` scope coverage, and a `truncated` result-limit
+flag. Synchro deliberately withholds weak matches and collapses near-identical
+copies, so fewer rows than requested can be a successful, higher-quality result.
+If the semantic index or optional local model dependencies are unavailable,
+report that explicitly and fall back to deterministic metadata only when that
+still answers the request.
 
 Use filesystem reads only when the indexed metadata is insufficient. The
 optional `synchro mcp --stdio` surface offers typed conveniences, but never

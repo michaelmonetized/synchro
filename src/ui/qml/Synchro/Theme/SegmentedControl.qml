@@ -7,6 +7,7 @@ FocusScope {
     property string currentId: ""
     property bool showLabels: true
     property bool outlineSelection: false
+    property bool fillWidth: false
     signal activated(string optionId)
 
     implicitHeight: Theme.controlHeight
@@ -22,6 +23,7 @@ FocusScope {
 
     Row {
         id: row
+        width: root.fillWidth ? root.width : implicitWidth
         height: parent.height
 
         Repeater {
@@ -30,6 +32,8 @@ FocusScope {
             ChromeButton {
                 required property var modelData
                 objectName: "segment-" + modelData.id
+                width: root.fillWidth && root.options.length > 0
+                       ? row.width / root.options.length : implicitWidth
                 height: row.height
                 compact: !root.showLabels
                 iconName: modelData.icon || ""

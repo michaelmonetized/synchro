@@ -121,6 +121,20 @@ image vectors beneath `cwd` and returns ordinary file rows with `similarity`,
 command `:see <description>` runs this asynchronously and renders the response
 in the current window as a previewable result folder.
 
+Retrieval does not promise to fill `limit`: candidates below the model's
+evidence floor are rejected, and near-identical vectors are represented once.
+`eligibleImages`, `coveragePercent`, `weakCandidatesRejected`, and
+`nearDuplicatesCollapsed` make those decisions explicit. When no confident
+match exists, the GUI preserves the current folder and reports the scoped
+indexed coverage instead of replacing it with unrelated top-N filler.
+
+Background enrichment favors changed files and the immediate contents of
+recently browsed, pinned, and saved-query folders, then resumes its persistent
+rowid sweep for complete coverage. If visual-fact capture is enabled, a compact
+sample from the CLIP decode is handed back to the catalog writer so palette,
+dimensions, aspect, and perceptual-hash facts do not require another full image
+decode.
+
 `Open`, `Reveal`, and `Show` currently launch an application or a new Synchro
 window. Their receipts report `currentWindow:false` where relevant. A future
 browser-instance routing layer can improve that behavior without changing the

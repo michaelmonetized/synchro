@@ -140,6 +140,10 @@ FocusScope {
                      durationText(semantic.last_duration_ms),
                      "+" + countText(semantic.last_embedded) + " vectors",
                      countText(semantic.last_failed) + " failed"]
+        if (Number(semantic.last_fact_samples || 0) > 0)
+            parts.push("+" + countText(semantic.last_fact_samples) + " visual facts")
+        if (Number(semantic.last_priority_embedded || 0) > 0)
+            parts.push(countText(semantic.last_priority_embedded) + " hot-folder first")
         if (semantic.catalogSequenceLag !== undefined)
             parts.push(countText(semantic.catalogSequenceLag) + " catalog events behind")
         if (semantic.image_sweeps !== undefined)
@@ -181,9 +185,11 @@ FocusScope {
         property string title: ""
         property string caption: ""
         default property alias contents: body.data
-        implicitHeight: sectionHeader.implicitHeight + body.implicitHeight + Theme.space(34)
-        color: Theme.alpha(Theme.darkerBackground, 0.5)
-        border.color: Theme.alpha(Theme.normalBorder, 0.72)
+        implicitHeight: Theme.space(14) + sectionHeader.implicitHeight +
+                        Theme.space(3) + sectionCaption.implicitHeight +
+                        Theme.space(14) + body.implicitHeight + Theme.space(14)
+        color: Theme.alpha(Theme.darkerBackground, 0.58)
+        border.color: Theme.alpha(Theme.accent, 0.22)
         border.width: 1
         radius: Theme.radius
 
@@ -201,6 +207,7 @@ FocusScope {
         }
 
         Text {
+            id: sectionCaption
             anchors.left: sectionHeader.left
             anchors.right: sectionHeader.right
             anchors.top: sectionHeader.bottom
@@ -212,14 +219,28 @@ FocusScope {
             wrapMode: Text.Wrap
         }
 
+        // A quiet group rail makes the controls read as children of the
+        // section heading without introducing another stack of nested cards.
+        Rectangle {
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.space(14)
+            anchors.top: sectionCaption.bottom
+            anchors.topMargin: Theme.space(14)
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: Theme.space(14)
+            width: Math.max(1, Theme.focusBorderWidth)
+            radius: width / 2
+            color: Theme.alpha(Theme.accent, 0.34)
+        }
+
         Column {
             id: body
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.top: sectionHeader.bottom
-            anchors.leftMargin: Theme.space(14)
+            anchors.top: sectionCaption.bottom
+            anchors.leftMargin: Theme.space(30)
             anchors.rightMargin: Theme.space(14)
-            anchors.topMargin: Theme.space(32)
+            anchors.topMargin: Theme.space(14)
             spacing: Theme.space(7)
         }
     }
@@ -228,7 +249,9 @@ FocusScope {
         property string label: ""
         property string detail: ""
         default property alias control: controlSlot.data
-        implicitHeight: Math.max(Theme.space(48), copy.implicitHeight)
+        implicitHeight: Math.max(Theme.space(56),
+                                 copy.implicitHeight + Theme.space(10),
+                                 controlSlot.height + Theme.space(10))
 
         Column {
             id: copy
@@ -339,6 +362,9 @@ FocusScope {
 
         MouseArea {
             anchors.fill: parent
+            // A modal is also an input boundary: wheel motion outside the
+            // card must not leak through to the browser canvas beneath it.
+            onWheel: function(wheel) { wheel.accepted = true }
             onClicked: function(mouse) {
                 var point = mapToItem(card, mouse.x, mouse.y)
                 if (point.x < 0 || point.y < 0 ||
@@ -353,11 +379,45 @@ FocusScope {
         objectName: "indexerSettingsCard"
         anchors.centerIn: parent
         width: Math.min(parent.width - Theme.space(34), Theme.space(760))
-        height: Math.min(parent.height - Theme.space(34), Theme.space(680))
+        // Fit the settings when the display can afford it, but keep the same
+        // bounded Flickable contract on laptop-sized and compact windows.
+        // The extra span accounts for the title/status rail and footer.
+        readonly property real desiredHeight:
+            settingsColumn.implicitHeight + Theme.space(150)
+        height: Math.min(parent.height - Theme.space(34),
+                         Math.max(Theme.space(520), desiredHeight))
         color: Theme.opaqueBackground
-        border.color: Theme.focusBorder
-        border.width: 1
+        border.color: Theme.alpha(Theme.accent, 0.82)
+        border.width: Math.max(1, Theme.focusBorderWidth)
         radius: Theme.radius
+
+        function scrollWheel(event) {
+            var dy = event.pixelDelta.y
+            if (dy === 0 && event.angleDelta.y !== 0) {
+                var step = Math.max(Theme.space(72),
+                                    Math.min(Theme.space(160),
+                                             scroll.height * 0.18))
+                dy = event.angleDelta.y / 120.0 * step
+            }
+            if (dy === 0 && event.angleDelta.x !== 0)
+                dy = event.angleDelta.x / 120.0 * Theme.space(96)
+            var minimum = scroll.originY - scroll.topMargin
+            var maximum = Math.max(minimum,
+                                   scroll.originY + scroll.contentHeight -
+                                   scroll.height + scroll.bottomMargin)
+            scroll.contentY = Math.max(minimum,
+                                       Math.min(maximum,
+                                                scroll.contentY - dy))
+            // Accept even at either end: reaching the settings boundary must
+            // never continue scrolling the obscured browser underneath.
+            event.accepted = true
+        }
+
+        WheelHandler {
+            target: null
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+            onWheel: function(event) { card.scrollWheel(event) }
+        }
 
         Text {
             id: eyebrow
@@ -409,6 +469,7 @@ FocusScope {
 
         Flickable {
             id: scroll
+            objectName: "indexerSettingsScroll"
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: title.bottom
@@ -440,6 +501,7 @@ FocusScope {
                             anchors.fill: parent
                             currentId: String(root.foregroundWorkers)
                             outlineSelection: true
+                            fillWidth: true
                             showLabels: true
                             options: [
                                 { id: "1", label: "1" }, { id: "2", label: "2" },
@@ -483,9 +545,12 @@ FocusScope {
                         detail: "How long to wait after a complete reconciliation."
                         opacity: root.catalogEnabled && root.recursiveScan ? 1 : 0.42
                         SegmentedControl {
+                            objectName: "scanCadenceControl"
                             anchors.fill: parent
                             enabled: root.catalogEnabled && root.recursiveScan
                             currentId: String(root.scanMinutes)
+                            outlineSelection: true
+                            fillWidth: true
                             showLabels: true
                             options: [
                                 { id: "60", label: "1h" }, { id: "360", label: "6h" },
@@ -499,9 +564,12 @@ FocusScope {
                         label: "Hot-set size"
                         detail: "How many recently useful folders remain under direct watch."
                         SegmentedControl {
+                            objectName: "hotSetControl"
                             anchors.fill: parent
                             enabled: root.catalogEnabled
                             currentId: String(root.maxWatches)
+                            outlineSelection: true
+                            fillWidth: true
                             showLabels: true
                             options: [
                                 { id: "512", label: "light" }, { id: "2048", label: "balanced" },
@@ -528,9 +596,12 @@ FocusScope {
                         detail: "Images per background pass."
                         opacity: root.imageEmbeddings ? 1 : 0.42
                         SegmentedControl {
+                            objectName: "semanticBatchControl"
                             anchors.fill: parent
                             enabled: root.imageEmbeddings
                             currentId: String(root.semanticBatch)
+                            outlineSelection: true
+                            fillWidth: true
                             showLabels: true
                             options: [
                                 { id: "4", label: "4" }, { id: "8", label: "8" },
@@ -545,9 +616,12 @@ FocusScope {
                         detail: "Pause between incremental passes."
                         opacity: root.imageEmbeddings ? 1 : 0.42
                         SegmentedControl {
+                            objectName: "semanticCadenceControl"
                             anchors.fill: parent
                             enabled: root.imageEmbeddings
                             currentId: String(root.semanticInterval)
+                            outlineSelection: true
+                            fillWidth: true
                             showLabels: true
                             options: [
                                 { id: "30", label: "30s" }, { id: "60", label: "1m" },

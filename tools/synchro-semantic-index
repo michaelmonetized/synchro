@@ -10,9 +10,11 @@ queries use the matching CLIP encoder and exact, folder-scoped cosine ranking.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import heapq
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -53,6 +55,16 @@ IMAGE_EXTENSIONS = (
     "tiff",
     "webp",
 )
+# CLIP cosine scores are not probabilities, but ViT-B/32's low-similarity tail
+# is reliably unhelpful for an interactive file finder.  Below this floor we
+# would rather report that the current scope has no convincing result than fill
+# a page with unrelated screenshots and icons.
+MIN_SEARCH_SIMILARITY = 0.22
+# Resized, recompressed, and re-encoded copies produce almost identical CLIP
+# vectors.  Collapse them in the result set while retaining the best-ranked
+# representative; the underlying files remain individually indexed/queryable.
+NEAR_DUPLICATE_SIMILARITY = 0.995
+SEARCH_OVERSAMPLE = 8
 MEAN = (0.48145466, 0.4578275, 0.40821073)
 STD = (0.26862954, 0.26130258, 0.27577711)
 
@@ -114,7 +126,9 @@ def maybe_reexec_runtime(text: bool = False) -> None:
 
 def connect_database(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(path, timeout=10)
+    # URI handling also keeps read-only URI semantics intact for the attached
+    # live catalog used by hot-folder prioritization.
+    db = sqlite3.connect(str(path), timeout=10, uri=True)
     os.chmod(path, 0o600)
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("PRAGMA synchronous=NORMAL")
@@ -198,6 +212,8 @@ def semantic_status(
                     "last_duration_ms",
                     "last_embedded",
                     "last_failed",
+                    "last_fact_samples",
+                    "last_priority_embedded",
                     "image_cursor",
                     "image_sweeps",
                     "change_sequence",
@@ -411,16 +427,61 @@ def sweep_candidates(
     return candidates, next_cursor, False
 
 
-def preprocess(paths: list[str]):
+def priority_candidates(
+    semantic: sqlite3.Connection,
+    roots: list[Path],
+    limit: int,
+) -> list[tuple[int, str, str, int, int]]:
+    if limit <= 0 or not roots:
+        return []
+    placeholders = ",".join("?" for _ in IMAGE_EXTENSIONS)
+    rows: list[tuple[int, str, str, int, int]] = []
+    known: set[str] = set()
+    for root in roots:
+        candidates = semantic.execute(
+            f"""
+            SELECT f.rowid,coalesce(nullif(f.file_id,''),f.path),
+                   f.path,f.size,f.mtime
+            FROM catalog_live.files f LEFT JOIN image_embeddings e ON
+              e.file_id=coalesce(nullif(f.file_id,''),f.path)
+              AND e.path=f.path AND e.model=?
+              AND e.source_size=f.size AND e.source_mtime=f.mtime
+            WHERE f.parent=? AND f.is_dir=0 AND f.is_symlink=0
+              AND f.extension IN ({placeholders}) AND e.file_id IS NULL
+            ORDER BY f.mtime DESC LIMIT ?
+            """,
+            (IMAGE_MODEL_ID, str(root), *IMAGE_EXTENSIONS, limit),
+        ).fetchall()
+        for row in candidates:
+            identity = str(row[1])
+            if identity in known:
+                continue
+            known.add(identity)
+            rows.append(row)
+            if len(rows) >= limit:
+                return rows
+    return rows
+
+
+def preprocess(paths: list[str], emit_facts: bool = False):
     import numpy as np
     from PIL import Image, ImageOps
 
     tensors = []
     accepted = []
+    fact_samples: dict[str, str] = {}
     for path in paths:
         try:
             with Image.open(path) as source:
                 image = ImageOps.exif_transpose(source).convert("RGB")
+                if emit_facts:
+                    sample = image.copy()
+                    sample.thumbnail((96, 96), resample=Image.Resampling.LANCZOS)
+                    output = io.BytesIO()
+                    sample.save(output, format="PNG", compress_level=1)
+                    fact_samples[path] = base64.b64encode(
+                        output.getvalue()
+                    ).decode("ascii")
                 width, height = image.size
                 scale = 224.0 / min(width, height)
                 resized = image.resize(
@@ -439,17 +500,23 @@ def preprocess(paths: list[str]):
         except (OSError, ValueError):
             continue
     if not tensors:
-        return accepted, None
-    return accepted, np.stack(tensors).astype(np.float32, copy=False)
+        return accepted, None, fact_samples
+    return (
+        accepted,
+        np.stack(tensors).astype(np.float32, copy=False),
+        fact_samples,
+    )
 
 
-def embed_rows(rows, model_path: Path, threads: int):
+def embed_rows(rows, model_path: Path, threads: int, emit_facts: bool = False):
     import numpy as np
     import onnxruntime as ort
 
-    accepted, pixels = preprocess([str(row[2]) for row in rows])
+    accepted, pixels, samples = preprocess(
+        [str(row[2]) for row in rows], emit_facts
+    )
     if pixels is None:
-        return [], len(rows)
+        return [], len(rows), []
     by_path = {str(row[2]): row for row in rows}
     options = ort.SessionOptions()
     options.intra_op_num_threads = max(1, threads)
@@ -462,7 +529,23 @@ def embed_rows(rows, model_path: Path, threads: int):
         np.float32, copy=False
     )
     vectors /= np.maximum(np.linalg.norm(vectors, axis=1, keepdims=True), 1e-12)
-    return [(by_path[path], vector.tobytes()) for path, vector in zip(accepted, vectors)], len(rows) - len(accepted)
+    fact_samples = [
+        {
+            "path": path,
+            "mtime": int(by_path[path][4]),
+            "png": samples[path],
+        }
+        for path in accepted
+        if path in samples
+    ]
+    return (
+        [
+            (by_path[path], vector.tobytes())
+            for path, vector in zip(accepted, vectors)
+        ],
+        len(rows) - len(accepted),
+        fact_samples,
+    )
 
 
 def embed_text(query: str, model_path: Path, tokenizer_path: Path, threads: int):
@@ -504,9 +587,29 @@ def _path_bounds(cwd: str) -> tuple[str, str]:
     return prefix, prefix + "\U0010ffff"
 
 
+def scoped_eligible_images(catalog: sqlite3.Connection, cwd: str) -> int:
+    start, end = _path_bounds(cwd)
+    placeholders = ",".join("?" for _ in IMAGE_EXTENSIONS)
+    return int(
+        catalog.execute(
+            f"SELECT count(*) FROM files WHERE path>=? AND path<? "
+            "AND is_dir=0 AND is_symlink=0 "
+            # Catalog extensions are normalized to lowercase. Keeping this
+            # expression bare lets SQLite use files_extension; lower() made a
+            # home-wide coverage count scan all multi-million catalog rows.
+            f"AND extension IN ({placeholders})",
+            (start, end, *IMAGE_EXTENSIONS),
+        ).fetchone()[0]
+    )
+
+
 def rank_image_embeddings(
-    semantic: sqlite3.Connection, query_vector, cwd: str, limit: int
-) -> tuple[list[tuple[float, str]], int]:
+    semantic: sqlite3.Connection,
+    query_vector,
+    cwd: str,
+    limit: int,
+    include_vectors: bool = False,
+):
     """Return exact top-k matches without materializing the vector table."""
     import numpy as np
 
@@ -532,13 +635,58 @@ def rank_image_embeddings(
         matrix = np.stack(vectors)
         scores = matrix @ query_vector
         searched += len(paths)
-        for path, score in zip(paths, scores):
-            item = (float(score), path)
+        for path, vector, score in zip(paths, vectors, scores):
+            item = (
+                float(score),
+                path,
+                vector.tobytes() if include_vectors else b"",
+            )
             if len(best) < limit:
                 heapq.heappush(best, item)
             elif item > best[0]:
                 heapq.heapreplace(best, item)
-    return sorted(best, reverse=True), searched
+    ranked = sorted(best, reverse=True)
+    if include_vectors:
+        return ranked, searched
+    return [(score, path) for score, path, _ in ranked], searched
+
+
+def select_confident_diverse(
+    ranked,
+    limit: int,
+    minimum_similarity: float = MIN_SEARCH_SIMILARITY,
+    duplicate_similarity: float = NEAR_DUPLICATE_SIMILARITY,
+):
+    """Reject weak candidates and retain one result per near-duplicate group."""
+    import numpy as np
+
+    selected: list[tuple[float, str]] = []
+    # The result limit is at most 200.  A fixed matrix turns duplicate checks
+    # into one bounded vector operation per candidate instead of thousands of
+    # tiny NumPy calls, which matters on CPU-only systems.
+    selected_vectors = np.empty((max(1, limit), 512), dtype=np.float32)
+    selected_count = 0
+    weak = 0
+    duplicates = 0
+    for index, (score, path, blob) in enumerate(ranked):
+        if score < minimum_similarity:
+            weak += len(ranked) - index
+            break
+        vector = np.frombuffer(blob, dtype=np.float32)
+        if vector.size != 512:
+            weak += 1
+            continue
+        if selected_count and float(
+            np.max(selected_vectors[:selected_count] @ vector)
+        ) >= duplicate_similarity:
+            duplicates += 1
+            continue
+        selected.append((score, path))
+        selected_vectors[selected_count] = vector
+        selected_count += 1
+        if len(selected) >= limit:
+            break
+    return selected, weak, duplicates
 
 
 def catalog_rows(
@@ -604,13 +752,26 @@ def search_images(args) -> dict:
     )
     catalog = open_catalog(args.catalog)
     try:
-        ranked, searched = rank_image_embeddings(
-            semantic, query_vector, str(args.cwd), args.limit
+        eligible = scoped_eligible_images(catalog, str(args.cwd))
+        candidate_window = min(
+            2000,
+            max(args.limit * SEARCH_OVERSAMPLE, args.limit + 64),
         )
-        rows = catalog_rows(catalog, ranked)
+        ranked, searched = rank_image_embeddings(
+            semantic,
+            query_vector,
+            str(args.cwd),
+            candidate_window,
+            include_vectors=True,
+        )
+        selected, weak, duplicates = select_confident_diverse(
+            ranked, args.limit
+        )
+        rows = catalog_rows(catalog, selected)
     finally:
         semantic.close()
         catalog.close()
+    coverage = round(100.0 * searched / eligible, 2) if eligible else 100.0
     return {
         "ok": True,
         "query": args.search.strip(),
@@ -627,6 +788,13 @@ def search_images(args) -> dict:
         ],
         "rows": rows,
         "searched": searched,
+        "eligibleImages": eligible,
+        "pendingImages": max(0, eligible - searched),
+        "coveragePercent": coverage,
+        "confidenceFloor": MIN_SEARCH_SIMILARITY,
+        "weakCandidatesRejected": weak,
+        "nearDuplicatesCollapsed": duplicates,
+        "candidateWindow": len(ranked),
         "count": len(rows),
         "truncated": searched > len(rows),
         "model": TEXT_MODEL_ID,
@@ -654,11 +822,30 @@ def run_once(args) -> dict:
     catalog = open_catalog(args.catalog)
     semantic = connect_database(args.database)
     try:
+        # Compare live catalog versions with the semantic sidecar in one
+        # bounded query. The catalog remains read-only; indexd is its writer.
+        catalog_uri = f"file:{args.catalog}?mode=ro"
+        semantic.execute("ATTACH DATABASE ? AS catalog_live", (catalog_uri,))
         cursor = int(meta_get(semantic, "image_cursor"))
         prior_sequence = int(meta_get(semantic, "change_sequence"))
         rows, sequence = changed_candidates(
             catalog, semantic, prior_sequence, args.limit
         )
+        priority_count = 0
+        if len(rows) < args.limit and args.priority_root:
+            priority = priority_candidates(
+                semantic,
+                args.priority_root,
+                args.limit - len(rows),
+            )
+            known = {str(row[1]) for row in rows}
+            unique_priority = [
+                row for row in priority if str(row[1]) not in known
+            ]
+            rows.extend(unique_priority)
+            priority_ids = {str(row[1]) for row in unique_priority}
+        else:
+            priority_ids = set()
         swept = False
         if len(rows) < args.limit:
             sweep, cursor, swept = sweep_candidates(
@@ -670,7 +857,12 @@ def run_once(args) -> dict:
             )
             known = {str(row[1]) for row in rows}
             rows.extend(row for row in sweep if str(row[1]) not in known)
-        embedded, failed = embed_rows(rows, args.model, args.threads)
+        embedded, failed, fact_samples = embed_rows(
+            rows, args.model, args.threads, args.emit_facts
+        )
+        priority_count = sum(
+            1 for row, _ in embedded if str(row[1]) in priority_ids
+        )
         now = int(time.time() * 1000)
         semantic.executemany(
             "INSERT INTO image_embeddings(file_id,path,model,dimension,"
@@ -692,6 +884,8 @@ def run_once(args) -> dict:
         meta_set(semantic, "last_duration_ms", int((time.monotonic() - started) * 1000))
         meta_set(semantic, "last_embedded", len(embedded))
         meta_set(semantic, "last_failed", failed)
+        meta_set(semantic, "last_fact_samples", len(fact_samples))
+        meta_set(semantic, "last_priority_embedded", priority_count)
         meta_set(semantic, "last_error", "")
         meta_set(semantic, "model", IMAGE_MODEL_ID)
         semantic.commit()
@@ -699,6 +893,9 @@ def run_once(args) -> dict:
             "ok": True,
             "embedded": len(embedded),
             "failed": failed,
+            "factSamples": fact_samples,
+            "facts": len(fact_samples),
+            "priorityEmbedded": priority_count,
             "cursor": cursor,
             "sweepComplete": swept,
             "durationMs": int((time.monotonic() - started) * 1000),
@@ -733,6 +930,8 @@ def parse_args():
     parser.add_argument("--limit", type=int, default=16)
     parser.add_argument("--scan-window", type=int, default=50_000)
     parser.add_argument("--threads", type=int, default=2)
+    parser.add_argument("--priority-root", type=Path, action="append", default=[])
+    parser.add_argument("--emit-facts", action="store_true")
     args = parser.parse_args()
     args.limit = max(1, min(args.limit, 200 if args.search else 64))
     args.scan_window = max(args.limit, min(args.scan_window, 1_000_000))
