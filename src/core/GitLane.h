@@ -74,8 +74,11 @@ private:
   void publishDiffFiles(int generation, const QVariantList &files);
   void loadDiffBody();
   void publishDiffBody(int generation, const QStringList &lines);
+  void startProgram(const QString &cwd, const QString &program,
+                    const QStringList &args);
   void startShell(const QString &cwd, const QString &script,
                   const QStringList &args);
+  QString gitcpProgram() const;
   void onPty();
   void considerPrompt();
   void reap(bool killed);

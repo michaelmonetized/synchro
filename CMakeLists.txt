@@ -134,6 +134,7 @@ target_compile_definitions(synchro PRIVATE
     SYNCHRO_FIRST_PARTY_HANDLER_DIR="${CMAKE_SOURCE_DIR}/handlers"
     SYNCHRO_AGENT_SKILL_SOURCE="${CMAKE_SOURCE_DIR}/agents/synchro"
     SYNCHRO_SEMANTIC_WORKER_SOURCE="${CMAKE_SOURCE_DIR}/tools/synchro-semantic-index"
+    SYNCHRO_GITCP_SOURCE="${CMAKE_SOURCE_DIR}/tools/gitcp"
     SYNCHRO_VERSION="${PROJECT_VERSION}"
 )
 
@@ -504,6 +505,9 @@ if(BUILD_TESTING)
     )
     target_include_directories(git_status_test PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core
+    )
+    target_compile_definitions(git_status_test PRIVATE
+        SYNCHRO_GITCP_SOURCE="${CMAKE_SOURCE_DIR}/tools/gitcp"
     )
     target_link_libraries(git_status_test PRIVATE
         Qt6::Test
@@ -991,7 +995,7 @@ configure_file(
     @ONLY)
 
 install(TARGETS synchro RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(PROGRAMS tools/synchro-semantic-index
+install(PROGRAMS tools/synchro-semantic-index tools/gitcp
         DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES packaging/org.omarchy.synchro.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)

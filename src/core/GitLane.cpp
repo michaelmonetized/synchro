@@ -4,6 +4,7 @@
 #include "DirectoryModel.h"
 #include "GitStatus.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QMetaObject>
@@ -353,9 +354,12 @@ void GitLane::push(const QString &path) {
     return;
   }
   emit note(QStringLiteral("pushing"));
-  startShell(root,
-             QStringLiteral("source \"$HOME/.config/zsh/git\" && git_push"),
-             {});
+  const QString shim = gitcpProgram();
+  if (shim.isEmpty()) {
+    emit note(QStringLiteral("gitcp is not installed"));
+    return;
+  }
+  startProgram(root, shim, {QStringLiteral("--push")});
 }
 
 void GitLane::gitcp(const QString &path, const QString &message) {
@@ -365,10 +369,12 @@ void GitLane::gitcp(const QString &path, const QString &message) {
     return;
   }
   emit note(QStringLiteral("committing and pushing"));
-  startShell(root,
-             QStringLiteral(
-                 "source \"$HOME/.config/zsh/git\" && git_commit_push \"$1\""),
-             {message});
+  const QString shim = gitcpProgram();
+  if (shim.isEmpty()) {
+    emit note(QStringLiteral("gitcp is not installed"));
+    return;
+  }
+  startProgram(root, shim, {message});
 }
 
 void GitLane::openNvim(const QString &path) {
@@ -431,8 +437,21 @@ void GitLane::openT3(const QString &path, bool isFile) {
   process->start(bin, {QStringLiteral("app"), target});
 }
 
-void GitLane::startShell(const QString &cwd, const QString &script,
-                         const QStringList &args) {
+QString GitLane::gitcpProgram() const {
+  const QString sibling = QDir(QCoreApplication::applicationDirPath())
+                              .filePath(QStringLiteral("gitcp"));
+  if (QFileInfo(sibling).isExecutable())
+    return sibling;
+#ifdef SYNCHRO_GITCP_SOURCE
+  const QString source = QStringLiteral(SYNCHRO_GITCP_SOURCE);
+  if (QFileInfo(source).isExecutable())
+    return source;
+#endif
+  return {};
+}
+
+void GitLane::startProgram(const QString &cwd, const QString &program,
+                           const QStringList &args) {
   cancelCommand();
   struct winsize size {};
   size.ws_col = 120;
@@ -448,10 +467,7 @@ void GitLane::startShell(const QString &cwd, const QString &script,
     if (!cwd.isEmpty())
       ::chdir(cwd.toLocal8Bit().constData());
     std::vector<std::string> owned;
-    owned.emplace_back("zsh");
-    owned.emplace_back("-c");
-    owned.emplace_back(script.toStdString());
-    owned.emplace_back("synchro");
+    owned.emplace_back(program.toStdString());
     for (const QString &arg : args)
       owned.emplace_back(arg.toStdString());
     std::vector<char *> argv;
@@ -459,7 +475,7 @@ void GitLane::startShell(const QString &cwd, const QString &script,
     for (std::string &word : owned)
       argv.push_back(word.data());
     argv.push_back(nullptr);
-    ::execvp("zsh", argv.data());
+    ::execvp(owned.front().c_str(), argv.data());
     _exit(127);
   }
   const int flags = fcntl(master, F_GETFL, 0);
@@ -472,6 +488,13 @@ void GitLane::startShell(const QString &cwd, const QString &script,
   m_waiting = false;
   m_pty = new QSocketNotifier(master, QSocketNotifier::Read, this);
   connect(m_pty, &QSocketNotifier::activated, this, &GitLane::onPty);
+}
+
+void GitLane::startShell(const QString &cwd, const QString &script,
+                         const QStringList &args) {
+  QStringList argv{QStringLiteral("-c"), script, QStringLiteral("synchro")};
+  argv << args;
+  startProgram(cwd, QStringLiteral("zsh"), argv);
 }
 
 void GitLane::onPty() {

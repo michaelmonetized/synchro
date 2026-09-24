@@ -113,7 +113,7 @@ an always-focused omnibar.
 | Type | Filter the current folder. Escape clears it |
 | `Space` | Toggle the lightweight Look panel. |
 | `p` / `Shift+Space` | Open full Peek. Esc / Q / Space leave. |
-| `c` / `C` / `P` | Commit / commit and push / push |
+| `c` / `C` / `P` | Commit / commit and push / push. `C` and `P` run `tools/gitcp`. |
 | `i` | Diff of the folder. `n`/`p` pick a file, `hjklud` move in it |
 | `e` / `t` | nvim / t3 thread |
 | `Ctrl+Enter` / right-click | Do-layer (sticky actions + params) |

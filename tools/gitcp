@@ -1,0 +1,116 @@
+#!/bin/sh
+# Commit everything and push it. If origin is missing, ask for a repo name
+# and a visibility, create michaelmonetized/<name>, then push.
+
+sanitize() {
+  printf '%s\n' "$1" | sed 's/[^a-zA-Z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//'
+}
+
+die() {
+  echo "$1" >&2
+  exit 1
+}
+
+is_repo() {
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+has_remote() {
+  git remote get-url origin >/dev/null 2>&1
+}
+
+prompt_repo_name() {
+  default=$(sanitize "$(basename "$PWD")")
+  printf 'Repo name [%s]: ' "$default" >&2
+  repo_name=
+  read -r repo_name || true
+  if [ -z "$repo_name" ]; then
+    printf '%s\n' "$default"
+  else
+    sanitize "$repo_name"
+  fi
+}
+
+create_repo() {
+  name=$1
+  visibility=$2
+  echo "Creating GitHub repo: michaelmonetized/$name ($visibility)..."
+  if ! gh repo create "michaelmonetized/$name" "$visibility"; then
+    echo "Failed to create repo"
+    return 1
+  fi
+  echo "Created repo"
+  url="https://github.com/michaelmonetized/$name.git"
+  if git remote get-url origin >/dev/null 2>&1; then
+    git remote set-url origin "$url"
+  else
+    git remote add origin "$url"
+  fi
+  echo "Set origin: $url"
+}
+
+ensure_remote() {
+  if has_remote; then
+    return 0
+  fi
+  echo ""
+  echo "No remote configured."
+  repo_name=$(prompt_repo_name)
+  printf 'Visibility [private/public] (default: private): '
+  visibility=
+  read -r visibility || true
+  if [ "$visibility" = "public" ]; then
+    flag=--public
+  else
+    flag=--private
+  fi
+  create_repo "$repo_name" "$flag"
+}
+
+do_push() {
+  ensure_remote || return 1
+  if git rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+    git push
+  else
+    git push -u origin HEAD
+  fi
+  status=$?
+  if [ "$status" -eq 0 ]; then
+    echo "Push successful."
+  else
+    echo "Push failed."
+  fi
+  return "$status"
+}
+
+do_commit_push() {
+  msg=$1
+  if [ -z "$msg" ]; then
+    die "commit message required"
+  fi
+  if ! is_repo; then
+    echo "Not a git repo, initializing..."
+    git init || die "git init failed"
+  fi
+  git add -A || die "git add failed"
+  if [ -n "$(git status --porcelain)" ]; then
+    git commit -m "$msg" || die "Commit failed."
+  else
+    git commit --allow-empty -m "$msg" || die "Commit failed."
+  fi
+  echo "Commit successful."
+  do_push
+}
+
+case "${1:-}" in
+  --push)
+    is_repo || die "not a git repo"
+    do_push
+    ;;
+  "")
+    die "usage: gitcp <message> | gitcp --push"
+    ;;
+  *)
+    do_commit_push "$1"
+    ;;
+esac
