@@ -565,6 +565,12 @@ Window {
         catalog: typeof fileCatalog !== "undefined" ? fileCatalog : null
     }
 
+    DiffView {
+        anchors.fill: parent
+        z: 90
+        keyMachine: root.keys
+    }
+
     Confirm {
         anchors.fill: parent
         z: 105
@@ -1501,10 +1507,10 @@ Window {
         function onFsnModeChanged() {
             Qt.callLater(root.focusListing)
         }
-        function onGridMoveRequested(dx, dy) {
+        function onGridMoveRequested(dx, dy, steps) {
             if (root.gridMode && !root.fsnMode && listingLoader.item &&
                     listingLoader.item.navigateGeometry)
-                listingLoader.item.navigateGeometry(dx, dy, false, true)
+                listingLoader.item.navigateGeometry(dx, dy, steps, true)
         }
     }
 

@@ -3813,7 +3813,7 @@ void PeekOverlayTest::gridArrowsTrackRenderedGeometryAcrossRelayout() {
     QTRY_VERIFY_WITH_TIMEOUT((expected = renderedTarget(row, 0, 1)) >= 0, 1000);
     grid->forceActiveFocus();
     QVERIFY(QTest::qWaitFor([&] { return grid->hasActiveFocus(); }, 1000));
-    QTest::keyClick(window, Qt::Key_Down);
+    QTest::keyClick(window, Qt::Key_J);
     QCOMPARE(proxy.currentIndex(), expected);
   };
 

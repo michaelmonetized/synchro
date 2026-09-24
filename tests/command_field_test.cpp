@@ -506,8 +506,8 @@ void CommandFieldTest::quickFilterStaysInCurrentFolder() {
   const QString home = model.path();
   proxy.setCurrentIndex(findProxy(proxy, QStringLiteral("aaa")));
 
-  QVERIFY(keys.handleListKey(Qt::Key_D, Qt::NoModifier,
-                             QStringLiteral("d")));
+  QVERIFY(keys.handleListKey(Qt::Key_R, Qt::NoModifier,
+                             QStringLiteral("r")));
   keys.setFieldText(QStringLiteral("downloads"));
 
   QCOMPARE(model.path(), home);
@@ -533,11 +533,11 @@ void CommandFieldTest::printableLettersAreNotModalVerbs() {
   model.setPath(tmp.path());
   QVERIFY(waitListingDone(model));
   QVERIFY(proxy.rowCount() >= 4);
-  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
+  QVERIFY(keys.handleListKey(Qt::Key_Z, Qt::NoModifier, QStringLiteral("z")));
   QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
-  QCOMPARE(keys.fieldText(), QStringLiteral("j"));
+  QCOMPARE(keys.fieldText(), QStringLiteral("z"));
   QCOMPARE(proxy.rowCount(), 1);
-  QCOMPARE(proxy.currentName(), QStringLiteral("jjj.txt"));
+  QCOMPARE(proxy.currentName(), QStringLiteral("zzz.txt"));
 }
 
 void CommandFieldTest::gridNavigationPreservesVisualColumn() {
@@ -562,15 +562,15 @@ void CommandFieldTest::gridNavigationPreservesVisualColumn() {
   // The final row contains only columns zero and one. Moving down from visual
   // column three stays on that row instead of clamping diagonally by index.
   proxy.setCurrentIndex(7);
-  QVERIFY(keys.handleListKey(Qt::Key_Down, Qt::NoModifier, QString()));
+  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
   QCOMPARE(proxy.currentIndex(), 9);
-  QVERIFY(keys.handleListKey(Qt::Key_Up, Qt::NoModifier, QString()));
+  QVERIFY(keys.handleListKey(Qt::Key_K, Qt::NoModifier, QStringLiteral("k")));
   QCOMPARE(proxy.currentIndex(), 5);
 
   // A relayout immediately changes vertical adjacency.
   keys.setGridStride(3);
   proxy.setCurrentIndex(5);
-  QVERIFY(keys.handleListKey(Qt::Key_Down, Qt::NoModifier, QString()));
+  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
   QCOMPARE(proxy.currentIndex(), 8);
 }
 
@@ -957,8 +957,8 @@ void CommandFieldTest::plainTStartsFilter() {
   NavStack nav(&model);
   KeyMachine keys(&model, &proxy, &nav);
   QVERIFY(keys.handleListKey(Qt::Key_T, Qt::NoModifier, QStringLiteral("t")));
-  QCOMPARE(keys.mode(), QStringLiteral("field-filter"));
-  QCOMPARE(keys.fieldText(), QStringLiteral("t"));
+  QCOMPARE(keys.mode(), QStringLiteral("list-focused"));
+  QVERIFY(keys.fieldText().isEmpty());
 }
 
 void CommandFieldTest::ctrlReturnRequestsOpenWith() {
@@ -1327,7 +1327,7 @@ void CommandFieldTest::enterHelpOpensOverlay() {
   QVERIFY(keys.helpText().contains(QStringLiteral(":trash")));
   QVERIFY(keys.helpText().contains(QStringLiteral(":sort")));
   QVERIFY(keys.helpText().contains(QStringLiteral(":pin")));
-  QVERIFY(keys.helpText().contains(QStringLiteral("Arrow keys")));
+  QVERIFY(keys.helpText().contains(QStringLiteral("h j k l")));
 
   QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
   QVERIFY(!keys.helpOpen());

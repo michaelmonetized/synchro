@@ -85,8 +85,16 @@ Item {
                         return "Delete permanently"
                     if (root.keyMachine.promptKind === "empty-trash")
                         return "Empty trash"
+                    if (root.keyMachine.promptKind === "commit")
+                        return "Commit message"
+                    if (root.keyMachine.promptKind === "gitcp")
+                        return "Commit and push"
+                    if (root.keyMachine.promptKind === "ask")
+                        return root.keyMachine.promptQuestion
                     return "Rename"
                 }
+                width: parent.width
+                wrapMode: Text.WordWrap
                 color: Theme.foreground
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontBody

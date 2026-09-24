@@ -96,20 +96,24 @@ FocusScope {
             return
         }
         var stride = root.gridMode ? root.columns : 1
-        if (event.key === Qt.Key_Down) {
+        if (event.key === Qt.Key_J) {
             root.moveCurrent(stride)
             event.accepted = true
-        } else if (event.key === Qt.Key_Up) {
+        } else if (event.key === Qt.Key_K) {
             root.moveCurrent(-stride)
             event.accepted = true
-        } else if (event.key === Qt.Key_Right) {
+        } else if (event.key === Qt.Key_L) {
             root.moveCurrent(1)
             event.accepted = true
-        } else if (event.key === Qt.Key_Left) {
+        } else if (event.key === Qt.Key_H) {
             root.moveCurrent(-1)
             event.accepted = true
+        } else if (event.key === Qt.Key_Down || event.key === Qt.Key_Up ||
+                   event.key === Qt.Key_Right || event.key === Qt.Key_Left) {
+            event.accepted = true
         } else if (event.key === Qt.Key_Return ||
-                   event.key === Qt.Key_Enter) {
+                   event.key === Qt.Key_Enter ||
+                   event.key === Qt.Key_O) {
             root.commitRow(root.currentIndex)
             event.accepted = true
         }

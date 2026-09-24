@@ -69,8 +69,18 @@ Item {
         }
     }
 
-    onColumnsChanged: if (visible && keyMachine)
-        keyMachine.gridStride = columns
+    function syncPage() {
+        if (!keyMachine)
+            return
+        var rows = Math.max(1, Math.floor(height / Math.max(1, cellHeight)) - 1)
+        keyMachine.pageRows = rows
+    }
+
+    onColumnsChanged: {
+        if (visible && keyMachine)
+            keyMachine.gridStride = columns
+        syncPage()
+    }
     onVisibleChanged: {
         if (visible && keyMachine)
             keyMachine.gridStride = columns
@@ -249,18 +259,18 @@ Item {
         return -1
     }
 
-    function navigateGeometry(dx, dy, leap, retry) {
+    function navigateGeometry(dx, dy, steps, retry) {
         if (!grid.rows || !grid.keyMachine)
             return false
-        var target = grid.geometryTarget(grid.rows.currentIndex, dx, dy,
-                                         leap ? 5 : 1)
+        var count = Math.max(1, Number(steps) || 1)
+        var target = grid.geometryTarget(grid.rows.currentIndex, dx, dy, count)
         if (target < 0) {
             // A restored panel and the initial GridView population can settle
             // one frame after browser focus arrives. Retry against that frame's
             // delegates instead of falling back to stale column arithmetic.
             if (retry !== false)
                 Qt.callLater(function () {
-                    grid.navigateGeometry(dx, dy, leap, false)
+                    grid.navigateGeometry(dx, dy, count, false)
                 })
             return false
         }
@@ -623,8 +633,12 @@ Item {
     }
 
     onWidthChanged: thumbSync.restart()
-    onHeightChanged: thumbSync.restart()
+    onHeightChanged: {
+        thumbSync.restart()
+        syncPage()
+    }
     Component.onCompleted: {
+        syncPage()
         thumbSync.restart()
         if (grid.centerInitialSelection)
             initialReveal.restart()
@@ -681,12 +695,7 @@ Item {
     Keys.onPressed: function (event) {
         var arrow = event.key === Qt.Key_Left || event.key === Qt.Key_Right ||
                     event.key === Qt.Key_Up || event.key === Qt.Key_Down
-        if (arrow && event.modifiers === Qt.NoModifier) {
-            var dx = event.key === Qt.Key_Left ? -1
-                   : (event.key === Qt.Key_Right ? 1 : 0)
-            var dy = event.key === Qt.Key_Up ? -1
-                   : (event.key === Qt.Key_Down ? 1 : 0)
-            grid.navigateGeometry(dx, dy, false, true)
+        if (arrow) {
             event.accepted = true
             return
         }

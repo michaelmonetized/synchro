@@ -4,6 +4,7 @@
 #include "FileOpEngine.h"
 #include "FileCatalog.h"
 #include "FilterProxy.h"
+#include "GitLane.h"
 #include "HandlerLoader.h"
 #include "IconImageProvider.h"
 #include "HandlerRegistry.h"
@@ -303,6 +304,37 @@ int main(int argc, char *argv[]) {
   fileOpEngine.setSelection(&selectionModel);
   fileOpEngine.setDirectoryModel(&directoryModel);
   KeyMachine keyMachine(&directoryModel, &filterProxy, &navStack);
+  GitLane gitLane(&directoryModel);
+  QObject::connect(&keyMachine, &KeyMachine::commitRequested, &gitLane,
+                   [&](const QString &path, const QString &message) {
+                     gitLane.commit(path, message);
+                   });
+  QObject::connect(&keyMachine, &KeyMachine::pushRequested, &gitLane,
+                   [&](const QString &path) { gitLane.push(path); });
+  QObject::connect(&keyMachine, &KeyMachine::gitcpRequested, &gitLane,
+                   [&](const QString &path, const QString &message) {
+                     gitLane.gitcp(path, message);
+                   });
+  QObject::connect(&keyMachine, &KeyMachine::nvimRequested, &gitLane,
+                   [&](const QString &path) { gitLane.openNvim(path); });
+  QObject::connect(&keyMachine, &KeyMachine::t3Requested, &gitLane,
+                   [&](const QString &path, bool isFile) {
+                     gitLane.openT3(path, isFile);
+                   });
+  QObject::connect(&keyMachine, &KeyMachine::diffRequested, &gitLane,
+                   [&](const QString &path) { gitLane.openDiff(path); });
+  QObject::connect(&keyMachine, &KeyMachine::gitAnswer, &gitLane,
+                   [&](const QString &text) { gitLane.answer(text); });
+  QObject::connect(&keyMachine, &KeyMachine::gitAskCanceled, &gitLane,
+                   &GitLane::cancelCommand);
+  QObject::connect(&gitLane, &GitLane::question, &keyMachine,
+                   [&](const QString &question) { keyMachine.ask(question); });
+  QObject::connect(&gitLane, &GitLane::note, &keyMachine,
+                   [&](const QString &text) {
+                     keyMachine.setStatusMessage(text);
+                   });
+  QObject::connect(&gitLane, &GitLane::commandFinished, &keyMachine,
+                   [&] { keyMachine.finishAsk(); });
   keyMachine.setPanelSide(config.panelSide());
   if (config.panelOpen())
     keyMachine.setPanelId(config.panelApp());
@@ -384,6 +416,8 @@ int main(int argc, char *argv[]) {
                                            &navStack);
   engine.rootContext()->setContextProperty(QStringLiteral("keyMachine"),
                                            &keyMachine);
+  engine.rootContext()->setContextProperty(QStringLiteral("gitLane"),
+                                           &gitLane);
   engine.rootContext()->setContextProperty(QStringLiteral("locationChips"),
                                            &locationChips);
   engine.rootContext()->setContextProperty(QStringLiteral("appConfig"),

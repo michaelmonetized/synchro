@@ -88,6 +88,8 @@ qt_add_executable(synchro
     src/core/NavStack.cpp
     src/core/FilterProxy.cpp
     src/core/KeyMachine.cpp
+    src/core/GitStatus.cpp
+    src/core/GitLane.cpp
     src/core/CommandPalette.cpp
     src/core/PeekHost.cpp
     src/core/MimeMap.cpp
@@ -159,6 +161,7 @@ qt_add_qml_module(synchro
         src/ui/qml/IndexerSettingsOverlay.qml
         src/ui/qml/StatusLine.qml
         src/ui/qml/Confirm.qml
+        src/ui/qml/DiffView.qml
         src/ui/qml/ChooserWindow.qml
         src/ui/qml/ScrollChrome.qml
 )
@@ -223,6 +226,7 @@ target_link_libraries(synchro PRIVATE
     Qt6::Concurrent
     Qt6::DBus
     Qt6::Multimedia
+    util
     synchro_theme
     synchro_themeplugin
     synchro_handler
@@ -493,6 +497,22 @@ if(BUILD_TESTING)
         target_compile_options(match_test PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME match_test COMMAND match_test)
+
+    qt_add_executable(git_status_test
+        tests/git_status_test.cpp
+        src/core/GitStatus.cpp
+    )
+    target_include_directories(git_status_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/core
+    )
+    target_link_libraries(git_status_test PRIVATE
+        Qt6::Test
+        Qt6::Core
+    )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(git_status_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME git_status_test COMMAND git_status_test)
 
     qt_add_executable(peek_overlay_test
         tests/peek_overlay_test.cpp

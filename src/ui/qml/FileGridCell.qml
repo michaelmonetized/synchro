@@ -240,12 +240,20 @@ Item {
         anchors.rightMargin: Theme.spaceLG
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
-        text: cell.detail
-        color: Theme.darkForeground
-        font.family: Theme.fontFamily
+        readonly property string gitText: {
+            var lane = (typeof gitLane !== "undefined") ? gitLane : null
+            if (!cell.isDir || !lane)
+                return ""
+            var rev = lane.revision
+            return rev >= 0 ? lane.mark(cell.path) : ""
+        }
+        text: gitText.length ? gitText : cell.detail
+        color: gitText.length && gitText !== "?0 ~0" && gitText !== "?0 ~0 ↑0 ↓0"
+               ? Theme.accent : Theme.darkForeground
+        font.family: gitText.length ? Theme.monoFontFamily : Theme.fontFamily
         font.pixelSize: Theme.fontCaption
         elide: Text.ElideRight
-        opacity: hover.hovered || cell.picked ? 1 : 0
+        opacity: gitText.length || hover.hovered || cell.picked ? 1 : 0
 
         Behavior on opacity {
             NumberAnimation { duration: 90 }

@@ -104,13 +104,18 @@ an always-focused omnibar.
 
 | Key | What it does |
 |---|---|
-| Arrow keys | Move through the rendered rows or tiles |
-| `Enter` | Open the file, or enter the folder |
-| Backspace | Up a directory |
-| `Alt+Left` / `Alt+Right` | Back / forward |
-| Type | Filter the current folder; Up/Down select, Enter opens, Escape clears and restores position |
+| `h` `j` `k` `l` | Left, down, up, right |
+| `o` / `Enter` | Open the file, or enter the folder |
+| `u` / `d` | Page up / page down. Shift jumps to the top or bottom |
+| `H` / `L` | First / last in the line |
+| `Esc` / Backspace | Up a directory |
+| `~` / `.` | Home / `~/.config` |
+| Type | Filter the current folder. Escape clears it |
 | `Space` | Toggle the lightweight Look panel. |
-| `Shift+Space` | Open full Peek. Esc / Q / Space leave. |
+| `p` / `Shift+Space` | Open full Peek. Esc / Q / Space leave. |
+| `c` / `C` / `P` | Commit / commit and push / push |
+| `i` | Diff of the folder. `n`/`p` pick a file, `hjklud` move in it |
+| `e` / `t` | nvim / t3 thread |
 | `Ctrl+Enter` / right-click | Do-layer (sticky actions + params) |
 | `/` · `Ctrl+K` | Filter the listing |
 | `:` | Command palette (`:trash` `:home` `:volumes` `:sql` `:flow` `:help`) |

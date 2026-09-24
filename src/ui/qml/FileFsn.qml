@@ -1848,18 +1848,10 @@ Item {
     Keys.priority: Keys.BeforeItem
     Keys.onPressed: function (event) {
         if (event.modifiers === Qt.NoModifier &&
-                (event.key === Qt.Key_E || event.key === Qt.Key_Right)) {
-            if (fsn.expandCursor(true)) {
-                event.accepted = true
-                return
-            }
-        }
-        if (event.modifiers === Qt.NoModifier &&
-                (event.key === Qt.Key_C || event.key === Qt.Key_Left)) {
-            if (fsn.expandCursor(false)) {
-                event.accepted = true
-                return
-            }
+                (event.key === Qt.Key_Left || event.key === Qt.Key_Right ||
+                 event.key === Qt.Key_Up || event.key === Qt.Key_Down)) {
+            event.accepted = true
+            return
         }
         if (fsn.keyMachine &&
                 fsn.keyMachine.handleListKey(event.key, event.modifiers, event.text)) {

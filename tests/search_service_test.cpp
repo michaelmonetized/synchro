@@ -1024,11 +1024,11 @@ void SearchServiceTest::searchGridDownFollowsGroups() {
   keys.setGridMode(true);
   keys.setGridStride(6);
   proxy.setCurrentIndex(0);
-  QVERIFY(keys.handleListKey(Qt::Key_Down, Qt::NoModifier, QString()));
+  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
   QCOMPARE(proxy.currentIndex(), 1);
-  QVERIFY(keys.handleListKey(Qt::Key_Down, Qt::NoModifier, QString()));
+  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
   QCOMPARE(proxy.currentIndex(), 2);
-  QVERIFY(keys.handleListKey(Qt::Key_Up, Qt::NoModifier, QString()));
+  QVERIFY(keys.handleListKey(Qt::Key_K, Qt::NoModifier, QStringLiteral("k")));
   QCOMPARE(proxy.currentIndex(), 1);
 
   const QString wide = tmp.filePath(QStringLiteral("wide"));

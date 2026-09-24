@@ -51,6 +51,8 @@ class KeyMachine : public QObject {
   Q_PROPERTY(QString promptText READ promptText WRITE setPromptText NOTIFY
                  promptChanged)
   Q_PROPERTY(QString promptKind READ promptKind NOTIFY promptChanged)
+  Q_PROPERTY(QString promptQuestion READ promptQuestion NOTIFY promptChanged)
+  Q_PROPERTY(int pageRows READ pageRows WRITE setPageRows NOTIFY pageRowsChanged)
   Q_PROPERTY(bool ynPrompt READ ynPrompt NOTIFY promptChanged)
   Q_PROPERTY(bool chooserMode READ chooserMode NOTIFY chooserModeChanged)
 
@@ -115,6 +117,8 @@ public:
   QString statusMessage() const { return m_status; }
   QString promptText() const { return m_promptText; }
   QString promptKind() const { return m_promptKind; }
+  QString promptQuestion() const { return m_promptQuestion; }
+  int pageRows() const { return m_pageRows; }
   bool ynPrompt() const;
 
   Q_INVOKABLE void setFieldText(const QString &text);
@@ -145,7 +149,10 @@ public:
   Q_INVOKABLE bool handleFieldKey(int key, int modifiers);
   Q_INVOKABLE void requestEmptyTrash();
   Q_INVOKABLE void setPromptText(const QString &text);
+  Q_INVOKABLE void setPageRows(int rows);
   Q_INVOKABLE void acceptPrompt();
+  void ask(const QString &question);
+  void finishAsk();
   bool confirmOpen() const {
     return m_mode == Mode::RenameInline || m_mode == Mode::ConfirmDialog ||
            !m_promptKind.isEmpty();
@@ -193,7 +200,16 @@ signals:
   void saveNameFocusRequested();
   void localFilterStarted();
   void localFilterCanceled();
-  void gridMoveRequested(int dx, int dy);
+  void gridMoveRequested(int dx, int dy, int steps);
+  void commitRequested(const QString &path, const QString &message);
+  void pushRequested(const QString &path);
+  void gitcpRequested(const QString &path, const QString &message);
+  void nvimRequested(const QString &path);
+  void t3Requested(const QString &path, bool isFile);
+  void diffRequested(const QString &path);
+  void gitAnswer(const QString &text);
+  void gitAskCanceled();
+  void pageRowsChanged();
 
 private:
   void setMode(Mode mode);
@@ -234,6 +250,13 @@ private:
   void startUnlinkConfirm();
   void startEmptyConfirm();
   void nudgeCursor(int dx, int dy, bool leap);
+  void nudge(int dx, int dy, int steps);
+  void moveBy(int dx, int dy, int steps);
+  void page(int direction);
+  void jumpEnd(int direction);
+  void jumpLine(int direction);
+  QString actionPath(bool *isFile) const;
+  void beginGitPrompt(const QString &kind);
   void setCursorIndex(int index);
   int cursorIndex() const;
 
@@ -272,6 +295,9 @@ private:
   bool m_trashAvailable = true;
   QString m_promptKind;
   QString m_promptText;
+  QString m_promptQuestion;
+  QString m_gitPath;
+  int m_pageRows = 16;
   bool m_chooserMode = false;
   bool m_chooserMultiple = false;
   bool m_chooserSave = false;

@@ -385,11 +385,22 @@ ListView {
         }
     }
 
+    function syncPage() {
+        if (!list.keyMachine)
+            return
+        var n = Math.max(1, Math.floor(list.height / Math.max(1, list.rowInner)) - 1)
+        list.keyMachine.pageRows = n
+    }
+
     onContentYChanged: thumbSync.restart()
-    onHeightChanged: thumbSync.restart()
+    onHeightChanged: {
+        thumbSync.restart()
+        syncPage()
+    }
     onCountChanged: thumbSync.restart()
     onVisibleChanged: if (visible) thumbSync.restart()
     Component.onCompleted: {
+        syncPage()
         thumbSync.restart()
         if (list.centerInitialSelection)
             initialReveal.restart()
@@ -594,10 +605,29 @@ ListView {
         }
 
         Text {
-            anchors.left: iconBox.right
+            id: gitMark
             anchors.right: cols.visible ? cols.left
                                         : (chrome.visible ? chrome.left
                                                           : parent.right)
+            anchors.rightMargin: Theme.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            width: text.length ? implicitWidth : 0
+            text: {
+                var lane = (typeof gitLane !== "undefined") ? gitLane : null
+                if (!row.isDir || !lane)
+                    return ""
+                var rev = lane.revision
+                return rev >= 0 ? lane.mark(row.path) : ""
+            }
+            color: (text === "?0 ~0" || text === "?0 ~0 ↑0 ↓0")
+                   ? Theme.darkForeground : Theme.accent
+            font.family: Theme.monoFontFamily
+            font.pixelSize: Theme.fontBodySmall
+        }
+
+        Text {
+            anchors.left: iconBox.right
+            anchors.right: gitMark.left
             anchors.leftMargin: Theme.space(8)
             anchors.rightMargin: Theme.space(8)
             anchors.verticalCenter: parent.verticalCenter

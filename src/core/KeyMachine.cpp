@@ -13,6 +13,8 @@
 #include <QAbstractItemModel>
 #include <QDir>
 #include <QFileInfo>
+#include <QMetaMethod>
+#include <QVariantMap>
 
 namespace {
 
@@ -294,7 +296,11 @@ int KeyMachine::cursorIndex() const {
 }
 
 void KeyMachine::nudgeCursor(int dx, int dy, bool leap) {
-  const int step = leap ? 5 : 1;
+  nudge(dx, dy, leap ? 5 : 1);
+}
+
+void KeyMachine::nudge(int dx, int dy, int steps) {
+  const int step = qMax(1, steps);
   if (m_gridMode && m_model && m_model->isSearch()) {
     const int next = m_model->stepSearchGrid(
         cursorIndex(), dx * step, dy * step, m_gridStride);
@@ -334,6 +340,88 @@ void KeyMachine::nudgeCursor(int dx, int dy, bool leap) {
     m_proxy->moveCursor(delta);
   else if (m_model)
     m_model->moveCursor(delta);
+}
+
+void KeyMachine::moveBy(int dx, int dy, int steps) {
+  if (dx == 0 && dy == 0)
+    return;
+  if (!m_gridMode && dx != 0)
+    return;
+  steps = qMax(1, steps);
+  if (m_gridMode &&
+      isSignalConnected(QMetaMethod::fromSignal(&KeyMachine::gridMoveRequested))) {
+    emit gridMoveRequested(dx, dy, steps);
+    return;
+  }
+  nudge(dx, dy, steps);
+}
+
+void KeyMachine::page(int direction) {
+  moveBy(0, direction, qMax(1, m_pageRows));
+}
+
+void KeyMachine::jumpEnd(int direction) {
+  const int count = m_proxy ? m_proxy->count()
+                            : (m_model ? m_model->rowCount() : 0);
+  if (count <= 0)
+    return;
+  setCursorIndex(direction < 0 ? 0 : count - 1);
+}
+
+void KeyMachine::jumpLine(int direction) {
+  if (!m_gridMode)
+    return;
+  moveBy(direction, 0, 100000);
+}
+
+void KeyMachine::setPageRows(int rows) {
+  const int next = qMax(1, rows);
+  if (m_pageRows == next)
+    return;
+  m_pageRows = next;
+  emit pageRowsChanged();
+}
+
+QString KeyMachine::actionPath(bool *isFile) const {
+  QString path;
+  bool dir = true;
+  if (m_proxy) {
+    const QVariantMap row = m_proxy->rowMap(cursorIndex());
+    path = row.value(QStringLiteral("path")).toString();
+    if (!path.isEmpty())
+      dir = row.value(QStringLiteral("isDir")).toBool();
+  }
+  if (path.isEmpty() && m_model) {
+    path = m_model->path();
+    dir = true;
+  }
+  if (isFile)
+    *isFile = !path.isEmpty() && !dir;
+  return path;
+}
+
+void KeyMachine::beginGitPrompt(const QString &kind) {
+  m_gitPath = actionPath(nullptr);
+  m_promptKind = kind;
+  m_promptQuestion.clear();
+  m_promptText.clear();
+  emit promptChanged();
+  setMode(Mode::ConfirmDialog);
+}
+
+void KeyMachine::ask(const QString &question) {
+  m_promptKind = QStringLiteral("ask");
+  m_promptQuestion = question;
+  m_promptText.clear();
+  emit promptChanged();
+  setMode(Mode::ConfirmDialog);
+}
+
+void KeyMachine::finishAsk() {
+  if (m_promptKind != QLatin1String("ask"))
+    return;
+  clearConfirm();
+  setMode(Mode::ListFocused);
 }
 
 void KeyMachine::setStatusMessage(const QString &text) {
@@ -626,10 +714,12 @@ void KeyMachine::focusList() {
 }
 
 void KeyMachine::clearConfirm() {
-  if (m_promptKind.isEmpty() && m_promptText.isEmpty())
+  if (m_promptKind.isEmpty() && m_promptText.isEmpty() &&
+      m_promptQuestion.isEmpty())
     return;
   m_promptKind.clear();
   m_promptText.clear();
+  m_promptQuestion.clear();
   emit promptChanged();
 }
 
@@ -747,6 +837,29 @@ void KeyMachine::acceptPrompt() {
     acceptEmptyTrash();
     clearConfirm();
     setMode(Mode::ListFocused);
+    return;
+  }
+  if (m_promptKind == QLatin1String("commit") ||
+      m_promptKind == QLatin1String("gitcp")) {
+    if (text.isEmpty()) {
+      setStatusMessage(QStringLiteral("commit message required"));
+      return;
+    }
+    const QString kind = m_promptKind;
+    const QString path = m_gitPath;
+    clearConfirm();
+    setMode(Mode::ListFocused);
+    if (kind == QLatin1String("gitcp"))
+      emit gitcpRequested(path, text);
+    else
+      emit commitRequested(path, text);
+    return;
+  }
+  if (m_promptKind == QLatin1String("ask")) {
+    const QString reply = m_promptText;
+    clearConfirm();
+    setMode(Mode::ListFocused);
+    emit gitAnswer(reply);
   }
 }
 
@@ -799,6 +912,8 @@ bool KeyMachine::handleConfirmKey(int key, int modifiers, const QString &text) {
 void KeyMachine::escape() {
   if (m_mode == Mode::RenameInline || m_mode == Mode::ConfirmDialog ||
       !m_promptKind.isEmpty()) {
+    if (m_promptKind == QLatin1String("ask"))
+      emit gitAskCanceled();
     clearConfirm();
     setStatusMessage(QString());
     setMode(Mode::ListFocused);
@@ -855,8 +970,12 @@ void KeyMachine::escape() {
     setFsnMode(false);
     return;
   }
-  if (m_chooserMode)
+  if (m_chooserMode) {
     emit dismissRequested();
+    return;
+  }
+  if (m_nav)
+    m_nav->goUp();
 }
 
 void KeyMachine::acceptField() {
@@ -1553,40 +1672,94 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
     return true;
   }
 
-  if (key == Qt::Key_Down) {
-    if (alt || chord)
-      return false;
-    if (m_gridMode) {
-      nudgeCursor(0, 1, false);
-      return true;
-    }
-    if (m_selection)
-      m_selection->moveCursor(1);
-    else if (m_proxy)
-      m_proxy->moveCursor(1);
-    else if (m_model)
-      m_model->moveCursor(1);
+  if (key == Qt::Key_Up || key == Qt::Key_Down || key == Qt::Key_Left ||
+      key == Qt::Key_Right)
+    return true;
+
+  if (!alt && !chord && (key == Qt::Key_J || key == Qt::Key_K)) {
+    moveBy(0, key == Qt::Key_J ? 1 : -1, 1);
     return true;
   }
-  if (key == Qt::Key_Up) {
-    if (alt || chord)
-      return false;
-    if (m_gridMode) {
-      nudgeCursor(0, -1, false);
-      return true;
-    }
-    if (m_selection)
-      m_selection->moveCursor(-1);
-    else if (m_proxy)
-      m_proxy->moveCursor(-1);
-    else if (m_model)
-      m_model->moveCursor(-1);
+  if (!alt && !chord && (key == Qt::Key_H || key == Qt::Key_L)) {
+    if (shift)
+      jumpLine(key == Qt::Key_H ? -1 : 1);
+    else
+      moveBy(key == Qt::Key_H ? -1 : 1, 0, 1);
+    return true;
+  }
+  if (!alt && !chord && key == Qt::Key_U) {
+    if (shift)
+      jumpEnd(-1);
+    else
+      page(-1);
+    return true;
+  }
+  if (!alt && !chord && key == Qt::Key_D) {
+    if (shift)
+      jumpEnd(1);
+    else
+      page(1);
+    return true;
+  }
+  if (!alt && !chord && !shift && key == Qt::Key_O) {
+    activateCurrent();
     return true;
   }
   if (key == Qt::Key_Return || key == Qt::Key_Enter) {
     if (alt || chord)
       return false;
     activateCurrent();
+    return true;
+  }
+  if (!alt && !chord && !shift && key == Qt::Key_P) {
+    if (m_host)
+      m_host->toggle();
+    return true;
+  }
+  if (!alt && !chord && shift && key == Qt::Key_P) {
+    if (!m_chooserMode)
+      emit pushRequested(actionPath(nullptr));
+    return true;
+  }
+  if (!alt && !chord && key == Qt::Key_C) {
+    if (!m_chooserMode)
+      beginGitPrompt(shift ? QStringLiteral("gitcp")
+                           : QStringLiteral("commit"));
+    return true;
+  }
+  if (!alt && !chord && !shift && key == Qt::Key_I) {
+    if (!m_chooserMode)
+      emit diffRequested(actionPath(nullptr));
+    return true;
+  }
+  if (!alt && !chord && !shift && key == Qt::Key_E) {
+    if (!m_chooserMode)
+      emit nvimRequested(actionPath(nullptr));
+    return true;
+  }
+  if (!alt && !chord && !shift && key == Qt::Key_T) {
+    if (!m_chooserMode) {
+      bool file = false;
+      const QString path = actionPath(&file);
+      emit t3Requested(path, file);
+    }
+    return true;
+  }
+  if (!alt && !chord && !shift && key == Qt::Key_Period) {
+    const QString dest = QDir::homePath() + QStringLiteral("/.config");
+    if (m_nav)
+      m_nav->navigate(dest);
+    else if (m_model)
+      m_model->setPath(dest);
+    return true;
+  }
+  if (!alt && !chord &&
+      (key == Qt::Key_AsciiTilde ||
+       (key == Qt::Key_QuoteLeft && shift))) {
+    if (m_nav)
+      m_nav->goHome();
+    else if (m_model)
+      m_model->setPath(QDir::homePath());
     return true;
   }
   if (key == Qt::Key_Space && !alt && !chord) {
@@ -1601,16 +1774,6 @@ bool KeyMachine::handleListVerbs(int key, int modifiers) {
   if (key == Qt::Key_Backspace && !alt && !chord && !shift) {
     if (m_nav)
       m_nav->goUp();
-    return true;
-  }
-  if (key == Qt::Key_Left && alt && !chord) {
-    if (m_nav)
-      m_nav->goBack();
-    return true;
-  }
-  if (key == Qt::Key_Right && alt && !chord) {
-    if (m_nav)
-      m_nav->goForward();
     return true;
   }
   if (key == Qt::Key_G && ctrl && !alt && !meta) {
@@ -1932,14 +2095,9 @@ bool KeyMachine::handleFieldKey(int key, int modifiers) {
   }
   if (m_mode == Mode::FieldFilter && !hasChord(modifiers) &&
       !hasAlt(modifiers) &&
-      (key == Qt::Key_Up || key == Qt::Key_Down)) {
-    const int dy = key == Qt::Key_Up ? -1 : 1;
-    if (m_gridMode)
-      emit gridMoveRequested(0, dy);
-    else
-      nudgeCursor(0, dy, false);
+      (key == Qt::Key_Up || key == Qt::Key_Down || key == Qt::Key_Left ||
+       key == Qt::Key_Right))
     return true;
-  }
   if (key == Qt::Key_Return || key == Qt::Key_Enter) {
     if (hasChord(modifiers) || hasAlt(modifiers))
       return false;

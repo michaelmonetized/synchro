@@ -885,8 +885,10 @@ void FileOpsTest::arrowsMoveAndLettersFilter() {
   proxy.setCurrentIndex(5);
   QCOMPARE(sel.cursor(), 5);
 
-  QVERIFY(keys.handleListKey(Qt::Key_Up, Qt::NoModifier, QString()));
+  QVERIFY(keys.handleListKey(Qt::Key_K, Qt::NoModifier, QStringLiteral("k")));
   QCOMPARE(sel.cursor(), 4);
+  QVERIFY(keys.handleListKey(Qt::Key_J, Qt::NoModifier, QStringLiteral("j")));
+  QCOMPARE(sel.cursor(), 5);
   QVERIFY(keys.handleListKey(Qt::Key_Down, Qt::NoModifier, QString()));
   QCOMPARE(sel.cursor(), 5);
   QVERIFY(keys.handleListKey(Qt::Key_S, Qt::NoModifier, QStringLiteral("s")));
@@ -943,14 +945,14 @@ void FileOpsTest::enterAndBackspaceWalkHierarchy() {
       2000));
 
   QVERIFY(nav.canGoBack());
-  QVERIFY(keys.handleListKey(Qt::Key_Left, Qt::AltModifier, QString()));
+  const QString here = QFileInfo(tmp.path()).canonicalFilePath();
+  QCOMPARE(QFileInfo(model.path()).canonicalFilePath(), here);
+  QVERIFY(keys.handleListKey(Qt::Key_Left, Qt::NoModifier, QString()));
+  QCOMPARE(QFileInfo(model.path()).canonicalFilePath(), here);
+  QVERIFY(keys.handleListKey(Qt::Key_Escape, Qt::NoModifier, QString()));
   QVERIFY(waitListingDone(model));
   QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
-           QFileInfo(tmp.filePath(QStringLiteral("child"))).canonicalFilePath());
-  QVERIFY(keys.handleListKey(Qt::Key_Right, Qt::AltModifier, QString()));
-  QVERIFY(waitListingDone(model));
-  QCOMPARE(QFileInfo(model.path()).canonicalFilePath(),
-           QFileInfo(tmp.path()).canonicalFilePath());
+           QFileInfo(here).dir().canonicalPath());
 }
 
 void FileOpsTest::visibleThumbsFollowSortedProxy() {
