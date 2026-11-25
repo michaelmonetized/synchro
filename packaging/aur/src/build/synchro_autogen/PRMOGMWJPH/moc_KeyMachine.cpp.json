@@ -1,0 +1,914 @@
+{
+    "classes": [
+        {
+            "className": "KeyMachine",
+            "enums": [
+                {
+                    "isClass": true,
+                    "isFlag": false,
+                    "lineNumber": 59,
+                    "name": "Mode",
+                    "values": [
+                        "ListFocused",
+                        "FieldFilter",
+                        "FieldJump",
+                        "FieldCommand",
+                        "FieldSearch",
+                        "PeekOpen",
+                        "VisualSelect",
+                        "RenameInline",
+                        "ConfirmDialog"
+                    ]
+                }
+            ],
+            "lineNumber": 25,
+            "methods": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "text",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 26,
+                    "lineNumber": 121,
+                    "name": "setFieldText",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "on",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 27,
+                    "lineNumber": 122,
+                    "name": "setGridMode",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "on",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 28,
+                    "lineNumber": 123,
+                    "name": "setFsnMode",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 29,
+                    "lineNumber": 124,
+                    "name": "toggleFsnMode",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "tree",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 30,
+                    "lineNumber": 125,
+                    "name": "setFsnTreeView",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "id",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 31,
+                    "lineNumber": 126,
+                    "name": "setPanelId",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "side",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 32,
+                    "lineNumber": 127,
+                    "name": "setPanelSide",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "id",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 33,
+                    "lineNumber": 128,
+                    "name": "togglePanel",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "on",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 34,
+                    "lineNumber": 129,
+                    "name": "setPanelFocused",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "on",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 35,
+                    "lineNumber": 130,
+                    "name": "setLookKeyMode",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "columns",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 36,
+                    "lineNumber": 131,
+                    "name": "setGridStride",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "index",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 37,
+                    "lineNumber": 134,
+                    "name": "moveGridCursorTo",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "text",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 38,
+                    "lineNumber": 135,
+                    "name": "setStatusMessage",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 39,
+                    "lineNumber": 136,
+                    "name": "focusFilter",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 40,
+                    "lineNumber": 137,
+                    "name": "focusJump",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 41,
+                    "lineNumber": 138,
+                    "name": "focusCommand",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 42,
+                    "lineNumber": 139,
+                    "name": "focusSearch",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 43,
+                    "lineNumber": 140,
+                    "name": "toggleSearchField",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 44,
+                    "lineNumber": 141,
+                    "name": "focusList",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 45,
+                    "lineNumber": 142,
+                    "name": "escape",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 46,
+                    "lineNumber": 143,
+                    "name": "acceptField",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "key",
+                            "type": "int"
+                        },
+                        {
+                            "name": "modifiers",
+                            "type": "int"
+                        },
+                        {
+                            "name": "text",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 47,
+                    "lineNumber": 145,
+                    "name": "handleListKey",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "key",
+                            "type": "int"
+                        },
+                        {
+                            "name": "modifiers",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 48,
+                    "lineNumber": 146,
+                    "name": "handleFieldKey",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 49,
+                    "lineNumber": 147,
+                    "name": "requestEmptyTrash",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "text",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 50,
+                    "lineNumber": 148,
+                    "name": "setPromptText",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 51,
+                    "lineNumber": 149,
+                    "name": "acceptPrompt",
+                    "returnType": "void"
+                }
+            ],
+            "object": true,
+            "properties": [
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 0,
+                    "lineNumber": 27,
+                    "name": "mode",
+                    "notify": "modeChanged",
+                    "override": false,
+                    "read": "mode",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 1,
+                    "lineNumber": 28,
+                    "name": "listFocused",
+                    "notify": "modeChanged",
+                    "override": false,
+                    "read": "listFocused",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 2,
+                    "lineNumber": 29,
+                    "name": "fieldFocused",
+                    "notify": "modeChanged",
+                    "override": false,
+                    "read": "fieldFocused",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 3,
+                    "lineNumber": 30,
+                    "name": "peekOpen",
+                    "notify": "modeChanged",
+                    "override": false,
+                    "read": "peekOpen",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 4,
+                    "lineNumber": 31,
+                    "name": "actionOpen",
+                    "notify": "actionOpenChanged",
+                    "override": false,
+                    "read": "actionOpen",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 5,
+                    "lineNumber": 32,
+                    "name": "fieldText",
+                    "notify": "fieldTextChanged",
+                    "override": false,
+                    "read": "fieldText",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setFieldText"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 6,
+                    "lineNumber": 34,
+                    "name": "jumpEpoch",
+                    "notify": "jumpEpochChanged",
+                    "override": false,
+                    "read": "jumpEpoch",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 7,
+                    "lineNumber": 35,
+                    "name": "gridMode",
+                    "notify": "gridModeChanged",
+                    "override": false,
+                    "read": "gridMode",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setGridMode"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 8,
+                    "lineNumber": 36,
+                    "name": "fsnMode",
+                    "notify": "fsnModeChanged",
+                    "override": false,
+                    "read": "fsnMode",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setFsnMode"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 9,
+                    "lineNumber": 37,
+                    "name": "fsnTreeView",
+                    "notify": "fsnTreeViewChanged",
+                    "override": false,
+                    "read": "fsnTreeView",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setFsnTreeView"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 10,
+                    "lineNumber": 39,
+                    "name": "panelId",
+                    "notify": "panelChanged",
+                    "override": false,
+                    "read": "panelId",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setPanelId"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 11,
+                    "lineNumber": 40,
+                    "name": "panelSide",
+                    "notify": "panelChanged",
+                    "override": false,
+                    "read": "panelSide",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setPanelSide"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 12,
+                    "lineNumber": 42,
+                    "name": "panelFocused",
+                    "notify": "panelFocusedChanged",
+                    "override": false,
+                    "read": "panelFocused",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setPanelFocused"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 13,
+                    "lineNumber": 44,
+                    "name": "lookKeyMode",
+                    "notify": "lookKeyModeChanged",
+                    "override": false,
+                    "read": "lookKeyMode",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setLookKeyMode"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 14,
+                    "lineNumber": 46,
+                    "name": "gridStride",
+                    "notify": "gridStrideChanged",
+                    "override": false,
+                    "read": "gridStride",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setGridStride"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 15,
+                    "lineNumber": 48,
+                    "name": "helpOpen",
+                    "notify": "helpOpenChanged",
+                    "override": false,
+                    "read": "helpOpen",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": true,
+                    "designable": true,
+                    "final": false,
+                    "index": 16,
+                    "lineNumber": 49,
+                    "name": "helpText",
+                    "override": false,
+                    "read": "helpText",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": true,
+                    "designable": true,
+                    "final": false,
+                    "index": 17,
+                    "lineNumber": 50,
+                    "name": "helpModel",
+                    "override": false,
+                    "read": "helpModel",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QVariantList",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 18,
+                    "lineNumber": 51,
+                    "name": "statusMessage",
+                    "notify": "statusMessageChanged",
+                    "override": false,
+                    "read": "statusMessage",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 19,
+                    "lineNumber": 52,
+                    "name": "promptText",
+                    "notify": "promptChanged",
+                    "override": false,
+                    "read": "promptText",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setPromptText"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 20,
+                    "lineNumber": 54,
+                    "name": "promptKind",
+                    "notify": "promptChanged",
+                    "override": false,
+                    "read": "promptKind",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 21,
+                    "lineNumber": 55,
+                    "name": "ynPrompt",
+                    "notify": "promptChanged",
+                    "override": false,
+                    "read": "ynPrompt",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 22,
+                    "lineNumber": 56,
+                    "name": "chooserMode",
+                    "notify": "chooserModeChanged",
+                    "override": false,
+                    "read": "chooserMode",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                }
+            ],
+            "qualifiedClassName": "KeyMachine",
+            "signals": [
+                {
+                    "access": "public",
+                    "index": 0,
+                    "lineNumber": 167,
+                    "name": "modeChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 1,
+                    "lineNumber": 168,
+                    "name": "fieldTextChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 2,
+                    "lineNumber": 169,
+                    "name": "jumpEpochChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 3,
+                    "lineNumber": 170,
+                    "name": "terminalRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 4,
+                    "lineNumber": 171,
+                    "name": "openWithRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 5,
+                    "lineNumber": 172,
+                    "name": "actionOpenChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 6,
+                    "lineNumber": 173,
+                    "name": "gridModeChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 7,
+                    "lineNumber": 174,
+                    "name": "fsnModeChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 8,
+                    "lineNumber": 175,
+                    "name": "fsnTreeViewChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 9,
+                    "lineNumber": 176,
+                    "name": "panelChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 10,
+                    "lineNumber": 177,
+                    "name": "panelFocusRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 11,
+                    "lineNumber": 178,
+                    "name": "sqlScanRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 12,
+                    "lineNumber": 179,
+                    "name": "agentSearchRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 13,
+                    "lineNumber": 180,
+                    "name": "panelFocusedChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 14,
+                    "lineNumber": 181,
+                    "name": "lookKeyModeChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 15,
+                    "lineNumber": 182,
+                    "name": "lookToggleRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 16,
+                    "lineNumber": 183,
+                    "name": "gridStrideChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 17,
+                    "lineNumber": 184,
+                    "name": "helpOpenChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 18,
+                    "lineNumber": 185,
+                    "name": "statusMessageChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 19,
+                    "lineNumber": 186,
+                    "name": "promptChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 20,
+                    "lineNumber": 187,
+                    "name": "chooserModeChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 21,
+                    "lineNumber": 188,
+                    "name": "chooserAcceptRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 22,
+                    "lineNumber": 189,
+                    "name": "dismissRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 23,
+                    "lineNumber": 190,
+                    "name": "chooserPromptDismissRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "delta",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 24,
+                    "lineNumber": 191,
+                    "name": "filterCycleRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 25,
+                    "lineNumber": 192,
+                    "name": "saveNameFocusRequested",
+                    "returnType": "void"
+                }
+            ],
+            "superClasses": [
+                {
+                    "access": "public",
+                    "name": "QObject"
+                }
+            ]
+        }
+    ],
+    "inputFile": "KeyMachine.h",
+    "outputRevision": 69
+}

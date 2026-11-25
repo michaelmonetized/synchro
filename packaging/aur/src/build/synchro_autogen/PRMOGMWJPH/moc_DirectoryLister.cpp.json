@@ -1,0 +1,119 @@
+{
+    "classes": [
+        {
+            "className": "DirectoryLister",
+            "lineNumber": 36,
+            "object": true,
+            "qualifiedClassName": "DirectoryLister",
+            "signals": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "generation",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "batch",
+                            "type": "QList<DirectoryEntry>"
+                        }
+                    ],
+                    "index": 0,
+                    "lineNumber": 51,
+                    "name": "batchReady",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "generation",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "batch",
+                            "type": "QList<DirectoryEntry>"
+                        },
+                        {
+                            "name": "priority",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 1,
+                    "lineNumber": 52,
+                    "name": "statsReady",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "generation",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "ok",
+                            "type": "bool"
+                        },
+                        {
+                            "name": "error",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 2,
+                    "lineNumber": 54,
+                    "name": "finished",
+                    "returnType": "void"
+                }
+            ],
+            "slots": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "generation",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 3,
+                    "lineNumber": 46,
+                    "name": "requestList",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "generation",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "dirPath",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "names",
+                            "type": "QStringList"
+                        }
+                    ],
+                    "index": 4,
+                    "lineNumber": 47,
+                    "name": "requestStatNames",
+                    "returnType": "void"
+                }
+            ],
+            "superClasses": [
+                {
+                    "access": "public",
+                    "name": "QObject"
+                }
+            ]
+        }
+    ],
+    "inputFile": "DirectoryLister.h",
+    "outputRevision": 69
+}

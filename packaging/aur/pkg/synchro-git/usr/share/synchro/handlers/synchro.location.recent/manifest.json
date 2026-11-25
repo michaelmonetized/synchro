@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.location.recent",
+  "name": "Recents",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Core adapter for recent://. Enter activates; g reveals.",
+  "kinds": ["location"],
+  "entryPoints": {},
+  "location": { "runtime": "core", "adapter": "recent" }
+}

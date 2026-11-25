@@ -1,0 +1,440 @@
+{
+    "classes": [
+        {
+            "className": "SelectionModel",
+            "lineNumber": 15,
+            "methods": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "proxyRow",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 5,
+                    "lineNumber": 33,
+                    "name": "setCursor",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "delta",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 6,
+                    "lineNumber": 34,
+                    "name": "moveCursor",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 7,
+                    "lineNumber": 35,
+                    "name": "toggleCursor",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "proxyRow",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 8,
+                    "lineNumber": 36,
+                    "name": "toggleRow",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 9,
+                    "lineNumber": 37,
+                    "name": "selectAll",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "proxyRow",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 10,
+                    "lineNumber": 38,
+                    "name": "click",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "name",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "isDir",
+                            "type": "bool"
+                        },
+                        {
+                            "name": "size",
+                            "type": "qint64"
+                        }
+                    ],
+                    "index": 11,
+                    "lineNumber": 42,
+                    "name": "selectPath",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "name",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "isDir",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 12,
+                    "isCloned": true,
+                    "lineNumber": 42,
+                    "name": "selectPath",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "name",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 13,
+                    "isCloned": true,
+                    "lineNumber": 42,
+                    "name": "selectPath",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 14,
+                    "isCloned": true,
+                    "lineNumber": 42,
+                    "name": "selectPath",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "proxyRow",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 15,
+                    "lineNumber": 45,
+                    "name": "shiftClick",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "proxyRow",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 16,
+                    "lineNumber": 46,
+                    "name": "ctrlClick",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 17,
+                    "lineNumber": 47,
+                    "name": "enterVisual",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 18,
+                    "lineNumber": 48,
+                    "name": "exitVisual",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 19,
+                    "lineNumber": 49,
+                    "name": "collapseToCursor",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 20,
+                    "lineNumber": 50,
+                    "name": "activate",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "proxyRow",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 21,
+                    "isConst": true,
+                    "lineNumber": 51,
+                    "name": "isSelected",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 22,
+                    "isConst": true,
+                    "lineNumber": 52,
+                    "name": "selectedIndices",
+                    "returnType": "QVariantList"
+                },
+                {
+                    "access": "public",
+                    "index": 23,
+                    "isConst": true,
+                    "lineNumber": 53,
+                    "name": "selectedPaths",
+                    "returnType": "QStringList"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "itemLimit",
+                            "type": "int"
+                        },
+                        {
+                            "name": "aggregateLimit",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 24,
+                    "isConst": true,
+                    "lineNumber": 54,
+                    "name": "previewSummary",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "itemLimit",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 25,
+                    "isCloned": true,
+                    "isConst": true,
+                    "lineNumber": 54,
+                    "name": "previewSummary",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "index": 26,
+                    "isCloned": true,
+                    "isConst": true,
+                    "lineNumber": 54,
+                    "name": "previewSummary",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "index": 27,
+                    "isConst": true,
+                    "lineNumber": 56,
+                    "name": "cursorPath",
+                    "returnType": "QString"
+                },
+                {
+                    "access": "public",
+                    "index": 28,
+                    "isConst": true,
+                    "lineNumber": 57,
+                    "name": "cursorName",
+                    "returnType": "QString"
+                },
+                {
+                    "access": "public",
+                    "index": 29,
+                    "isConst": true,
+                    "lineNumber": 58,
+                    "name": "primaryItem",
+                    "returnType": "QVariantMap"
+                }
+            ],
+            "object": true,
+            "properties": [
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 0,
+                    "lineNumber": 17,
+                    "name": "cursor",
+                    "notify": "cursorChanged",
+                    "override": false,
+                    "read": "cursor",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setCursor"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 1,
+                    "lineNumber": 18,
+                    "name": "selectedCount",
+                    "notify": "selectionChanged",
+                    "override": false,
+                    "read": "selectedCount",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 2,
+                    "lineNumber": 19,
+                    "name": "epoch",
+                    "notify": "epochChanged",
+                    "override": false,
+                    "read": "epoch",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 3,
+                    "lineNumber": 20,
+                    "name": "visual",
+                    "notify": "visualChanged",
+                    "override": false,
+                    "read": "visual",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 4,
+                    "lineNumber": 21,
+                    "name": "statusText",
+                    "notify": "statusTextChanged",
+                    "override": false,
+                    "read": "statusText",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                }
+            ],
+            "qualifiedClassName": "SelectionModel",
+            "signals": [
+                {
+                    "access": "public",
+                    "index": 0,
+                    "lineNumber": 61,
+                    "name": "cursorChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 1,
+                    "lineNumber": 62,
+                    "name": "selectionChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 2,
+                    "lineNumber": 63,
+                    "name": "epochChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 3,
+                    "lineNumber": 64,
+                    "name": "visualChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 4,
+                    "lineNumber": 65,
+                    "name": "statusTextChanged",
+                    "returnType": "void"
+                }
+            ],
+            "superClasses": [
+                {
+                    "access": "public",
+                    "name": "QObject"
+                }
+            ]
+        }
+    ],
+    "inputFile": "SelectionModel.h",
+    "outputRevision": 69
+}

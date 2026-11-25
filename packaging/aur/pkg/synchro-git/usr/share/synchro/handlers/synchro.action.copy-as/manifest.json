@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.action.copy-as",
+  "name": "Copy path",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Copy the selection as an absolute path, file URI, or name. Mounted params pick the format.",
+  "kinds": ["action"],
+  "priority": 45,
+  "match": {
+    "minItems": 1,
+    "maxItems": 1000000,
+    "host": "posix-local"
+  },
+  "entryPoints": {
+    "action": "Params.qml"
+  },
+  "action": {
+    "runtime": "inprocess",
+    "title": "Copy path"
+  }
+}

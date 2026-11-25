@@ -1,0 +1,26 @@
+module Synchro
+typeinfo synchro.qmltypes
+prefer :/qt/qml/Synchro/
+Main 1.0 src/ui/qml/Main.qml
+FileList 1.0 src/ui/qml/FileList.qml
+FileGrid 1.0 src/ui/qml/FileGrid.qml
+FileFsn 1.0 src/ui/qml/FileFsn.qml
+FileGridCell 1.0 src/ui/qml/FileGridCell.qml
+FileDropSurface 1.0 src/ui/qml/FileDropSurface.qml
+FileDragGhost 1.0 src/ui/qml/FileDragGhost.qml
+PathBar 1.0 src/ui/qml/PathBar.qml
+CommandField 1.0 src/ui/qml/CommandField.qml
+PeekOverlay 1.0 src/ui/qml/PeekOverlay.qml
+DoOverlay 1.0 src/ui/qml/DoOverlay.qml
+DoMetadata 1.0 src/ui/qml/DoMetadata.qml
+DoFolderGrid 1.0 src/ui/qml/DoFolderGrid.qml
+PanelLook 1.0 src/ui/qml/PanelLook.qml
+FolderLens 1.0 src/ui/qml/FolderLens.qml
+QueryBusy 1.0 src/ui/qml/QueryBusy.qml
+AgentSearchOverlay 1.0 src/ui/qml/AgentSearchOverlay.qml
+StatusLine 1.0 src/ui/qml/StatusLine.qml
+Confirm 1.0 src/ui/qml/Confirm.qml
+ChooserWindow 1.0 src/ui/qml/ChooserWindow.qml
+ScrollChrome 1.0 src/ui/qml/ScrollChrome.qml
+depends QtQuick
+

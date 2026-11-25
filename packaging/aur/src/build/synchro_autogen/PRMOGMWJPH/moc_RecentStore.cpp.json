@@ -1,0 +1,27 @@
+{
+    "classes": [
+        {
+            "className": "RecentStore",
+            "lineNumber": 9,
+            "object": true,
+            "qualifiedClassName": "RecentStore",
+            "signals": [
+                {
+                    "access": "public",
+                    "index": 0,
+                    "lineNumber": 32,
+                    "name": "entriesChanged",
+                    "returnType": "void"
+                }
+            ],
+            "superClasses": [
+                {
+                    "access": "public",
+                    "name": "QObject"
+                }
+            ]
+        }
+    ],
+    "inputFile": "RecentStore.h",
+    "outputRevision": 69
+}

@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/michael/Projects/synchro/packaging/aur/src/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

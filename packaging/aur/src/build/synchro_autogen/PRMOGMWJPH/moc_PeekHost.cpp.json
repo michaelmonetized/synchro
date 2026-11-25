@@ -1,0 +1,41 @@
+{
+    "classes": [
+        {
+            "className": "PeekHost",
+            "lineNumber": 6,
+            "object": true,
+            "qualifiedClassName": "PeekHost",
+            "signals": [
+                {
+                    "access": "public",
+                    "index": 0,
+                    "lineNumber": 44,
+                    "name": "openChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 1,
+                    "lineNumber": 45,
+                    "name": "actionOpenChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 2,
+                    "lineNumber": 46,
+                    "name": "peekFocusChanged",
+                    "returnType": "void"
+                }
+            ],
+            "superClasses": [
+                {
+                    "access": "public",
+                    "name": "QObject"
+                }
+            ]
+        }
+    ],
+    "inputFile": "PeekHost.h",
+    "outputRevision": 69
+}

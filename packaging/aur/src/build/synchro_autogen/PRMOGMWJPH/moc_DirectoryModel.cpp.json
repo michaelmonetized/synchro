@@ -1,0 +1,1157 @@
+{
+    "classes": [
+        {
+            "className": "DirectoryModel",
+            "enums": [
+                {
+                    "isClass": false,
+                    "isFlag": false,
+                    "lineNumber": 55,
+                    "name": "Role",
+                    "values": [
+                        "NameRole",
+                        "PathRole",
+                        "UriRole",
+                        "IsDirRole",
+                        "SizeRole",
+                        "MtimeRole",
+                        "MimeRole",
+                        "IconNameRole",
+                        "ThumbnailRole",
+                        "IsHiddenRole",
+                        "IsSymlinkRole",
+                        "DirKindRole",
+                        "OrigPathRole",
+                        "PermRole",
+                        "DetailRole",
+                        "UsedRole",
+                        "TotalRole",
+                        "PercentRole",
+                        "ParentPathRole",
+                        "ParentLabelRole",
+                        "TypeLabelRole",
+                        "ThumbnailPendingRole"
+                    ]
+                }
+            ],
+            "lineNumber": 25,
+            "methods": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "row",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 30,
+                    "isConst": true,
+                    "lineNumber": 113,
+                    "name": "rowMap",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "selectName",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "force",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 31,
+                    "lineNumber": 125,
+                    "name": "setPath",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "selectName",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 32,
+                    "isCloned": true,
+                    "lineNumber": 125,
+                    "name": "setPath",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 33,
+                    "isCloned": true,
+                    "lineNumber": 125,
+                    "name": "setPath",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "show",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 34,
+                    "lineNumber": 130,
+                    "name": "setShowHidden",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "index",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 35,
+                    "lineNumber": 131,
+                    "name": "setCurrentIndex",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "delta",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 36,
+                    "lineNumber": 132,
+                    "name": "moveCursor",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "index",
+                            "type": "int"
+                        },
+                        {
+                            "name": "dx",
+                            "type": "int"
+                        },
+                        {
+                            "name": "dy",
+                            "type": "int"
+                        },
+                        {
+                            "name": "columns",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 37,
+                    "isConst": true,
+                    "lineNumber": 133,
+                    "name": "stepSearchGrid",
+                    "returnType": "int"
+                },
+                {
+                    "access": "public",
+                    "index": 38,
+                    "lineNumber": 134,
+                    "name": "activateCurrent",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 39,
+                    "isConst": true,
+                    "lineNumber": 137,
+                    "name": "currentName",
+                    "returnType": "QString"
+                },
+                {
+                    "access": "public",
+                    "index": 40,
+                    "isConst": true,
+                    "lineNumber": 138,
+                    "name": "currentIsDir",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 41,
+                    "isConst": true,
+                    "lineNumber": 139,
+                    "name": "currentOrigPath",
+                    "returnType": "QString"
+                },
+                {
+                    "access": "public",
+                    "index": 42,
+                    "lineNumber": 140,
+                    "name": "restoreCurrent",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 43,
+                    "lineNumber": 141,
+                    "name": "emptyTrash",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "view",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 44,
+                    "lineNumber": 142,
+                    "name": "refreshFsn",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 45,
+                    "isCloned": true,
+                    "lineNumber": 142,
+                    "name": "refreshFsn",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "view",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "expandedPaths",
+                            "type": "QStringList"
+                        }
+                    ],
+                    "index": 46,
+                    "lineNumber": 143,
+                    "name": "refreshFsnExpanded",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "first",
+                            "type": "int"
+                        },
+                        {
+                            "name": "last",
+                            "type": "int"
+                        },
+                        {
+                            "name": "sizePx",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 47,
+                    "lineNumber": 147,
+                    "name": "requestVisibleThumbs",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 48,
+                    "lineNumber": 148,
+                    "name": "requestImageFacts",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 49,
+                    "lineNumber": 149,
+                    "name": "refreshThemedThumbnails",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "paths",
+                            "type": "QStringList"
+                        }
+                    ],
+                    "index": 50,
+                    "lineNumber": 150,
+                    "name": "refreshThumbs",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "result",
+                            "type": "QVariantMap"
+                        },
+                        {
+                            "name": "label",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 51,
+                    "lineNumber": 151,
+                    "name": "showSqlResult",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "result",
+                            "type": "QVariantMap"
+                        }
+                    ],
+                    "index": 52,
+                    "isCloned": true,
+                    "lineNumber": 151,
+                    "name": "showSqlResult",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 53,
+                    "lineNumber": 153,
+                    "name": "selectPath",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "queryRow",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 54,
+                    "lineNumber": 154,
+                    "name": "selectSqlRow",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "available",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 55,
+                    "lineNumber": 156,
+                    "name": "setSqlBackAvailable",
+                    "returnType": "void"
+                }
+            ],
+            "object": true,
+            "properties": [
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 0,
+                    "lineNumber": 27,
+                    "name": "path",
+                    "notify": "pathChanged",
+                    "override": false,
+                    "read": "path",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setPath"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 1,
+                    "lineNumber": 28,
+                    "name": "showHidden",
+                    "notify": "showHiddenChanged",
+                    "override": false,
+                    "read": "showHidden",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setShowHidden"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 2,
+                    "lineNumber": 30,
+                    "name": "currentIndex",
+                    "notify": "currentIndexChanged",
+                    "override": false,
+                    "read": "currentIndex",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setCurrentIndex"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 3,
+                    "lineNumber": 32,
+                    "name": "count",
+                    "notify": "countChanged",
+                    "override": false,
+                    "read": "count",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 4,
+                    "lineNumber": 33,
+                    "name": "listing",
+                    "notify": "listingChanged",
+                    "override": false,
+                    "read": "listing",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 5,
+                    "lineNumber": 34,
+                    "name": "errorString",
+                    "notify": "errorStringChanged",
+                    "override": false,
+                    "read": "errorString",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 6,
+                    "lineNumber": 35,
+                    "name": "isTrash",
+                    "notify": "pathChanged",
+                    "override": false,
+                    "read": "isTrash",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 7,
+                    "lineNumber": 36,
+                    "name": "isRecent",
+                    "notify": "pathChanged",
+                    "override": false,
+                    "read": "isRecent",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 8,
+                    "lineNumber": 37,
+                    "name": "isSearch",
+                    "notify": "pathChanged",
+                    "override": false,
+                    "read": "isSearch",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 9,
+                    "lineNumber": 38,
+                    "name": "isSql",
+                    "notify": "pathChanged",
+                    "override": false,
+                    "read": "isSql",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 10,
+                    "lineNumber": 39,
+                    "name": "sqlContext",
+                    "notify": "pathChanged",
+                    "override": false,
+                    "read": "sqlContext",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 11,
+                    "lineNumber": 40,
+                    "name": "sqlLabel",
+                    "notify": "pathChanged",
+                    "override": false,
+                    "read": "sqlLabel",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 12,
+                    "lineNumber": 41,
+                    "name": "currentSqlRow",
+                    "notify": "currentIndexChanged",
+                    "override": false,
+                    "read": "currentSqlRow",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 13,
+                    "lineNumber": 42,
+                    "name": "searchQuery",
+                    "notify": "searchQueryChanged",
+                    "override": false,
+                    "read": "searchQuery",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 14,
+                    "lineNumber": 43,
+                    "name": "isContentSearch",
+                    "notify": "searchQueryChanged",
+                    "override": false,
+                    "read": "isContentSearch",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 15,
+                    "lineNumber": 44,
+                    "name": "searchRoot",
+                    "notify": "searchQueryChanged",
+                    "override": false,
+                    "read": "searchRoot",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 16,
+                    "lineNumber": 45,
+                    "name": "folderGroups",
+                    "notify": "folderGroupsChanged",
+                    "override": false,
+                    "read": "folderGroups",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QVariantList",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 17,
+                    "lineNumber": 46,
+                    "name": "folderGroupModel",
+                    "notify": "pathChanged",
+                    "override": false,
+                    "read": "folderGroupModel",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QAbstractItemModel*",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 18,
+                    "lineNumber": 48,
+                    "name": "currentStat",
+                    "notify": "currentStatChanged",
+                    "override": false,
+                    "read": "currentStat",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QVariantMap",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 19,
+                    "lineNumber": 49,
+                    "name": "volumeHint",
+                    "notify": "volumeHintChanged",
+                    "override": false,
+                    "read": "volumeHint",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 20,
+                    "lineNumber": 50,
+                    "name": "isVolumes",
+                    "notify": "pathChanged",
+                    "override": false,
+                    "read": "isVolumes",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 21,
+                    "lineNumber": 51,
+                    "name": "fsnBoxes",
+                    "notify": "fsnBoxesChanged",
+                    "override": false,
+                    "read": "fsnBoxes",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QVariantList",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 22,
+                    "lineNumber": 52,
+                    "name": "fsnListing",
+                    "notify": "fsnListingChanged",
+                    "override": false,
+                    "read": "fsnListing",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                }
+            ],
+            "qualifiedClassName": "DirectoryModel",
+            "signals": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "mime",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 0,
+                    "lineNumber": 168,
+                    "name": "fileActivated",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "files",
+                            "type": "QStringList"
+                        }
+                    ],
+                    "index": 1,
+                    "lineNumber": 169,
+                    "name": "restoreRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 2,
+                    "lineNumber": 170,
+                    "name": "pathChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 3,
+                    "lineNumber": 171,
+                    "name": "showHiddenChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 4,
+                    "lineNumber": 172,
+                    "name": "currentIndexChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 5,
+                    "lineNumber": 173,
+                    "name": "countChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 6,
+                    "lineNumber": 174,
+                    "name": "listingChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 7,
+                    "lineNumber": 175,
+                    "name": "errorStringChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 8,
+                    "lineNumber": 176,
+                    "name": "aboutToNavigate",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "generation",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 9,
+                    "lineNumber": 177,
+                    "name": "listRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "generation",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "names",
+                            "type": "QStringList"
+                        }
+                    ],
+                    "index": 10,
+                    "lineNumber": 178,
+                    "name": "statRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "elapsedMs",
+                            "type": "qint64"
+                        },
+                        {
+                            "name": "rows",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 11,
+                    "lineNumber": 180,
+                    "name": "firstRowsInserted",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 12,
+                    "lineNumber": 181,
+                    "name": "currentStatChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 13,
+                    "lineNumber": 182,
+                    "name": "searchQueryChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 14,
+                    "lineNumber": 183,
+                    "name": "folderGroupsChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 15,
+                    "lineNumber": 184,
+                    "name": "volumeHintChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "paths",
+                            "type": "QStringList"
+                        }
+                    ],
+                    "index": 16,
+                    "lineNumber": 186,
+                    "name": "statsApplied",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "paths",
+                            "type": "QStringList"
+                        }
+                    ],
+                    "index": 17,
+                    "lineNumber": 188,
+                    "name": "catalogPathsRemoved",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "mtime",
+                            "type": "qint64"
+                        },
+                        {
+                            "name": "facts",
+                            "type": "QVariantMap"
+                        }
+                    ],
+                    "index": 18,
+                    "lineNumber": 191,
+                    "name": "imageFactsReady",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "sql",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "label",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 19,
+                    "lineNumber": 193,
+                    "name": "sqlDrillRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 20,
+                    "lineNumber": 194,
+                    "name": "sqlBackRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 21,
+                    "lineNumber": 195,
+                    "name": "fsnBoxesChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 22,
+                    "lineNumber": 196,
+                    "name": "fsnListingChanged",
+                    "returnType": "void"
+                }
+            ],
+            "slots": [
+                {
+                    "access": "private",
+                    "arguments": [
+                        {
+                            "name": "generation",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "batch",
+                            "type": "QList<DirectoryEntry>"
+                        }
+                    ],
+                    "index": 23,
+                    "lineNumber": 199,
+                    "name": "onBatchReady",
+                    "returnType": "void"
+                },
+                {
+                    "access": "private",
+                    "arguments": [
+                        {
+                            "name": "generation",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "batch",
+                            "type": "QList<DirectoryEntry>"
+                        },
+                        {
+                            "name": "priority",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 24,
+                    "lineNumber": 200,
+                    "name": "onStatsReady",
+                    "returnType": "void"
+                },
+                {
+                    "access": "private",
+                    "arguments": [
+                        {
+                            "name": "generation",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "ok",
+                            "type": "bool"
+                        },
+                        {
+                            "name": "error",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 25,
+                    "lineNumber": 202,
+                    "name": "onFinished",
+                    "returnType": "void"
+                },
+                {
+                    "access": "private",
+                    "arguments": [
+                        {
+                            "name": "events",
+                            "type": "QList<DirectoryWatchEvent>"
+                        }
+                    ],
+                    "index": 26,
+                    "lineNumber": 203,
+                    "name": "onWatchEvents",
+                    "returnType": "void"
+                },
+                {
+                    "access": "private",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "url",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 27,
+                    "lineNumber": 204,
+                    "name": "onThumbnailReady",
+                    "returnType": "void"
+                },
+                {
+                    "access": "private",
+                    "arguments": [
+                        {
+                            "name": "results",
+                            "type": "QList<ThumbnailResult>"
+                        }
+                    ],
+                    "index": 28,
+                    "lineNumber": 205,
+                    "name": "onThumbnailsReady",
+                    "returnType": "void"
+                },
+                {
+                    "access": "private",
+                    "arguments": [
+                        {
+                            "name": "gen",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "boxes",
+                            "type": "QVariantList"
+                        }
+                    ],
+                    "index": 29,
+                    "lineNumber": 206,
+                    "name": "applyFsnBoxes",
+                    "returnType": "void"
+                }
+            ],
+            "superClasses": [
+                {
+                    "access": "public",
+                    "name": "QAbstractListModel"
+                }
+            ]
+        }
+    ],
+    "inputFile": "DirectoryModel.h",
+    "outputRevision": 69
+}

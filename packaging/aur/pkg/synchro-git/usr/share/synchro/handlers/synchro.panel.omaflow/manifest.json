@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.panel.omaflow",
+  "name": "Flows",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Inspect Omaflow rules as adaptive execution graphs, dry-run them, and review recent activity. Open with :flow.",
+  "kinds": [
+    "panel"
+  ],
+  "priority": 57,
+  "entryPoints": {
+    "panel": "Panel.qml"
+  },
+  "panel": {
+    "relevance": "manual",
+    "glyph": "↯",
+    "group": "workspace",
+    "order": 30
+  },
+  "permissions": [
+    "fs-read",
+    "exec"
+  ]
+}

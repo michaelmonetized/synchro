@@ -1,0 +1,7 @@
+<RCC>
+  <qresource prefix="/shaders">
+    <file alias="fsn.vert.qsb">/home/michael/Projects/synchro/packaging/aur/src/build/.qsb/fsn.vert.qsb</file>
+    <file alias="fsn.frag.qsb">/home/michael/Projects/synchro/packaging/aur/src/build/.qsb/fsn.frag.qsb</file>
+  </qresource>
+</RCC>
+

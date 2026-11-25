@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.action.agent",
+  "name": "Agent",
+  "version": "1.1.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Ask Omarchy's default agent to work with this folder or selection, with Synchro catalog access.",
+  "kinds": ["action"],
+  "priority": 50,
+  "match": {
+    "minItems": 0,
+    "maxItems": 1000000,
+    "host": "posix-local"
+  },
+  "entryPoints": {},
+  "action": {
+    "runtime": "exec",
+    "exec": "omarchy agent prompt \"Work with the current Synchro file-browser context. Run the executable named by SYNCHRO_BIN with arguments 'agent context --compact' first; it reads the complete selection and working folder from the inherited environment and documents the read-only catalog and result-navigation commands. Use that CLI contract for indexed discovery and deterministic metadata. Synchro MCP is optional and is never required for this task.\"",
+    "tryExec": "omarchy"
+  },
+  "permissions": ["exec"]
+}

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.open.omawrite",
+  "name": "Omawrite",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Open Markdown in Omawrite, the Qt Quick writing app shipped with Omarchy Quattro.",
+  "kinds": ["open"],
+  "priority": 80,
+  "match": {
+    "mime": ["text/markdown", "text/x-markdown"],
+    "suffix": [".md", ".markdown"],
+    "minItems": 1,
+    "maxItems": 1
+  },
+  "entryPoints": {},
+  "open": {
+    "runtime": "exec",
+    "exec": "omawrite %f",
+    "tryExec": "omawrite"
+  }
+}

@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/">
+    <file alias="/qt/qml/Synchro/Theme">/home/michael/Projects/synchro/packaging/aur/src/build/qml/Synchro/Theme</file>
+
+  </qresource>
+</RCC>

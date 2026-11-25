@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.location.trash",
+  "name": "Trash",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Core adapter for trash://. Enter restores and reveals.",
+  "kinds": ["location"],
+  "entryPoints": {},
+  "location": { "runtime": "core", "adapter": "trash" }
+}

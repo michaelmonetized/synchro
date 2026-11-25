@@ -1,0 +1,75 @@
+{
+    "classes": [
+        {
+            "className": "SearchService",
+            "enums": [
+                {
+                    "isClass": true,
+                    "isFlag": false,
+                    "lineNumber": 19,
+                    "name": "Kind",
+                    "values": [
+                        "Name",
+                        "Content"
+                    ]
+                }
+            ],
+            "lineNumber": 15,
+            "object": true,
+            "qualifiedClassName": "SearchService",
+            "signals": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 0,
+                    "lineNumber": 46,
+                    "name": "hit",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "elapsedMs",
+                            "type": "qint64"
+                        }
+                    ],
+                    "index": 1,
+                    "lineNumber": 47,
+                    "name": "firstHit",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "ok",
+                            "type": "bool"
+                        },
+                        {
+                            "name": "error",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 2,
+                    "lineNumber": 48,
+                    "name": "finished",
+                    "returnType": "void"
+                }
+            ],
+            "superClasses": [
+                {
+                    "access": "public",
+                    "name": "QObject"
+                }
+            ]
+        }
+    ],
+    "inputFile": "SearchService.h",
+    "outputRevision": 69
+}

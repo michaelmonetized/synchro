@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.location.home",
+  "name": "Home",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Path location: jump to $HOME. No QML.",
+  "kinds": ["location"],
+  "entryPoints": {},
+  "location": { "runtime": "path", "path": "$HOME" }
+}

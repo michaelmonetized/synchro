@@ -1,0 +1,1 @@
+/home/michael/Projects/synchro/packaging/aur/src/build/synchro_theme_autogen/include/../YLADOPUWMF/moc_ThemeBridge.cpp.json

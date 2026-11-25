@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/qt/qml/Synchro/Handler">
+    <file alias="qmldir">/home/michael/Projects/synchro/packaging/aur/src/build/qml/Synchro/Handler/qmldir</file>
+  </qresource>
+</RCC>
+

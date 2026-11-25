@@ -1,0 +1,2526 @@
+{
+    "classes": [
+        {
+            "className": "HostApi",
+            "lineNumber": 32,
+            "methods": [
+                {
+                    "access": "public",
+                    "index": 30,
+                    "lineNumber": 180,
+                    "name": "toggle",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 31,
+                    "lineNumber": 181,
+                    "name": "openCurrent",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "delta",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 32,
+                    "lineNumber": 182,
+                    "name": "step",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        }
+                    ],
+                    "index": 33,
+                    "lineNumber": 183,
+                    "name": "openExternal",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        }
+                    ],
+                    "index": 34,
+                    "lineNumber": 184,
+                    "name": "reveal",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        }
+                    ],
+                    "index": 35,
+                    "lineNumber": 185,
+                    "name": "navigate",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "title",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 36,
+                    "lineNumber": 186,
+                    "name": "setTitle",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        }
+                    ],
+                    "index": 37,
+                    "isConst": true,
+                    "lineNumber": 187,
+                    "name": "stat",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "id",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 38,
+                    "isConst": true,
+                    "lineNumber": 189,
+                    "name": "panelSource",
+                    "returnType": "QUrl"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "id",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 39,
+                    "isConst": true,
+                    "lineNumber": 190,
+                    "name": "panelRelevance",
+                    "returnType": "QString"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "id",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 40,
+                    "isConst": true,
+                    "lineNumber": 191,
+                    "name": "panelInfo",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "id",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 41,
+                    "isConst": true,
+                    "lineNumber": 192,
+                    "name": "panelPeers",
+                    "returnType": "QVariantList"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "id",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "companion",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 42,
+                    "isConst": true,
+                    "lineNumber": 193,
+                    "name": "panelSupportsCompanion",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 43,
+                    "isConst": true,
+                    "lineNumber": 195,
+                    "name": "relevantPanels",
+                    "returnType": "QVariantList"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "quickDocument",
+                            "type": "QObject*"
+                        },
+                        {
+                            "name": "keyword",
+                            "type": "QColor"
+                        },
+                        {
+                            "name": "stringColor",
+                            "type": "QColor"
+                        },
+                        {
+                            "name": "number",
+                            "type": "QColor"
+                        },
+                        {
+                            "name": "comment",
+                            "type": "QColor"
+                        },
+                        {
+                            "name": "normal",
+                            "type": "QColor"
+                        }
+                    ],
+                    "index": 44,
+                    "isConst": true,
+                    "lineNumber": 197,
+                    "name": "attachSqlHighlighter",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "pid",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 45,
+                    "isConst": true,
+                    "lineNumber": 200,
+                    "name": "processCwd",
+                    "returnType": "QString"
+                },
+                {
+                    "access": "public",
+                    "index": 46,
+                    "isConst": true,
+                    "lineNumber": 201,
+                    "name": "defaultShell",
+                    "returnType": "QString"
+                },
+                {
+                    "access": "public",
+                    "index": 47,
+                    "isConst": true,
+                    "lineNumber": 202,
+                    "name": "terminalColorScheme",
+                    "returnType": "QString"
+                },
+                {
+                    "access": "public",
+                    "index": 48,
+                    "isConst": true,
+                    "lineNumber": 203,
+                    "name": "terminalBackground",
+                    "returnType": "QString"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "terminal",
+                            "type": "QObject*"
+                        },
+                        {
+                            "name": "opacity",
+                            "type": "double"
+                        }
+                    ],
+                    "index": 49,
+                    "isConst": true,
+                    "lineNumber": 204,
+                    "name": "setTerminalBackgroundOpacity",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "surface",
+                            "type": "QObject*"
+                        }
+                    ],
+                    "index": 50,
+                    "lineNumber": 206,
+                    "name": "registerSurface",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "active",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 51,
+                    "lineNumber": 207,
+                    "name": "setInlinePreviewActive",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 52,
+                    "lineNumber": 208,
+                    "name": "refreshInlinePreview",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 53,
+                    "lineNumber": 209,
+                    "name": "refreshThemedPreviews",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 54,
+                    "lineNumber": 210,
+                    "name": "clearInlinePreview",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 55,
+                    "lineNumber": 211,
+                    "name": "promoteInlinePreview",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "row",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 56,
+                    "lineNumber": 212,
+                    "name": "promoteInlineFolderRow",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "row",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 57,
+                    "lineNumber": 213,
+                    "name": "commitInlineFolderRow",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "maxBytes",
+                            "type": "int"
+                        },
+                        {
+                            "name": "startByte",
+                            "type": "qint64"
+                        },
+                        {
+                            "name": "presentation",
+                            "type": "QVariantMap"
+                        }
+                    ],
+                    "index": 58,
+                    "lineNumber": 215,
+                    "name": "requestPreview",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "maxBytes",
+                            "type": "int"
+                        },
+                        {
+                            "name": "startByte",
+                            "type": "qint64"
+                        }
+                    ],
+                    "index": 59,
+                    "isCloned": true,
+                    "lineNumber": 215,
+                    "name": "requestPreview",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "maxBytes",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 60,
+                    "isCloned": true,
+                    "lineNumber": 215,
+                    "name": "requestPreview",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        }
+                    ],
+                    "index": 61,
+                    "isCloned": true,
+                    "lineNumber": 215,
+                    "name": "requestPreview",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "maxRows",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 62,
+                    "lineNumber": 220,
+                    "name": "requestParquet",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        }
+                    ],
+                    "index": 63,
+                    "isCloned": true,
+                    "lineNumber": 220,
+                    "name": "requestParquet",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "engine",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "table",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "offset",
+                            "type": "int"
+                        },
+                        {
+                            "name": "limit",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 64,
+                    "lineNumber": 221,
+                    "name": "requestDatabase",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "engine",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "table",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "offset",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 65,
+                    "isCloned": true,
+                    "lineNumber": 221,
+                    "name": "requestDatabase",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "engine",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "table",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 66,
+                    "isCloned": true,
+                    "lineNumber": 221,
+                    "name": "requestDatabase",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "engine",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 67,
+                    "isCloned": true,
+                    "lineNumber": 221,
+                    "name": "requestDatabase",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "mime",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 68,
+                    "lineNumber": 224,
+                    "name": "openFile",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "handlerId",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 69,
+                    "lineNumber": 225,
+                    "name": "runOpen",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 70,
+                    "lineNumber": 226,
+                    "name": "runTerminal",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 71,
+                    "lineNumber": 227,
+                    "name": "runTrash",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 72,
+                    "lineNumber": 228,
+                    "name": "restoreTrash",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 73,
+                    "lineNumber": 229,
+                    "name": "emptyTrash",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "handlerId",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 74,
+                    "lineNumber": 230,
+                    "name": "runAction",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 75,
+                    "isConst": true,
+                    "lineNumber": 231,
+                    "name": "omaflowMatches",
+                    "returnType": "QVariantList"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "ruleId",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "dryRun",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 76,
+                    "lineNumber": 232,
+                    "name": "runOmaflow",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "ruleId",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 77,
+                    "isCloned": true,
+                    "lineNumber": 232,
+                    "name": "runOmaflow",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 78,
+                    "lineNumber": 233,
+                    "name": "openWithPalette",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "focusId",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 79,
+                    "lineNumber": 234,
+                    "name": "openDoLayer",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 80,
+                    "isCloned": true,
+                    "lineNumber": 234,
+                    "name": "openDoLayer",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "sceneX",
+                            "type": "qreal"
+                        },
+                        {
+                            "name": "sceneY",
+                            "type": "qreal"
+                        }
+                    ],
+                    "index": 81,
+                    "lineNumber": 235,
+                    "name": "openDoContext",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 82,
+                    "lineNumber": 236,
+                    "name": "closeAction",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "index",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 83,
+                    "lineNumber": 237,
+                    "name": "setDoIndex",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "delta",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 84,
+                    "lineNumber": 238,
+                    "name": "doMove",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 85,
+                    "lineNumber": 239,
+                    "name": "runDoVerb",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 86,
+                    "lineNumber": 240,
+                    "name": "inspectDoVerb",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "index": 87,
+                    "lineNumber": 241,
+                    "name": "cancelDoOperation",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 88,
+                    "lineNumber": 242,
+                    "name": "clearDoOperation",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "index",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 89,
+                    "lineNumber": 243,
+                    "name": "revealDoArtifact",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "on",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 90,
+                    "lineNumber": 244,
+                    "name": "setDoParamsFocused",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "text",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 91,
+                    "lineNumber": 245,
+                    "name": "copyText",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "surface",
+                            "type": "QObject*"
+                        }
+                    ],
+                    "index": 92,
+                    "lineNumber": 246,
+                    "name": "registerDoSurface",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "surface",
+                            "type": "QObject*"
+                        }
+                    ],
+                    "index": 93,
+                    "lineNumber": 247,
+                    "name": "registerDoContentSurface",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "maxBytes",
+                            "type": "int"
+                        },
+                        {
+                            "name": "startByte",
+                            "type": "qint64"
+                        }
+                    ],
+                    "index": 94,
+                    "isConst": true,
+                    "lineNumber": 251,
+                    "name": "readPreview",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "maxBytes",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 95,
+                    "isCloned": true,
+                    "isConst": true,
+                    "lineNumber": 251,
+                    "name": "readPreview",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        }
+                    ],
+                    "index": 96,
+                    "isCloned": true,
+                    "isConst": true,
+                    "lineNumber": 251,
+                    "name": "readPreview",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "needle",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "maxHits",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 97,
+                    "isConst": true,
+                    "lineNumber": 255,
+                    "name": "findInFile",
+                    "returnType": "QVariantList"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "needle",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 98,
+                    "isCloned": true,
+                    "isConst": true,
+                    "lineNumber": 255,
+                    "name": "findInFile",
+                    "returnType": "QVariantList"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "html",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "plain",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "needle",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "currentLocal",
+                            "type": "int"
+                        },
+                        {
+                            "name": "matchFill",
+                            "type": "QColor"
+                        },
+                        {
+                            "name": "currentFill",
+                            "type": "QColor"
+                        }
+                    ],
+                    "index": 99,
+                    "isConst": true,
+                    "lineNumber": 258,
+                    "name": "markFindHits",
+                    "returnType": "QString"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "maxRows",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 100,
+                    "isConst": true,
+                    "lineNumber": 264,
+                    "name": "readParquet",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        }
+                    ],
+                    "index": 101,
+                    "isCloned": true,
+                    "isConst": true,
+                    "lineNumber": 264,
+                    "name": "readParquet",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "engine",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "table",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "offset",
+                            "type": "int"
+                        },
+                        {
+                            "name": "limit",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 102,
+                    "isConst": true,
+                    "lineNumber": 267,
+                    "name": "readDatabase",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "engine",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "table",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "offset",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 103,
+                    "isCloned": true,
+                    "isConst": true,
+                    "lineNumber": 267,
+                    "name": "readDatabase",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "engine",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "table",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 104,
+                    "isCloned": true,
+                    "isConst": true,
+                    "lineNumber": 267,
+                    "name": "readDatabase",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "engine",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 105,
+                    "isCloned": true,
+                    "isConst": true,
+                    "lineNumber": 267,
+                    "name": "readDatabase",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "maxEntries",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 106,
+                    "isConst": true,
+                    "lineNumber": 271,
+                    "name": "readArchive",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        }
+                    ],
+                    "index": 107,
+                    "isCloned": true,
+                    "isConst": true,
+                    "lineNumber": 271,
+                    "name": "readArchive",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        }
+                    ],
+                    "index": 108,
+                    "isConst": true,
+                    "lineNumber": 274,
+                    "name": "rasterUrl",
+                    "returnType": "QUrl"
+                },
+                {
+                    "access": "public",
+                    "index": 109,
+                    "lineNumber": 285,
+                    "name": "peekActivate",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 110,
+                    "lineNumber": 286,
+                    "name": "commitPeek",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 111,
+                    "lineNumber": 287,
+                    "name": "peekBack",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "on",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 112,
+                    "lineNumber": 288,
+                    "name": "setChooserMode",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "columns",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 113,
+                    "lineNumber": 291,
+                    "name": "setPeekGridStride",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 114,
+                    "isConst": true,
+                    "lineNumber": 292,
+                    "name": "peekCursorPath",
+                    "returnType": "QString"
+                },
+                {
+                    "access": "public",
+                    "index": 115,
+                    "isConst": true,
+                    "lineNumber": 293,
+                    "name": "peekFileName",
+                    "returnType": "QString"
+                },
+                {
+                    "access": "public",
+                    "index": 116,
+                    "isConst": true,
+                    "lineNumber": 294,
+                    "name": "peekCursorIsDir",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "on",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 117,
+                    "lineNumber": 296,
+                    "name": "setGridMode",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "on",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 118,
+                    "lineNumber": 298,
+                    "name": "setPeekPreviewFocused",
+                    "returnType": "void"
+                }
+            ],
+            "object": true,
+            "properties": [
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 0,
+                    "lineNumber": 34,
+                    "name": "file",
+                    "notify": "fileChanged",
+                    "override": false,
+                    "read": "file",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QUrl",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 1,
+                    "lineNumber": 35,
+                    "name": "selection",
+                    "notify": "selectionChanged",
+                    "override": false,
+                    "read": "selection",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QVariantList",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 2,
+                    "lineNumber": 36,
+                    "name": "open",
+                    "notify": "openChanged",
+                    "override": false,
+                    "read": "isOpen",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 3,
+                    "lineNumber": 37,
+                    "name": "previewItem",
+                    "notify": "previewItemChanged",
+                    "override": false,
+                    "read": "previewItem",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QObject*",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 4,
+                    "lineNumber": 38,
+                    "name": "folderListingItem",
+                    "notify": "folderListingItemChanged",
+                    "override": false,
+                    "read": "folderListingItem",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QObject*",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 5,
+                    "lineNumber": 40,
+                    "name": "peekGridStride",
+                    "notify": "peekGridStrideChanged",
+                    "override": false,
+                    "read": "peekGridStride",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setPeekGridStride"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 6,
+                    "lineNumber": 42,
+                    "name": "title",
+                    "notify": "titleChanged",
+                    "override": false,
+                    "read": "title",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 7,
+                    "lineNumber": 43,
+                    "name": "actionOpen",
+                    "notify": "actionOpenChanged",
+                    "override": false,
+                    "read": "actionOpen",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 8,
+                    "lineNumber": 44,
+                    "name": "actionItem",
+                    "notify": "actionItemChanged",
+                    "override": false,
+                    "read": "actionItem",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QQuickItem*",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 9,
+                    "lineNumber": 45,
+                    "name": "doVerbs",
+                    "notify": "doVerbsChanged",
+                    "override": false,
+                    "read": "doVerbs",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QVariantList",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 10,
+                    "lineNumber": 46,
+                    "name": "doIndex",
+                    "notify": "doIndexChanged",
+                    "override": false,
+                    "read": "doIndex",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setDoIndex"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 11,
+                    "lineNumber": 47,
+                    "name": "doCaption",
+                    "notify": "doVerbsChanged",
+                    "override": false,
+                    "read": "doCaption",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 12,
+                    "lineNumber": 48,
+                    "name": "doBriefTitle",
+                    "notify": "doIndexChanged",
+                    "override": false,
+                    "read": "doBriefTitle",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 13,
+                    "lineNumber": 49,
+                    "name": "doBriefBody",
+                    "notify": "doIndexChanged",
+                    "override": false,
+                    "read": "doBriefBody",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 14,
+                    "lineNumber": 50,
+                    "name": "doHasParams",
+                    "notify": "doIndexChanged",
+                    "override": false,
+                    "read": "doHasParams",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 15,
+                    "lineNumber": 51,
+                    "name": "doParamsFocused",
+                    "notify": "doFocusChanged",
+                    "override": false,
+                    "read": "doParamsFocused",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setDoParamsFocused"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 16,
+                    "lineNumber": 53,
+                    "name": "doHint",
+                    "notify": "doHintChanged",
+                    "override": false,
+                    "read": "doHint",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 17,
+                    "lineNumber": 54,
+                    "name": "doContextual",
+                    "notify": "doPresentationChanged",
+                    "override": false,
+                    "read": "doContextual",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 18,
+                    "lineNumber": 55,
+                    "name": "doAnchorX",
+                    "notify": "doPresentationChanged",
+                    "override": false,
+                    "read": "doAnchorX",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "qreal",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 19,
+                    "lineNumber": 56,
+                    "name": "doAnchorY",
+                    "notify": "doPresentationChanged",
+                    "override": false,
+                    "read": "doAnchorY",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "qreal",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 20,
+                    "lineNumber": 57,
+                    "name": "doProvider",
+                    "notify": "doIndexChanged",
+                    "override": false,
+                    "read": "doProvider",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 21,
+                    "lineNumber": 58,
+                    "name": "doEffect",
+                    "notify": "doIndexChanged",
+                    "override": false,
+                    "read": "doEffect",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 22,
+                    "lineNumber": 59,
+                    "name": "doArmed",
+                    "notify": "doOperationChanged",
+                    "override": false,
+                    "read": "doArmed",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 23,
+                    "lineNumber": 60,
+                    "name": "doOperationState",
+                    "notify": "doOperationChanged",
+                    "override": false,
+                    "read": "doOperationState",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 24,
+                    "lineNumber": 62,
+                    "name": "doOperationTitle",
+                    "notify": "doOperationChanged",
+                    "override": false,
+                    "read": "doOperationTitle",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 25,
+                    "lineNumber": 64,
+                    "name": "doOperationSummary",
+                    "notify": "doOperationChanged",
+                    "override": false,
+                    "read": "doOperationSummary",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 26,
+                    "lineNumber": 66,
+                    "name": "doOperationArtifacts",
+                    "notify": "doOperationChanged",
+                    "override": false,
+                    "read": "doOperationArtifacts",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QVariantList",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": true,
+                    "designable": true,
+                    "final": false,
+                    "index": 27,
+                    "lineNumber": 68,
+                    "name": "listHint",
+                    "override": false,
+                    "read": "listHint",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 28,
+                    "lineNumber": 69,
+                    "name": "doPreviewItem",
+                    "notify": "doPreviewChanged",
+                    "override": false,
+                    "read": "doPreviewItem",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QQuickItem*",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 29,
+                    "lineNumber": 71,
+                    "name": "doFolderModel",
+                    "notify": "doPreviewChanged",
+                    "override": false,
+                    "read": "doFolderModel",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QObject*",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 30,
+                    "lineNumber": 72,
+                    "name": "doFolderProxy",
+                    "notify": "doPreviewChanged",
+                    "override": false,
+                    "read": "doFolderProxy",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QObject*",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 31,
+                    "lineNumber": 73,
+                    "name": "doTargetIsDir",
+                    "notify": "doPreviewChanged",
+                    "override": false,
+                    "read": "doTargetIsDir",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 32,
+                    "lineNumber": 74,
+                    "name": "doTargetName",
+                    "notify": "doPreviewChanged",
+                    "override": false,
+                    "read": "doTargetName",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 33,
+                    "lineNumber": 75,
+                    "name": "doMetadata",
+                    "notify": "doMetadataChanged",
+                    "override": false,
+                    "read": "doMetadata",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QVariantMap",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 34,
+                    "lineNumber": 76,
+                    "name": "openCandidates",
+                    "notify": "openCandidatesChanged",
+                    "override": false,
+                    "read": "openCandidates",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QVariantList",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 35,
+                    "lineNumber": 78,
+                    "name": "folderPeek",
+                    "notify": "folderPeekChanged",
+                    "override": false,
+                    "read": "folderPeek",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 36,
+                    "lineNumber": 79,
+                    "name": "folderListing",
+                    "notify": "folderPeekChanged",
+                    "override": false,
+                    "read": "folderListing",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 37,
+                    "lineNumber": 80,
+                    "name": "folderPath",
+                    "notify": "folderPeekChanged",
+                    "override": false,
+                    "read": "folderPath",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 38,
+                    "lineNumber": 81,
+                    "name": "peekFileName",
+                    "notify": "fileChanged",
+                    "override": false,
+                    "read": "peekFileName",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 39,
+                    "lineNumber": 82,
+                    "name": "peekModel",
+                    "notify": "folderPeekChanged",
+                    "override": false,
+                    "read": "peekModel",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QObject*",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 40,
+                    "lineNumber": 83,
+                    "name": "peekProxy",
+                    "notify": "folderPeekChanged",
+                    "override": false,
+                    "read": "peekProxy",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QObject*",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 41,
+                    "lineNumber": 84,
+                    "name": "peekFileProxy",
+                    "notify": "folderPeekChanged",
+                    "override": false,
+                    "read": "peekFileProxy",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QObject*",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 42,
+                    "lineNumber": 85,
+                    "name": "gridMode",
+                    "notify": "gridModeChanged",
+                    "override": false,
+                    "read": "gridMode",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setGridMode"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 43,
+                    "lineNumber": 87,
+                    "name": "peekPreviewFocused",
+                    "notify": "peekFocusChanged",
+                    "override": false,
+                    "read": "peekPreviewFocused",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setPeekPreviewFocused"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 44,
+                    "lineNumber": 89,
+                    "name": "listingRowUrl",
+                    "notify": "listingChromeChanged",
+                    "override": false,
+                    "read": "listingRowUrl",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QUrl",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 45,
+                    "lineNumber": 90,
+                    "name": "listingThumbUrl",
+                    "notify": "listingChromeChanged",
+                    "override": false,
+                    "read": "listingThumbUrl",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QUrl",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 46,
+                    "lineNumber": 92,
+                    "name": "peekFindQuery",
+                    "notify": "peekFindQueryChanged",
+                    "override": false,
+                    "read": "peekFindQuery",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 47,
+                    "lineNumber": 94,
+                    "name": "inlinePreviewItem",
+                    "notify": "inlinePreviewChanged",
+                    "override": false,
+                    "read": "inlinePreviewItem",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QQuickItem*",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 48,
+                    "lineNumber": 96,
+                    "name": "inlinePreviewMode",
+                    "notify": "inlinePreviewChanged",
+                    "override": false,
+                    "read": "inlinePreviewMode",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 49,
+                    "lineNumber": 98,
+                    "name": "inlinePreviewPath",
+                    "notify": "inlinePreviewChanged",
+                    "override": false,
+                    "read": "inlinePreviewPath",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 50,
+                    "lineNumber": 100,
+                    "name": "inlinePreviewHandler",
+                    "notify": "inlinePreviewChanged",
+                    "override": false,
+                    "read": "inlinePreviewHandler",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 51,
+                    "lineNumber": 102,
+                    "name": "inlinePreviewCount",
+                    "notify": "inlinePreviewChanged",
+                    "override": false,
+                    "read": "inlinePreviewCount",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 52,
+                    "lineNumber": 104,
+                    "name": "inlinePreviewStat",
+                    "notify": "inlinePreviewChanged",
+                    "override": false,
+                    "read": "inlinePreviewStat",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QVariantMap",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 53,
+                    "lineNumber": 106,
+                    "name": "inlineFolderModel",
+                    "notify": "inlineFolderChanged",
+                    "override": false,
+                    "read": "inlineFolderModel",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QObject*",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 54,
+                    "lineNumber": 108,
+                    "name": "inlineFolderProxy",
+                    "notify": "inlineFolderChanged",
+                    "override": false,
+                    "read": "inlineFolderProxy",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QObject*",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 55,
+                    "lineNumber": 110,
+                    "name": "inlineFolderLoading",
+                    "notify": "inlineFolderChanged",
+                    "override": false,
+                    "read": "inlineFolderLoading",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 56,
+                    "lineNumber": 112,
+                    "name": "inlineFolderError",
+                    "notify": "inlineFolderChanged",
+                    "override": false,
+                    "read": "inlineFolderError",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 57,
+                    "lineNumber": 114,
+                    "name": "inlineFolderTruncated",
+                    "notify": "inlineFolderChanged",
+                    "override": false,
+                    "read": "inlineFolderTruncated",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                }
+            ],
+            "qualifiedClassName": "HostApi",
+            "signals": [
+                {
+                    "access": "public",
+                    "index": 0,
+                    "lineNumber": 303,
+                    "name": "fileChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 1,
+                    "lineNumber": 304,
+                    "name": "selectionChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 2,
+                    "lineNumber": 305,
+                    "name": "previewItemChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 3,
+                    "lineNumber": 306,
+                    "name": "titleChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "url",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "st",
+                            "type": "QVariantMap"
+                        }
+                    ],
+                    "index": 4,
+                    "lineNumber": 307,
+                    "name": "statReady",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 5,
+                    "lineNumber": 308,
+                    "name": "actionItemChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 6,
+                    "lineNumber": 309,
+                    "name": "doVerbsChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 7,
+                    "lineNumber": 310,
+                    "name": "doIndexChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 8,
+                    "lineNumber": 311,
+                    "name": "doMetadataChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 9,
+                    "lineNumber": 312,
+                    "name": "doFocusChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 10,
+                    "lineNumber": 313,
+                    "name": "doHintChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 11,
+                    "lineNumber": 314,
+                    "name": "doPresentationChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 12,
+                    "lineNumber": 315,
+                    "name": "doOperationChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 13,
+                    "lineNumber": 316,
+                    "name": "doPreviewChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 14,
+                    "lineNumber": 317,
+                    "name": "openCandidatesChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 15,
+                    "lineNumber": 318,
+                    "name": "folderPeekChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 16,
+                    "lineNumber": 319,
+                    "name": "folderListingItemChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 17,
+                    "lineNumber": 320,
+                    "name": "peekGridStrideChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 18,
+                    "lineNumber": 321,
+                    "name": "gridModeChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 19,
+                    "lineNumber": 322,
+                    "name": "peekFocusChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "mime",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 20,
+                    "lineNumber": 323,
+                    "name": "fileCommitted",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 21,
+                    "lineNumber": 324,
+                    "name": "peekCommitRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 22,
+                    "lineNumber": 325,
+                    "name": "listingChromeChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 23,
+                    "lineNumber": 326,
+                    "name": "peekFindQueryChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 24,
+                    "lineNumber": 327,
+                    "name": "inlinePreviewChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 25,
+                    "lineNumber": 328,
+                    "name": "inlineFolderChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "requestId",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "file",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "preview",
+                            "type": "QVariantMap"
+                        }
+                    ],
+                    "index": 26,
+                    "lineNumber": 329,
+                    "name": "previewReady",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "requestId",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "file",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "preview",
+                            "type": "QVariantMap"
+                        }
+                    ],
+                    "index": 27,
+                    "lineNumber": 331,
+                    "name": "parquetReady",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "requestId",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "file",
+                            "type": "QUrl"
+                        },
+                        {
+                            "name": "preview",
+                            "type": "QVariantMap"
+                        }
+                    ],
+                    "index": 28,
+                    "lineNumber": 333,
+                    "name": "databaseReady",
+                    "returnType": "void"
+                }
+            ],
+            "slots": [
+                {
+                    "access": "public",
+                    "index": 29,
+                    "lineNumber": 177,
+                    "name": "close",
+                    "returnType": "void"
+                }
+            ],
+            "superClasses": [
+                {
+                    "access": "public",
+                    "name": "PeekHost"
+                }
+            ]
+        }
+    ],
+    "inputFile": "HostApi.h",
+    "outputRevision": 69
+}

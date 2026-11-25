@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/qt/qml/Synchro/">
+    <file alias="src/ui/qml/qmldir">/home/michael/Projects/synchro/packaging/aur/src/build/qml/Synchro/src/ui/qml/qmldir</file>
+  </qresource>
+</RCC>
+

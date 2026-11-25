@@ -1,0 +1,510 @@
+{
+    "classes": [
+        {
+            "className": "FileCatalog",
+            "lineNumber": 16,
+            "methods": [
+                {
+                    "access": "public",
+                    "index": 5,
+                    "isConst": true,
+                    "lineNumber": 55,
+                    "name": "status",
+                    "returnType": "QVariantMap"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "sql",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "cwd",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "selection",
+                            "type": "QStringList"
+                        },
+                        {
+                            "name": "maxRows",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 6,
+                    "lineNumber": 56,
+                    "name": "query",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "sql",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "cwd",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "selection",
+                            "type": "QStringList"
+                        }
+                    ],
+                    "index": 7,
+                    "isCloned": true,
+                    "lineNumber": 56,
+                    "name": "query",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "sql",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "cwd",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 8,
+                    "isCloned": true,
+                    "lineNumber": 56,
+                    "name": "query",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 9,
+                    "lineNumber": 61,
+                    "name": "metadata",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "root",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "view",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "hidden",
+                            "type": "bool"
+                        },
+                        {
+                            "name": "maxNodes",
+                            "type": "int"
+                        },
+                        {
+                            "name": "maxDepth",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 10,
+                    "lineNumber": 64,
+                    "name": "scene",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "root",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "view",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "hidden",
+                            "type": "bool"
+                        },
+                        {
+                            "name": "maxNodes",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 11,
+                    "isCloned": true,
+                    "lineNumber": 64,
+                    "name": "scene",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "root",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "view",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "hidden",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 12,
+                    "isCloned": true,
+                    "lineNumber": 64,
+                    "name": "scene",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "root",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "view",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 13,
+                    "isCloned": true,
+                    "lineNumber": 64,
+                    "name": "scene",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "root",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "view",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "hidden",
+                            "type": "bool"
+                        },
+                        {
+                            "name": "expandedPaths",
+                            "type": "QStringList"
+                        }
+                    ],
+                    "index": 14,
+                    "lineNumber": 69,
+                    "name": "sceneExpanded",
+                    "returnType": "quint64"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "sql",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 15,
+                    "isConst": true,
+                    "lineNumber": 72,
+                    "name": "sourceRelation",
+                    "returnType": "QString"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "root",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 16,
+                    "isConst": true,
+                    "lineNumber": 73,
+                    "name": "coversTree",
+                    "returnType": "bool"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "root",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "maxEntries",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 17,
+                    "lineNumber": 76,
+                    "name": "scanTree",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "root",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 18,
+                    "isCloned": true,
+                    "lineNumber": 76,
+                    "name": "scanTree",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 19,
+                    "lineNumber": 77,
+                    "name": "refreshCurrent",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "root",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "maxFiles",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 20,
+                    "lineNumber": 80,
+                    "name": "analyzeImages",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "root",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 21,
+                    "isCloned": true,
+                    "lineNumber": 80,
+                    "name": "analyzeImages",
+                    "returnType": "void"
+                }
+            ],
+            "object": true,
+            "properties": [
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 0,
+                    "lineNumber": 18,
+                    "name": "indexing",
+                    "notify": "statusChanged",
+                    "override": false,
+                    "read": "indexing",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 1,
+                    "lineNumber": 19,
+                    "name": "indexedRoot",
+                    "notify": "statusChanged",
+                    "override": false,
+                    "read": "indexedRoot",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 2,
+                    "lineNumber": 20,
+                    "name": "indexedCount",
+                    "notify": "statusChanged",
+                    "override": false,
+                    "read": "indexedCount",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 3,
+                    "lineNumber": 21,
+                    "name": "statusText",
+                    "notify": "statusChanged",
+                    "override": false,
+                    "read": "statusText",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": true,
+                    "designable": true,
+                    "final": false,
+                    "index": 4,
+                    "lineNumber": 22,
+                    "name": "fields",
+                    "override": false,
+                    "read": "fields",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QStringList",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 5,
+                    "lineNumber": 23,
+                    "name": "analyzing",
+                    "notify": "analysisChanged",
+                    "override": false,
+                    "read": "analyzing",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "bool",
+                    "user": false,
+                    "virtual": false
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 6,
+                    "lineNumber": 24,
+                    "name": "analysisStatus",
+                    "notify": "analysisChanged",
+                    "override": false,
+                    "read": "analysisStatus",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false
+                }
+            ],
+            "qualifiedClassName": "FileCatalog",
+            "signals": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "requestId",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "result",
+                            "type": "QVariantMap"
+                        }
+                    ],
+                    "index": 0,
+                    "lineNumber": 85,
+                    "name": "queryFinished",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "requestId",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "result",
+                            "type": "QVariantMap"
+                        }
+                    ],
+                    "index": 1,
+                    "lineNumber": 86,
+                    "name": "metadataFinished",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "requestId",
+                            "type": "quint64"
+                        },
+                        {
+                            "name": "result",
+                            "type": "QVariantMap"
+                        }
+                    ],
+                    "index": 2,
+                    "lineNumber": 87,
+                    "name": "sceneFinished",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 3,
+                    "lineNumber": 88,
+                    "name": "statusChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 4,
+                    "lineNumber": 89,
+                    "name": "analysisChanged",
+                    "returnType": "void"
+                }
+            ],
+            "superClasses": [
+                {
+                    "access": "public",
+                    "name": "QObject"
+                }
+            ]
+        }
+    ],
+    "inputFile": "FileCatalog.h",
+    "outputRevision": 69
+}

@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# omarchy:summary=Launch Synchro in the active terminal's current directory
+# omarchy:group=launch
+#
+# Reuses omarchy-cmd-terminal-cwd (Kitty socket or /proc/<shell>/cwd, else $HOME).
+# Not installed into /usr/share/omarchy/.
+
+exec setsid uwsm-app -- synchro --new-window "$(omarchy-cmd-terminal-cwd)"

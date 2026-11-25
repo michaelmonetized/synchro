@@ -1,0 +1,33 @@
+{
+    "classes": [
+        {
+            "className": "DirectoryWatcher",
+            "lineNumber": 21,
+            "object": true,
+            "qualifiedClassName": "DirectoryWatcher",
+            "signals": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "events",
+                            "type": "QList<DirectoryWatchEvent>"
+                        }
+                    ],
+                    "index": 0,
+                    "lineNumber": 35,
+                    "name": "eventsReady",
+                    "returnType": "void"
+                }
+            ],
+            "superClasses": [
+                {
+                    "access": "public",
+                    "name": "QObject"
+                }
+            ]
+        }
+    ],
+    "inputFile": "DirectoryWatcher.h",
+    "outputRevision": 69
+}

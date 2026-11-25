@@ -1,0 +1,157 @@
+{
+    "classes": [
+        {
+            "className": "ThumbnailService",
+            "lineNumber": 36,
+            "methods": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "mtime",
+                            "type": "qint64"
+                        },
+                        {
+                            "name": "sizePx",
+                            "type": "int"
+                        }
+                    ],
+                    "index": 8,
+                    "lineNumber": 43,
+                    "name": "request",
+                    "returnType": "void"
+                }
+            ],
+            "object": true,
+            "qualifiedClassName": "ThumbnailService",
+            "signals": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "url",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 0,
+                    "lineNumber": 95,
+                    "name": "thumbnailReady",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "results",
+                            "type": "QList<ThumbnailResult>"
+                        }
+                    ],
+                    "index": 1,
+                    "lineNumber": 98,
+                    "name": "thumbnailsReady",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        },
+                        {
+                            "name": "mtime",
+                            "type": "qint64"
+                        },
+                        {
+                            "name": "facts",
+                            "type": "QVariantMap"
+                        }
+                    ],
+                    "index": 2,
+                    "lineNumber": 99,
+                    "name": "imageFactsReady",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "jobs",
+                            "type": "QList<ThumbnailJob>"
+                        },
+                        {
+                            "name": "exclusive",
+                            "type": "bool"
+                        }
+                    ],
+                    "index": 3,
+                    "lineNumber": 101,
+                    "name": "submitted",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 4,
+                    "lineNumber": 102,
+                    "name": "cancelRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "path",
+                            "type": "QString"
+                        }
+                    ],
+                    "index": 5,
+                    "lineNumber": 103,
+                    "name": "invalidateRequested",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "dirs",
+                            "type": "QStringList"
+                        }
+                    ],
+                    "index": 6,
+                    "lineNumber": 104,
+                    "name": "thumbnailerDirectoriesChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "list",
+                            "type": "QList<ExecThumbnailer>"
+                        }
+                    ],
+                    "index": 7,
+                    "lineNumber": 105,
+                    "name": "handlerThumbnailersChanged",
+                    "returnType": "void"
+                }
+            ],
+            "superClasses": [
+                {
+                    "access": "public",
+                    "name": "QObject"
+                }
+            ]
+        }
+    ],
+    "inputFile": "ThumbnailService.h",
+    "outputRevision": 69
+}

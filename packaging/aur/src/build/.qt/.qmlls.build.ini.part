@@ -1,0 +1,9 @@
+[<SLASH>home<SLASH>michael<SLASH>Projects<SLASH>synchro<SLASH>packaging<SLASH>aur<SLASH>src<SLASH>synchro]
+importPaths="/home/michael/Projects/synchro/packaging/aur/src/build:/home/michael/Projects/synchro/packaging/aur/src/build/qml/Synchro:/home/michael/Projects/synchro/packaging/aur/src/build/qml:/usr/lib/qt6/qml"
+resourceFiles="/home/michael/Projects/synchro/packaging/aur/src/build/.qt/rcc/qmake_Synchro.qrc:/home/michael/Projects/synchro/packaging/aur/src/build/.qt/rcc/synchro_raw_qml_0.qrc:/home/michael/Projects/synchro/packaging/aur/src/build/.qt/rcc/synchro_raw_qml_0_extra_qmldirs.qrc:/home/michael/Projects/synchro/packaging/aur/src/build/.qt/rcc/synchro_fsn_shaders.qrc"
+[<SLASH>home<SLASH>michael<SLASH>Projects<SLASH>synchro<SLASH>packaging<SLASH>aur<SLASH>src<SLASH>synchro]
+importPaths="/home/michael/Projects/synchro/packaging/aur/src/build/qml:/home/michael/Projects/synchro/packaging/aur/src/build/qml/Synchro/Theme:/usr/lib/qt6/qml"
+resourceFiles="/home/michael/Projects/synchro/packaging/aur/src/build/.qt/rcc/qmake_Synchro_Theme.qrc:/home/michael/Projects/synchro/packaging/aur/src/build/.qt/rcc/synchro_theme_raw_qml_0.qrc:/home/michael/Projects/synchro/packaging/aur/src/build/.qt/rcc/synchro_theme_raw_qml_0_extra_qmldirs.qrc"
+[<SLASH>home<SLASH>michael<SLASH>Projects<SLASH>synchro<SLASH>packaging<SLASH>aur<SLASH>src<SLASH>synchro]
+importPaths="/home/michael/Projects/synchro/packaging/aur/src/build/qml:/home/michael/Projects/synchro/packaging/aur/src/build/qml/Synchro/Handler:/usr/lib/qt6/qml"
+resourceFiles="/home/michael/Projects/synchro/packaging/aur/src/build/.qt/rcc/qmake_Synchro_Handler.qrc:/home/michael/Projects/synchro/packaging/aur/src/build/.qt/rcc/synchro_handler_raw_qml_0.qrc:/home/michael/Projects/synchro/packaging/aur/src/build/.qt/rcc/synchro_handler_raw_qml_0_extra_qmldirs.qrc"

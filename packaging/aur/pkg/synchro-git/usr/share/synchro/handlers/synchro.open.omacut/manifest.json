@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.open.omacut",
+  "name": "Omacut",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Open video in Omacut, the Qt Quick cutter shipped with Omarchy Quattro.",
+  "kinds": ["open"],
+  "priority": 80,
+  "match": {
+    "mime": [
+      "video/mp4",
+      "video/x-matroska",
+      "video/quicktime",
+      "video/webm",
+      "video/x-msvideo",
+      "video/mpeg"
+    ],
+    "suffix": [".mp4", ".mkv", ".mov", ".webm", ".avi", ".mpeg", ".mpg"],
+    "minItems": 1,
+    "maxItems": 1
+  },
+  "entryPoints": {},
+  "open": {
+    "runtime": "exec",
+    "exec": "omacut %f",
+    "tryExec": "omacut"
+  }
+}

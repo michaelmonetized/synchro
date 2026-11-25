@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "synchro.open.xdg",
+  "name": "Open",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "license": "MIT",
+  "description": "Open a file with the desktop default handler (xdg-open).",
+  "kinds": ["open"],
+  "priority": 0,
+  "match": {
+    "minItems": 1,
+    "maxItems": 1,
+    "host": "posix-local"
+  },
+  "entryPoints": {},
+  "open": {
+    "runtime": "exec",
+    "exec": "xdg-open %f",
+    "tryExec": "xdg-open"
+  }
+}

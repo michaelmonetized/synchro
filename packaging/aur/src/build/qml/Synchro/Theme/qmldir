@@ -1,0 +1,19 @@
+module Synchro.Theme
+linktarget synchro_themeplugin
+optional plugin synchro_themeplugin
+classname Synchro_ThemePlugin
+typeinfo synchro_theme.qmltypes
+prefer :/qt/qml/Synchro/Theme/
+singleton Theme 1.0 src/ui/qml/Synchro/Theme/Theme.qml
+FolderMark 1.0 src/ui/qml/Synchro/Theme/FolderMark.qml
+FileMark 1.0 src/ui/qml/Synchro/Theme/FileMark.qml
+EmptyListing 1.0 src/ui/qml/Synchro/Theme/EmptyListing.qml
+ListingChrome 1.0 src/ui/qml/Synchro/Theme/ListingChrome.qml
+AppIcon 1.0 src/ui/qml/Synchro/Theme/AppIcon.qml
+ChromeButton 1.0 src/ui/qml/Synchro/Theme/ChromeButton.qml
+ThumbLoadingGlyph 1.0 src/ui/qml/Synchro/Theme/ThumbLoadingGlyph.qml
+SegmentedControl 1.0 src/ui/qml/Synchro/Theme/SegmentedControl.qml
+Keycap 1.0 src/ui/qml/Synchro/Theme/Keycap.qml
+ToolTip 1.0 src/ui/qml/Synchro/Theme/ToolTip.qml
+depends QtQuick
+

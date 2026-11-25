@@ -1,0 +1,253 @@
+{
+    "classes": [
+        {
+            "className": "FsnRhiItem",
+            "lineNumber": 11,
+            "methods": [
+                {
+                    "access": "public",
+                    "arguments": [
+                        {
+                            "name": "worldX",
+                            "type": "float"
+                        },
+                        {
+                            "name": "worldY",
+                            "type": "float"
+                        },
+                        {
+                            "name": "worldZ",
+                            "type": "float"
+                        }
+                    ],
+                    "index": 4,
+                    "isConst": true,
+                    "lineNumber": 42,
+                    "name": "projectPoint",
+                    "returnType": "QVariantMap"
+                }
+            ],
+            "object": true,
+            "properties": [
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 0,
+                    "lineNumber": 13,
+                    "name": "primitives",
+                    "notify": "primitivesChanged",
+                    "override": false,
+                    "read": "primitives",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QVariantList",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setPrimitives"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 1,
+                    "lineNumber": 15,
+                    "name": "scenePalette",
+                    "notify": "scenePaletteChanged",
+                    "override": false,
+                    "read": "scenePalette",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QVariantMap",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setScenePalette"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 2,
+                    "lineNumber": 17,
+                    "name": "selectedPath",
+                    "notify": "selectedPathChanged",
+                    "override": false,
+                    "read": "selectedPath",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "QString",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setSelectedPath"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 3,
+                    "lineNumber": 19,
+                    "name": "cameraX",
+                    "notify": "cameraChanged",
+                    "override": false,
+                    "read": "cameraX",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "float",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setCameraX"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 4,
+                    "lineNumber": 20,
+                    "name": "cameraY",
+                    "notify": "cameraChanged",
+                    "override": false,
+                    "read": "cameraY",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "float",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setCameraY"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 5,
+                    "lineNumber": 21,
+                    "name": "cameraZ",
+                    "notify": "cameraChanged",
+                    "override": false,
+                    "read": "cameraZ",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "float",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setCameraZ"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 6,
+                    "lineNumber": 22,
+                    "name": "yaw",
+                    "notify": "cameraChanged",
+                    "override": false,
+                    "read": "yaw",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "float",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setYaw"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 7,
+                    "lineNumber": 23,
+                    "name": "pitch",
+                    "notify": "cameraChanged",
+                    "override": false,
+                    "read": "pitch",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "float",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setPitch"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 8,
+                    "lineNumber": 24,
+                    "name": "distance",
+                    "notify": "cameraChanged",
+                    "override": false,
+                    "read": "distance",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "float",
+                    "user": false,
+                    "virtual": false,
+                    "write": "setDistance"
+                },
+                {
+                    "constant": false,
+                    "designable": true,
+                    "final": false,
+                    "index": 9,
+                    "lineNumber": 25,
+                    "name": "primitiveCount",
+                    "notify": "primitivesChanged",
+                    "override": false,
+                    "read": "primitiveCount",
+                    "required": false,
+                    "scriptable": true,
+                    "stored": true,
+                    "type": "int",
+                    "user": false,
+                    "virtual": false
+                }
+            ],
+            "qualifiedClassName": "FsnRhiItem",
+            "signals": [
+                {
+                    "access": "public",
+                    "index": 0,
+                    "lineNumber": 56,
+                    "name": "primitivesChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 1,
+                    "lineNumber": 57,
+                    "name": "scenePaletteChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 2,
+                    "lineNumber": 58,
+                    "name": "selectedPathChanged",
+                    "returnType": "void"
+                },
+                {
+                    "access": "public",
+                    "index": 3,
+                    "lineNumber": 59,
+                    "name": "cameraChanged",
+                    "returnType": "void"
+                }
+            ],
+            "superClasses": [
+                {
+                    "access": "public",
+                    "name": "QQuickRhiItem"
+                }
+            ]
+        }
+    ],
+    "inputFile": "FsnRhiItem.h",
+    "outputRevision": 69
+}
